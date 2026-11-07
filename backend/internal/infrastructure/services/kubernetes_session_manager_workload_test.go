@@ -71,6 +71,9 @@ func TestSessionEnvironmentReceivesOnlyScopedControlCredential(t *testing.T) {
 		values[item.Name] = item.Value
 	}
 	want := deriveSessionControlToken("control-plane-secret", session.ID())
+	if values["AGENTAPI_ALLOCATED_SESSION_ID"] != session.ID() {
+		t.Fatalf("allocated session ID = %q, want %q", values["AGENTAPI_ALLOCATED_SESSION_ID"], session.ID())
+	}
 	if values["PROVISIONER_TOKEN"] != want {
 		t.Fatal("session-scoped provisioner credential was not injected")
 	}

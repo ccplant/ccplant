@@ -37,3 +37,9 @@ func TestRunFilesSyncPrefersLocalSessionControlProxy(t *testing.T) {
 
 	require.Equal(t, local.URL, sessionControlProxyURL())
 }
+
+func TestSessionControlSessionIDPrefersAllocatedWorkload(t *testing.T) {
+	t.Setenv("AGENTAPI_SESSION_ID", "public-session")
+	t.Setenv("AGENTAPI_ALLOCATED_SESSION_ID", "allocated-session")
+	require.Equal(t, "allocated-session", sessionControlSessionID())
+}

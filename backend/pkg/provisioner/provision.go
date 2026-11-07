@@ -1126,7 +1126,7 @@ func (s *Server) runFilesSync(ctx context.Context, settings *sessionsettings.Ses
 	// Pool runners use PROVISIONER_PROXY_URL to claim work from the parent API.
 	// Session-scoped controls are always served by the local Session Manager.
 	proxyURL := sessionControlProxyURL()
-	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
+	sessionID := sessionControlSessionID()
 	token := os.Getenv("SESSION_CONTROL_TOKEN")
 	if proxyURL == "" || sessionID == "" || token == "" {
 		log.Printf("[FILES_SYNC] Session control URL, session ID, or token missing; skipping")
@@ -1227,6 +1227,13 @@ func sessionControlProxyURL() string {
 		proxyURL = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
 	}
 	return proxyURL
+}
+
+func sessionControlSessionID() string {
+	if allocatedID := os.Getenv("AGENTAPI_ALLOCATED_SESSION_ID"); allocatedID != "" {
+		return allocatedID
+	}
+	return os.Getenv("AGENTAPI_SESSION_ID")
 }
 
 func syncedManagedFilePaths(unsyncedFilePaths []string) []string {

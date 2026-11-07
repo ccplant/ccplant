@@ -5789,6 +5789,10 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		{Name: proxybinary.EnvName, Value: m.sessionBinaryPath()},
 		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
+		// Provision settings replace AGENTAPI_SESSION_ID with the public parent
+		// ID after a stock runner is claimed. Keep the local workload ID stable
+		// for session-scoped calls back to this manager.
+		{Name: "AGENTAPI_ALLOCATED_SESSION_ID", Value: session.id},
 		{Name: "AGENTAPI_USER_ID", Value: req.UserID},
 		{Name: "HOME", Value: "/home/agentapi"},
 		// GitHub App PEM path (file is written by setup directly to container FS)
