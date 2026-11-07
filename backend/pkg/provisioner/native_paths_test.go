@@ -30,6 +30,7 @@ func TestNormalizeNativeSettingsRemapsPathsAndDropsContainerTLS(t *testing.T) {
 		},
 		Repository: &sessionsettings.RepositoryConfig{CloneDir: "/home/agentapi/workdir/repo"},
 		Files:      []sessionsettings.ManagedFile{{Path: "/home/agentapi/.codex/auth.json"}},
+		Storages:   []sessionsettings.StorageAttachment{{MountPath: "/home/agentapi/shared"}, {MountPath: "/data/shared"}},
 	}
 
 	normalizeNativeSettings(settings)
@@ -39,6 +40,12 @@ func TestNormalizeNativeSettingsRemapsPathsAndDropsContainerTLS(t *testing.T) {
 	}
 	if settings.Files[0].Path != filepath.Join(home, ".codex", "auth.json") {
 		t.Fatalf("managed file path = %q", settings.Files[0].Path)
+	}
+	if settings.Storages[0].MountPath != filepath.Join(home, "shared") {
+		t.Fatalf("storage mount path = %q", settings.Storages[0].MountPath)
+	}
+	if settings.Storages[1].MountPath != "/data/shared" {
+		t.Fatalf("absolute storage mount path = %q", settings.Storages[1].MountPath)
 	}
 	for _, key := range []string{"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "HTTPS_PROXY"} {
 		if _, ok := settings.Env[key]; ok {

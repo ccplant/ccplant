@@ -20,7 +20,8 @@ Storageは次の情報を持つ。
 - state、data revision、file manifest
 - 作成・更新日時
 
-SessionはStorage ID、絶対mount path、read-only flagをattachmentとして指定する。同じSession内の
+SessionはStorage ID、mount path、read-only flagをattachmentとして指定する。相対mount pathは
+agentのHOME配下として解決する（containerでは`/home/agentapi`、nativeでは隔離されたsession HOME）。同じSession内の
 Storage ID重複、mount path重複、system pathへのmountは拒否する。解決済みattachmentとmanifestは
 Session settingsへ保存し、Pod再起動でも同じStorageを復元する。
 

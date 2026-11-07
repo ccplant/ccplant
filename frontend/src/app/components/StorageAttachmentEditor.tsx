@@ -15,9 +15,10 @@ export function validateStorageAttachments(values: StorageAttachment[]): string 
     const sameStorageSources = sources.get(value.storage_id) ?? []
     if (sameStorageSources.some(other => !storagePath || !other || other === storagePath || other.startsWith(storagePath + '/') || storagePath.startsWith(other + '/'))) return '同じStorage内のパスが重複しています'
     sources.set(value.storage_id, [...sameStorageSources, storagePath])
-    const segments = value.mount_path.trim().split('/').filter(Boolean)
-    const path = '/' + segments.join('/')
-    if (!value.mount_path.startsWith('/') || segments.length === 0 || segments.some(segment => segment === '.' || segment === '..')) return 'マウント先には / 以外の絶対パスを指定してください'
+    const mountPath = value.mount_path.trim()
+    const segments = mountPath.split('/').filter(Boolean)
+    if (segments.length === 0 || segments.some(segment => segment === '.' || segment === '..')) return 'マウント先には有効なパスを指定してください'
+    const path = mountPath.startsWith('/') ? '/' + segments.join('/') : '/home/agentapi/' + segments.join('/')
     const reserved = ['/bin', '/boot', '/dev', '/etc', '/proc', '/sys', '/usr', '/var/run', '/session-settings', '/credentials', '/opt/ccplant', '/home/agentapi/.codex', '/home/agentapi/.claude', '/home/agentapi/.docker']
     if (path === '/home/agentapi/workdir' || reserved.some(prefix => path === prefix || path.startsWith(prefix + '/'))) return 'このパスはセッションが使用しています。別のマウント先を指定してください'
     if (paths.some(other => other === path || other.startsWith(path + '/') || path.startsWith(other + '/'))) return 'マウント先が重複しています'
@@ -62,7 +63,7 @@ export default function StorageAttachmentEditor({ value, onChange, scope, teamId
         {storages.map(storage => <option key={storage.id} value={storage.id}>{storage.name}</option>)}
       </select></label>
       <label className="block text-sm">Storage内のパス（任意）<input value={attachment.storage_path ?? ''} onChange={event => update(index, { storage_path: event.target.value })} placeholder="datasets/shared" className={`${field} mt-1`} /></label>
-      <label className="block text-sm">マウント先<input value={attachment.mount_path} onChange={event => update(index, { mount_path: event.target.value })} placeholder="/home/agentapi/workdir/shared" className={`${field} mt-1`} /></label>
+      <label className="block text-sm">マウント先<input value={attachment.mount_path} onChange={event => update(index, { mount_path: event.target.value })} placeholder="workdir/shared" className={`${field} mt-1`} /><span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">相対パスはセッションの HOME 配下にマウントされます。</span></label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={attachment.read_only ?? false} onChange={event => update(index, { read_only: event.target.checked })} />読み取り専用</label>
       <button type="button" onClick={() => onChange(value.filter((_, i) => i !== index))} className="text-sm text-red-600 dark:text-red-400">取り外す</button>
     </fieldset>)}
