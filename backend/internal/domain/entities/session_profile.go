@@ -34,6 +34,8 @@ type SessionProfileConfig struct {
 	initialMessageTemplate string
 	reuseMessageTemplate   string
 	commandWrapperTemplate string
+	systemPrompt           string
+	systemPromptMode       string
 	params                 *SessionParams
 	reuseSession           bool
 	// sandboxPolicyID is a reference to a SandboxPolicy resource.
@@ -315,6 +317,18 @@ func (c *SessionProfileConfig) CommandWrapperTemplate() string { return c.comman
 func (c *SessionProfileConfig) SetCommandWrapperTemplate(value string) {
 	c.commandWrapperTemplate = value
 }
+
+// SystemPrompt returns the agent instructions injected for sessions using this profile.
+func (c *SessionProfileConfig) SystemPrompt() string { return c.systemPrompt }
+
+// SetSystemPrompt sets the agent instructions injected for sessions using this profile.
+func (c *SessionProfileConfig) SetSystemPrompt(value string) { c.systemPrompt = value }
+
+// SystemPromptMode returns how this profile combines its prompt with an inherited prompt.
+func (c *SessionProfileConfig) SystemPromptMode() string { return c.systemPromptMode }
+
+// SetSystemPromptMode sets how this profile combines its prompt with an inherited prompt.
+func (c *SessionProfileConfig) SetSystemPromptMode(value string) { c.systemPromptMode = value }
 
 // Params returns the session params
 func (c *SessionProfileConfig) Params() *SessionParams { return c.params }

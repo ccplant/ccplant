@@ -46,6 +46,8 @@ export interface SessionProfileConfig {
   initial_message_template?: string;
   reuse_message_template?: string;
   command_wrapper_template?: string;
+  system_prompt?: string;
+  system_prompt_mode?: 'override' | 'append';
   reuse_session?: boolean;
   params?: SessionProfileParams;
   sandbox_policy_id?: string;

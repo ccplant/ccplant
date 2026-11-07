@@ -68,7 +68,7 @@ func TestPoolSessionPreservesDockerRequirement(t *testing.T) {
 	require.Equal(t, []string{"test-manager"}, allocation.AuthorizedManagerIDs)
 }
 
-func TestPoolSessionPreservesProfileCommandWrapper(t *testing.T) {
+func TestPoolSessionPreservesProfileRuntimeCustomization(t *testing.T) {
 	store := infrasessionrunner.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	manager := &capturingPoolSettingsManager{}
 	server := &Server{sessionManager: manager, sessionRunnerStore: store, sessionRouteRepo: &recordingSessionRouteRepository{}}
@@ -77,7 +77,7 @@ func TestPoolSessionPreservesProfileCommandWrapper(t *testing.T) {
 		context.Background(),
 		testAuthorizedRoute(t, "pool", nil),
 		"session",
-		entities.StartRequest{ProfileCommandWrapper: "exec env WRAPPED=1 {{ .Command }}"},
+		entities.StartRequest{ProfileCommandWrapper: "exec env WRAPPED=1 {{ .Command }}", ProfileSystemPrompt: "profile instructions"},
 		"user",
 		nil,
 	)
@@ -85,6 +85,7 @@ func TestPoolSessionPreservesProfileCommandWrapper(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, manager.request)
 	require.Equal(t, "exec env WRAPPED=1 {{ .Command }}", manager.request.ProfileCommandWrapper)
+	require.Equal(t, "profile instructions", manager.request.ProfileSystemPrompt)
 }
 
 func TestPoolSessionDoesNotIgnoreSettingsAuthorizationError(t *testing.T) {

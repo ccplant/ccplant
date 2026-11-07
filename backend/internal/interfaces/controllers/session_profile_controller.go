@@ -48,6 +48,8 @@ type SessionProfileConfigRequest struct {
 	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
 	CommandWrapperTemplate string                       `json:"command_wrapper_template,omitempty"`
+	SystemPrompt           string                       `json:"system_prompt,omitempty"`
+	SystemPromptMode       string                       `json:"system_prompt_mode,omitempty"`
 	Params                 *entities.SessionParams      `json:"params,omitempty"`
 	ReuseSession           bool                         `json:"reuse_session,omitempty"`
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
@@ -113,6 +115,8 @@ type SessionProfileConfigResponse struct {
 	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
 	CommandWrapperTemplate string                       `json:"command_wrapper_template,omitempty"`
+	SystemPrompt           string                       `json:"system_prompt,omitempty"`
+	SystemPromptMode       string                       `json:"system_prompt_mode,omitempty"`
 	Params                 *entities.SessionParams      `json:"params,omitempty"`
 	ReuseSession           bool                         `json:"reuse_session,omitempty"`
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
@@ -432,6 +436,9 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 	if err := sessionsettings.ValidateCommandWrapperTemplate(config.CommandWrapperTemplate()); err != nil {
 		return err
 	}
+	if mode := config.SystemPromptMode(); mode != "" && mode != "override" && mode != "append" {
+		return fmt.Errorf("system_prompt_mode must be override or append")
+	}
 	if params := config.Params(); params != nil {
 		if err := modelprovider.ValidateAuthModes(params.CodexAuthMode, params.ClaudeAuthMode); err != nil {
 			return err
@@ -601,6 +608,8 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetInitialMessageTemplate(req.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(req.ReuseMessageTemplate)
 	cfg.SetCommandWrapperTemplate(req.CommandWrapperTemplate)
+	cfg.SetSystemPrompt(req.SystemPrompt)
+	cfg.SetSystemPromptMode(req.SystemPromptMode)
 	cfg.SetReuseSession(req.ReuseSession)
 	if req.Params != nil {
 		cfg.SetParams(req.Params)
@@ -669,6 +678,8 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
 			CommandWrapperTemplate: cfg.CommandWrapperTemplate(),
+			SystemPrompt:           cfg.SystemPrompt(),
+			SystemPromptMode:       cfg.SystemPromptMode(),
 			Params:                 cfg.Params(),
 			ReuseSession:           cfg.ReuseSession(),
 			SandboxPolicyID:        cfg.SandboxPolicyID(),

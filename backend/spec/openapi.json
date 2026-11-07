@@ -11587,6 +11587,15 @@
           "maxLength": 65536,
           "description": "Go template that wraps the final session agent command. It must contain exactly one {{ .Command }} action; the inserted command is POSIX-shell quoted."
         },
+        "system_prompt": {
+          "type": "string",
+          "description": "Agent instructions written to the instruction filename appropriate for the resolved agent type."
+        },
+        "system_prompt_mode": {
+          "type": "string",
+          "enum": ["override", "append"],
+          "description": "Whether this prompt replaces or is appended to an inherited profile prompt. Defaults to override."
+        },
         "reuse_session": {
           "type": "boolean",
           "description": "Whether to reuse an existing session instead of creating a new one"

@@ -1450,7 +1450,8 @@ func (s *Server) createLocalSession(ctx context.Context, route sessionrunnercore
 		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode, ProfileFiles: startReq.ProfileFiles,
 		ProfileMCPServers: startReq.ProfileMCPServers, ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 		ProfileSkills: startReq.ProfileSkills, ProfileCommandWrapper: startReq.ProfileCommandWrapper,
-		Storages: startReq.ResolvedStorages,
+		ProfileSystemPrompt: startReq.ProfileSystemPrompt,
+		Storages:            startReq.ResolvedStorages,
 	})
 	if err != nil {
 		return nil, err
@@ -2097,6 +2098,7 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		ProfileMCPServers:        startReq.ProfileMCPServers,
 		ProfileSkills:            startReq.ProfileSkills,
 		ProfileCommandWrapper:    startReq.ProfileCommandWrapper,
+		ProfileSystemPrompt:      startReq.ProfileSystemPrompt,
 		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 		Storages:                 append([]entities.ResolvedStorageAttachment(nil), startReq.ResolvedStorages...),
 	}
