@@ -243,7 +243,8 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		err := cmd.Wait()
 		_ = logFile.Close()
 		s.mu.Lock()
-		if s.status != "stopped" && s.status != "terminating" {
+		cleanup := s.status != "stopped" && s.status != "terminating"
+		if cleanup {
 			s.status = "error"
 			if err != nil {
 				s.statusMessage = err.Error()
@@ -251,7 +252,19 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		}
 		s.updatedAt = time.Now().UTC()
 		s.mu.Unlock()
-		_ = m.persistSession(s)
+		if !cleanup {
+			return
+		}
+		m.mu.Lock()
+		delete(m.provisionRequests, id)
+		m.mu.Unlock()
+		if err := os.RemoveAll(root); err != nil {
+			s.mu.Lock()
+			s.statusMessage = "session cleanup failed: " + err.Error()
+			s.updatedAt = time.Now().UTC()
+			s.mu.Unlock()
+			_ = m.persistSession(s)
+		}
 	}()
 	return s, nil
 }

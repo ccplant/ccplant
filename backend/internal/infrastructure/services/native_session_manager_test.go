@@ -143,7 +143,7 @@ func TestNativeSessionManagerGetMissingSessionReturnsNil(t *testing.T) {
 	}
 }
 
-func TestNativeSessionManagerKeepsFinishedTTLSessionForCleanup(t *testing.T) {
+func TestNativeSessionManagerRemovesFinishedSessionState(t *testing.T) {
 	stateDir := t.TempDir()
 	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", "/bin/true", false)
 	if err != nil {
@@ -157,16 +157,17 @@ func TestNativeSessionManagerKeepsFinishedTTLSessionForCleanup(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		session := m.GetSession("oneshot-1")
-		if session != nil && session.Status() == "error" {
+		_, statErr := os.Stat(root)
+		if session != nil && session.Status() == "error" && os.IsNotExist(statErr) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("finished TTL session did not reach a terminal state")
+			t.Fatalf("finished session was not cleaned up: status=%v stat=%v", session, statErr)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if _, err := os.Stat(root); err != nil {
-		t.Fatalf("TTL session directory was removed before cleanup: %v", err)
+	if m.GetSession("oneshot-1") == nil {
+		t.Fatal("finished session status was removed before the parent could observe it")
 	}
 }
 
