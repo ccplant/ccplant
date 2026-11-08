@@ -129,6 +129,9 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 	if req == nil {
 		return nil, errors.New("native session requires allocation metadata")
 	}
+	if !validNativeSessionID(id) {
+		return nil, fmt.Errorf("invalid native session ID %q", id)
+	}
 	m.mu.Lock()
 	if _, exists := m.sessions[id]; exists {
 		m.mu.Unlock()
@@ -137,6 +140,12 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 	m.mu.Unlock()
 
 	root := filepath.Join(m.stateDir, "sessions", id)
+	created := false
+	defer func() {
+		if !created {
+			_ = os.RemoveAll(root)
+		}
+	}()
 	home := filepath.Join(root, "home")
 	workdir := filepath.Join(root, "workdir")
 	runtimeDir := filepath.Join(root, "runtime")
@@ -218,14 +227,24 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 	s.cmd = cmd
 	s.pid = cmd.Process.Pid
 	if err := m.persistSession(s); err != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		s.mu.Lock()
+		s.status = "terminating"
+		s.mu.Unlock()
+		cancel()
+		_ = terminateNativeProcessGroup(cmd.Process.Pid, root)
+		m.mu.Lock()
+		delete(m.sessions, id)
+		delete(m.provisionRequests, id)
+		m.mu.Unlock()
 		return nil, err
 	}
+	created = true
 	go func() {
 		err := cmd.Wait()
 		_ = logFile.Close()
 		s.mu.Lock()
-		if s.status != "stopped" && s.status != "terminating" {
+		cleanup := s.status != "stopped" && s.status != "terminating"
+		if cleanup {
 			s.status = "error"
 			if err != nil {
 				s.statusMessage = err.Error()
@@ -233,9 +252,25 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		}
 		s.updatedAt = time.Now().UTC()
 		s.mu.Unlock()
-		_ = m.persistSession(s)
+		if !cleanup {
+			return
+		}
+		m.mu.Lock()
+		delete(m.provisionRequests, id)
+		m.mu.Unlock()
+		if err := os.RemoveAll(root); err != nil {
+			s.mu.Lock()
+			s.statusMessage = "session cleanup failed: " + err.Error()
+			s.updatedAt = time.Now().UTC()
+			s.mu.Unlock()
+			_ = m.persistSession(s)
+		}
 	}()
 	return s, nil
+}
+
+func validNativeSessionID(id string) bool {
+	return id != "" && id != "." && id != ".." && filepath.Base(id) == id
 }
 
 func nativeProvisionerEnvironment(base []string, values ...string) []string {
@@ -668,10 +703,12 @@ func (m *NativeSessionManager) restoreSessions() error {
 		path := filepath.Join(sessionDir, "runtime", "state.json")
 		data, err := os.ReadFile(path)
 		if err != nil {
+			_ = os.RemoveAll(sessionDir)
 			continue
 		}
 		var state nativeSessionState
 		if json.Unmarshal(data, &state) != nil || state.ID == "" || state.PID <= 0 {
+			_ = os.RemoveAll(sessionDir)
 			continue
 		}
 		if filepath.Clean(state.RootDir) != filepath.Clean(sessionDir) {
