@@ -170,6 +170,57 @@ func TestNativeSessionManagerKeepsFinishedTTLSessionForCleanup(t *testing.T) {
 	}
 }
 
+func TestNativeSessionManagerRemovesStateWhenCreateFails(t *testing.T) {
+	stateDir := t.TempDir()
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", filepath.Join(stateDir, "missing-binary"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.CreateSessionDirect(context.Background(), "failed-create", &entities.RunServerRequest{}, nil); err == nil {
+		t.Fatal("create unexpectedly succeeded")
+	}
+	root := filepath.Join(stateDir, "sessions", "failed-create")
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("failed session state remains: %v", err)
+	}
+	if m.GetSession("failed-create") != nil {
+		t.Fatal("failed session remains in memory")
+	}
+}
+
+func TestNativeSessionManagerRemovesIncompleteStateOnRestore(t *testing.T) {
+	stateDir := t.TempDir()
+	root := filepath.Join(stateDir, "sessions", "incomplete")
+	if err := os.MkdirAll(filepath.Join(root, "runtime"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime", "provisioner.log"), []byte("partial startup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", os.Args[0], false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("incomplete session state remains: %v", err)
+	}
+}
+
+func TestNativeSessionManagerRejectsUnsafeSessionID(t *testing.T) {
+	stateDir := t.TempDir()
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateSessionDirect(context.Background(), "../outside", &entities.RunServerRequest{}, nil); err == nil {
+		t.Fatal("unsafe session ID was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "outside")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe session directory was created: %v", err)
+	}
+}
+
 func TestNativeSessionManagerActiveSessionCountExcludesTerminalStates(t *testing.T) {
 	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
 	if err != nil {
