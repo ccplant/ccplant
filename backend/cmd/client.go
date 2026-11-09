@@ -31,13 +31,6 @@ var (
 	annotationRunningTask string
 )
 
-// asset subcommand flags
-var (
-	assetHTML     string
-	assetHTMLFile string
-	assetFormat   string
-)
-
 // send-notification subcommand flags
 var (
 	clientNotifyTitle     string
@@ -202,19 +195,6 @@ Examples:
 	Run: runAnnotateSession,
 }
 
-var assetCmd = &cobra.Command{
-	Use:   "asset",
-	Short: "Manage static HTML assets",
-	Long:  "Upload HTML and receive an externally reachable asset URL",
-}
-
-var assetCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Upload an HTML asset",
-	Long:  "Upload HTML from --html, --html-file, or stdin and receive an externally reachable asset URL.",
-	Run:   runAssetCreate,
-}
-
 var sendNotificationClientCmd = &cobra.Command{
 	Use:   "send-notification",
 	Short: "Send a push notification via API",
@@ -250,13 +230,6 @@ func init() {
 	annotateSessionCmd.Flags().StringVar(&annotationDescription, "description", "", "Description annotation")
 	annotateSessionCmd.Flags().StringVar(&annotationRunningTask, "running-task", "", "Running task annotation")
 
-	// asset create flags
-	assetCreateCmd.Flags().StringVar(&assetHTML, "html", "", "HTML content to upload")
-	assetCreateCmd.Flags().StringVar(&assetHTMLFile, "html-file", "", "Path to file containing HTML content; use - for stdin")
-	assetCreateCmd.Flags().StringVar(&assetFormat, "format", "url", `Output format: "url" or "json"`)
-
-	assetCmd.AddCommand(assetCreateCmd)
-
 	// send-notification flags
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyTitle, "title", "", "Notification title (required)")
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyBody, "body", "", "Notification body (required)")
@@ -277,7 +250,6 @@ func init() {
 	ClientCmd.AddCommand(deleteSessionCmd)
 	ClientCmd.AddCommand(annotateSessionCmd)
 	ClientCmd.AddCommand(sendNotificationClientCmd)
-	ClientCmd.AddCommand(assetCmd)
 	ClientCmd.AddCommand(backupSessionStateCmd)
 	ClientCmd.AddCommand(scheduleSessionSuspendCmd)
 }
@@ -722,45 +694,6 @@ func readContentFlag(content, contentFile string) (string, error) {
 		return string(data), nil
 	}
 	return content, nil
-}
-
-func runAssetCreate(cmd *cobra.Command, args []string) {
-	html, err := readContentFlag(assetHTML, assetHTMLFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	if html == "" {
-		fmt.Fprintf(os.Stderr, "Error: provide --html, --html-file, or --html-file -\n")
-		os.Exit(1)
-	}
-
-	c, err := resolveBaseClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	asset, err := c.CreateAsset(context.Background(), &client.CreateAssetRequest{HTML: html})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating asset: %v\n", err)
-		os.Exit(1)
-	}
-
-	switch assetFormat {
-	case "json":
-		out, err := json.MarshalIndent(asset, "", "  ")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(string(out))
-	case "url", "":
-		fmt.Println(asset.URL)
-	default:
-		fmt.Fprintf(os.Stderr, "Error: unsupported --format %q\n", assetFormat)
-		os.Exit(1)
-	}
 }
 
 func runDeleteSession(cmd *cobra.Command, args []string) {

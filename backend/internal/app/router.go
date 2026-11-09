@@ -53,7 +53,6 @@ type HandlerRegistry struct {
 	storageController              *controllers.StorageController
 	resourceTransferController     *controllers.ResourceTransferController
 	fileController                 *controllers.FileController
-	assetController                *controllers.AssetController
 	sessionProfileController       *controllers.SessionProfileController
 	provisionerController          *controllers.ProvisionerController
 	externalAllocationController   *controllers.ProvisionerController
@@ -277,12 +276,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] File controller initialized")
 	}
 
-	var assetController *controllers.AssetController
-	if server.assetStore != nil {
-		assetController = controllers.NewAssetController(server.assetStore)
-		log.Printf("[ROUTER] Asset controller initialized")
-	}
-
 	// Create session profile controller if session profile repository is available
 	var sessionProfileController *controllers.SessionProfileController
 	if server.sessionProfileRepo != nil {
@@ -393,7 +386,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			storageController:              storageController,
 			resourceTransferController:     resourceTransferController,
 			fileController:                 fileController,
-			assetController:                assetController,
 			sessionProfileController:       sessionProfileController,
 			provisionerController:          provisionerController,
 			externalAllocationController:   externalAllocationController,
@@ -897,15 +889,6 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] User file endpoints registered")
 	} else {
 		log.Printf("[ROUTES] User file repository not available, skipping file routes")
-	}
-
-	// Add asset upload route if asset storage is available.
-	if r.server.assetStore != nil && r.handlers.assetController != nil {
-		log.Printf("[ROUTES] Registering asset endpoints...")
-		r.echo.POST("/assets", r.handlers.assetController.CreateAsset, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		log.Printf("[ROUTES] Asset endpoints registered")
-	} else {
-		log.Printf("[ROUTES] Asset store not available, skipping asset routes")
 	}
 
 	// Add session profile routes if session profile repository is available (Kubernetes mode only)

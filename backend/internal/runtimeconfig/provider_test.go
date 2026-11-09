@@ -100,7 +100,7 @@ func TestProviderDoesNotApplyAdminSettingsAtRuntime(t *testing.T) {
 		},
 		"sessions": map[string]interface{}{"image": "runtime:image", "pvc_enabled": true},
 		"agents":   map[string]interface{}{"auth_mode": "bedrock", "env_vars": map[string]interface{}{"SYSTEM_DEFAULT": "enabled"}},
-		"storage":  map[string]interface{}{"redis_enabled": true, "redis_address": "runtime-redis:6379", "session_persistence_backend": "s3", "session_persistence_bucket": "runtime-bucket"},
+		"storage":  map[string]interface{}{"redis_enabled": true, "redis_address": "runtime-redis:6379"},
 	}
 
 	var notified *config.Config
@@ -116,7 +116,6 @@ func TestProviderDoesNotApplyAdminSettingsAtRuntime(t *testing.T) {
 	require.Equal(t, "user", current.Auth.GitHub.UserMapping.DefaultRole)
 	require.Empty(t, current.Auth.GitHub.UserMapping.TeamRoleMapping)
 	require.Empty(t, current.Redis.Addr)
-	require.Empty(t, current.SessionPersistence.Backend)
 	// Subscribers are not notified when runtime application is disabled.
 	require.Nil(t, notified)
 

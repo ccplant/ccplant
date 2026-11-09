@@ -108,8 +108,8 @@ application data still uses its separately configured KV backend.
 
 The same application values can render the API as a Google Cloud Run Knative
 Service by setting `cloudRun.enabled=true` and selecting
-`templates/cloud-run-service.yaml`. Settings under `api`, `config`, `github`,
-`asset` and `scia` are shared with the Kubernetes Deployment;
+`templates/cloud-run-service.yaml`. Settings under `api`, `config`, `github`
+and `scia` are shared with the Kubernetes Deployment;
 `cloudRun` contains platform-only service and scaling settings. For Cloud Run,
 an optional `cloudRun.authConfigSecretRef` can mount an auth configuration file
 from Google Cloud Secret Manager. The secret contents remain environment-owned
@@ -210,7 +210,7 @@ helm install my-agentapi-proxy ./helm/agentapi-proxy
 ```
 
 The default `values.yaml` is a minimal single-replica API-only installation.
-Session allocation, SCIA, asset serving, persistent session workspaces,
+Session allocation, SCIA, persistent session workspaces,
 background workers, OpenTelemetry collection, and Redis are opt-in. More than
 one API replica requires the bundled Redis or `api.redis.addr`.
 
@@ -725,24 +725,24 @@ kubectl create secret generic agentapi-r2-credentials \
   --from-literal=secret-access-key='<R2_SECRET_ACCESS_KEY>'
 ```
 
-Configure the API role, or use the same block under
-`sessionManager.sessionPersistence` when `sessionManager.enabled=true`:
+Configure the Session Manager role under `sessionManager.sessionPersistence`:
 
 ```yaml
-sessionPersistence:
-  backend: s3
-  suspendAfter: 1h
-  s3:
-    bucket: agentapi-sessions
-    region: auto
-    endpoint: https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com
-    prefix: agentapi-sessions/
-    accessKeyIdSecretRef:
-      name: agentapi-r2-credentials
-      key: access-key-id
-    secretAccessKeySecretRef:
-      name: agentapi-r2-credentials
-      key: secret-access-key
+sessionManager:
+  sessionPersistence:
+    backend: s3
+    suspendAfter: 1h
+    s3:
+      bucket: agentapi-sessions
+      region: auto
+      endpoint: https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com
+      prefix: agentapi-sessions/
+      accessKeyIdSecretRef:
+        name: agentapi-r2-credentials
+        key: access-key-id
+      secretAccessKeySecretRef:
+        name: agentapi-r2-credentials
+        key: secret-access-key
 ```
 
 The endpoint enables path-style S3 requests, which are supported by R2. The

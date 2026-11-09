@@ -53,6 +53,8 @@ func TestAdminSettingsControllerAutofillsRuntimeConfig(t *testing.T) {
 	require.Equal(t, []interface{}{"session:access"}, rule["permissions"])
 	require.True(t, response.SecretConfigured["github.oauth.client_secret"])
 	require.True(t, response.SecretConfigured["storage.database_auth_token"])
+	_, hasSessionPersistence := response.Sections["storage"].(map[string]interface{})["session_persistence_backend"]
+	require.False(t, hasSessionPersistence)
 	_, exposed := getNestedString(response.Sections, "github.oauth.client_secret")
 	require.False(t, exposed)
 }

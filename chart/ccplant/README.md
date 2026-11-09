@@ -3,7 +3,7 @@
 backendとfrontendを単一のHelm Releaseとしてデプロイします。
 
 デフォルトは、backend/frontend各1 replica、直接Kubernetes session有効、
-SCIA・asset server・永続PVC・各種background worker・Redis無効の最小構成です。
+永続PVC・各種background worker・Redis無効の最小構成です。
 
 frontendの認証Cookie用Secretを先に作成してください。
 
@@ -131,4 +131,4 @@ helm install ccplant oci://ghcr.io/ccplant/charts/ccplant \
   `backend.kubernetesSession.pvc.enabled=true`とStorageClassを設定してください。
 - proxyを複数replicaにする場合は、`backend.redis.enabled=true`または
   `backend.externalRedis.addr`を設定する必要があります。
-- SCIA、asset配信、schedule、SlackBot cleanup、stock inventoryは必要な場合だけ有効化してください。
+- SCIA、schedule、SlackBot cleanup、stock inventoryは必要な場合だけ有効化してください。

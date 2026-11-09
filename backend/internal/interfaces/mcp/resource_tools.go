@@ -162,7 +162,6 @@ func (s *MCPServer) registerResourceTools() {
 		}
 	}
 
-	add("create_asset", "Upload an HTML asset", s.handleCreateAsset)
 	add("list_schedules", "List schedules", s.listHandler("/schedules"))
 	add("get_schedule", "Get a schedule", s.getHandler("schedule", "/schedules/"))
 	add("create_schedule", "Create a schedule", s.createHandler("schedule", "/schedules"))
@@ -265,11 +264,6 @@ func (s *MCPServer) deleteHandler(kind, prefix string) func(context.Context, *mc
 		out, err := s.callResource(ctx, http.MethodDelete, prefix+url.PathEscape(input.ID), nil, nil)
 		return nil, out, err
 	}
-}
-
-func (s *MCPServer) handleCreateAsset(ctx context.Context, _ *mcp.CallToolRequest, input ResourceBodyInput) (*mcp.CallToolResult, ResourceOutput, error) {
-	out, err := s.callResource(ctx, http.MethodPost, "/assets", nil, input.Body)
-	return nil, out, err
 }
 
 func (s *MCPServer) handleListWebhooks(ctx context.Context, _ *mcp.CallToolRequest, input WebhookListInput) (*mcp.CallToolResult, ResourceOutput, error) {
