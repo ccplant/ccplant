@@ -31,6 +31,12 @@ type githubRoutingProfileRepo struct {
 	profile *entities.SessionProfile
 }
 
+type missingSettingsRepo struct {
+	repositories.SettingsRepository
+}
+
+func (missingSettingsRepo) Exists(context.Context, string) (bool, error) { return false, nil }
+
 func (r githubRoutingProfileRepo) Get(context.Context, string) (*entities.SessionProfile, error) {
 	return r.profile, nil
 }
@@ -305,6 +311,17 @@ func TestGitHubRoutingDefaultsUsesProfileRepositoryAndConnection(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "acme/shared", repository)
 	require.Equal(t, "connection-1", connectionID)
+}
+
+func TestGitHubRepositoriesForSessionAllowsTeamWithoutSettings(t *testing.T) {
+	controller := &SessionController{settingsRepo: missingSettingsRepo{}}
+	repositories, err := controller.githubRepositoriesForSession(context.Background(), entities.StartRequest{
+		Scope:                     entities.ScopeTeam,
+		TeamID:                    "team-1",
+		ProfileGitHubRepositories: []string{"^acme/shared$"},
+	}, "user-1", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"^acme/shared$"}, repositories)
 }
 
 func TestShouldUseGitHubBrokerPreservesExplicitCredentials(t *testing.T) {

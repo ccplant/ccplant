@@ -1790,6 +1790,21 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForOrganization(ctx contex
 // IssueBrokerLeaseForRepositories grants one session renewable access to the
 // working repository and explicitly configured additional repositories.
 func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx context.Context, sessionID, organization, repository string, additional []string) (string, string, bool, error) {
+	patterns, err := normalizeRepositoryPatterns(additional)
+	if err != nil {
+		return "", "", true, err
+	}
+	if strings.TrimSpace(repository) == "" {
+		if len(patterns) == 0 {
+			return "", "", false, nil
+		}
+		leaseToken := uuid.NewString() + uuid.NewString()
+		lease := githubBrokerLease{SessionID: sessionID, Repositories: prefixedRepositoryPatterns(patterns), ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
+		if err := c.createObject(ctx, brokerLeaseSecretName(leaseToken), githubBrokerLeaseLabel, lease, map[string]string{"agentapi.ccplant.io/session-id-hash": shortHash(sessionID)}); err != nil {
+			return "", "", true, fmt.Errorf("store GitHub broker lease: %w", err)
+		}
+		return leaseToken, "", true, nil
+	}
 	connections, err := c.listConnections(ctx)
 	if err != nil {
 		return "", "", false, err
@@ -1811,10 +1826,6 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx contex
 		return "", selected.ID, false, nil
 	}
 	primaryRepositories, err := normalizeRepositoryList([]string{repository})
-	if err != nil {
-		return "", "", true, err
-	}
-	patterns, err := normalizeRepositoryPatterns(additional)
 	if err != nil {
 		return "", "", true, err
 	}
@@ -1863,10 +1874,6 @@ func (c *GitHubConnectionsController) BrokerCredentials(ctx echo.Context) error 
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to refresh broker lease").SetInternal(updateErr)
 		}
 	}
-	connection, _, _, err := c.loadConnection(ctx.Request().Context(), lease.ConnectionID)
-	if err != nil || !connection.Enabled {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connection is unavailable")
-	}
 	repository := strings.TrimSpace(ctx.QueryParam("repository"))
 	if repository == "" {
 		repository = lease.Repository
@@ -1874,6 +1881,10 @@ func (c *GitHubConnectionsController) BrokerCredentials(ctx echo.Context) error 
 	normalized, normalizeErr := normalizeRepositoryList([]string{repository})
 	if normalizeErr != nil || len(normalized) != 1 || !repositoryAllowedByLease(normalized[0], lease) {
 		return echo.NewHTTPError(http.StatusForbidden, "repository is not allowed by this broker credential")
+	}
+	connection, err := c.connectionForBrokerRepository(ctx.Request().Context(), lease.ConnectionID, normalized[0])
+	if err != nil {
+		return err
 	}
 	if !containsOrganization(connection.Organizations, repositoryOwner(normalized[0])) {
 		return echo.NewHTTPError(http.StatusForbidden, "repository does not use the broker credential's GitHub connection")
@@ -1883,6 +1894,36 @@ func (c *GitHubConnectionsController) BrokerCredentials(ctx echo.Context) error 
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh GitHub token").SetInternal(err)
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"username": "x-access-token", "token": installationToken, "expires_at": expiresAt})
+}
+
+func (c *GitHubConnectionsController) connectionForBrokerRepository(ctx context.Context, connectionID, repository string) (githubConnection, error) {
+	if connectionID != "" {
+		connection, _, _, err := c.loadConnection(ctx, connectionID)
+		if err != nil || !connection.Enabled {
+			return githubConnection{}, echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connection is unavailable")
+		}
+		return connection, nil
+	}
+	connections, err := c.listConnections(ctx)
+	if err != nil {
+		return githubConnection{}, echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connections are unavailable").SetInternal(err)
+	}
+	owner := repositoryOwner(repository)
+	var selected *githubConnection
+	for i := range connections {
+		if !connections[i].Enabled || !containsOrganization(connections[i].Organizations, owner) {
+			continue
+		}
+		if selected != nil {
+			return githubConnection{}, echo.NewHTTPError(http.StatusServiceUnavailable, "multiple GitHub connections match the repository organization")
+		}
+		candidate := connections[i]
+		selected = &candidate
+	}
+	if selected == nil || selected.GitHubApp == nil || selected.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, selected.ID) {
+		return githubConnection{}, echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connection is unavailable")
+	}
+	return *selected, nil
 }
 
 func repositoryAllowedByLease(repository string, lease githubBrokerLease) bool {

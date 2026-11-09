@@ -86,11 +86,14 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 		log.Printf("[SETUP] Warning: write-pem skipped: %v", err)
 	}
 
-	// 2. Clone repository if configured
+	// 2. Configure broker-backed GitHub authentication even when no repository
+	// is preloaded. Profiles may allow repositories that the agent clones later.
+	if err := configureGitHubTokenBroker(settings); err != nil {
+		return fmt.Errorf("configure GitHub token broker: %w", err)
+	}
+
+	// Clone repository if configured.
 	if (settings.Repository != nil && settings.Repository.FullName != "") || len(settings.Repositories) > 0 {
-		if err := configureGitHubTokenBroker(settings); err != nil {
-			return fmt.Errorf("configure GitHub token broker: %w", err)
-		}
 		if settings.Repository != nil && settings.Repository.FullName != "" {
 			if err := cloneRepository(settings, settings.Repository); err != nil {
 				return fmt.Errorf("clone-repo failed: %w", err)
@@ -182,7 +185,17 @@ printf 'username=x-access-token\npassword=%s\n\n' "$token"
 		wrapperPath := filepath.Join(binDir, "gh")
 		wrapper := fmt.Sprintf(`#!/bin/sh
 set -eu
-response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+repository=""
+if [ "${1:-}" = "repo" ] && [ "${2:-}" = "clone" ] && [ -n "${3:-}" ]; then
+  repository="${3#https://*/}"
+  repository="${repository%%/}"
+  repository="${repository%%.git}"
+fi
+if [ -n "$repository" ]; then
+  response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+else
+  response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+fi
 token="$(printf '%%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 [ -n "$token" ] || exit 1
 GH_TOKEN="$token" exec %q "$@"
