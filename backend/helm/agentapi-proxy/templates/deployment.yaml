@@ -11,10 +11,6 @@
 {{- $assetPersistenceEnabled = $assetPersistence.enabled }}
 {{- end }}
 {{- $assetS3 := $asset.s3 | default dict }}
-{{- $sessionPersistence := .Values.sessionPersistence | default dict }}
-{{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
-{{- $sessionPersistenceSuspendAfter := $sessionPersistence.suspendAfter | default "1h" }}
-{{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
 {{- $valuesMap := .Values | toJson | fromJson }}
 {{- $openTelemetry := dig "observability" "openTelemetry" (dict) $valuesMap }}
 {{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
@@ -526,38 +522,6 @@ spec:
             {{- if $assetS3.endpoint }}
             - name: AGENTAPI_ASSET_S3_ENDPOINT
               value: {{ $assetS3.endpoint | quote }}
-            {{- end }}
-            {{- if not $sessionManagerEnabled }}
-            - name: AGENTAPI_SESSION_PERSISTENCE_BACKEND
-              value: {{ $sessionPersistenceBackend | quote }}
-            - name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER
-              value: {{ $sessionPersistenceSuspendAfter | quote }}
-            {{- if $sessionPersistenceS3.bucket }}
-            - name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET
-              value: {{ $sessionPersistenceS3.bucket | quote }}
-            - name: AGENTAPI_SESSION_PERSISTENCE_S3_REGION
-              value: {{ $sessionPersistenceS3.region | default "garage" | quote }}
-            - name: AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX
-              value: {{ $sessionPersistenceS3.prefix | default "agentapi-sessions/" | quote }}
-            - name: AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT
-              value: {{ $sessionPersistenceS3.endpoint | quote }}
-            {{- $sessionPersistenceAccessKeyRef := $sessionPersistenceS3.accessKeyIdSecretRef | default dict }}
-            {{- if $sessionPersistenceAccessKeyRef.name }}
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $sessionPersistenceAccessKeyRef.name | quote }}
-                  key: {{ $sessionPersistenceAccessKeyRef.key | default "access-key-id" | quote }}
-            {{- end }}
-            {{- $sessionPersistenceSecretKeyRef := $sessionPersistenceS3.secretAccessKeySecretRef | default dict }}
-            {{- if $sessionPersistenceSecretKeyRef.name }}
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $sessionPersistenceSecretKeyRef.name | quote }}
-                  key: {{ $sessionPersistenceSecretKeyRef.key | default "secret-access-key" | quote }}
-            {{- end }}
-            {{- end }}
             {{- end }}
             {{- if .Values.config.webhook.githubEnterpriseHost }}
             - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST

@@ -725,24 +725,24 @@ kubectl create secret generic agentapi-r2-credentials \
   --from-literal=secret-access-key='<R2_SECRET_ACCESS_KEY>'
 ```
 
-Configure the API role, or use the same block under
-`sessionManager.sessionPersistence` when `sessionManager.enabled=true`:
+Configure the Session Manager role under `sessionManager.sessionPersistence`:
 
 ```yaml
-sessionPersistence:
-  backend: s3
-  suspendAfter: 1h
-  s3:
-    bucket: agentapi-sessions
-    region: auto
-    endpoint: https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com
-    prefix: agentapi-sessions/
-    accessKeyIdSecretRef:
-      name: agentapi-r2-credentials
-      key: access-key-id
-    secretAccessKeySecretRef:
-      name: agentapi-r2-credentials
-      key: secret-access-key
+sessionManager:
+  sessionPersistence:
+    backend: s3
+    suspendAfter: 1h
+    s3:
+      bucket: agentapi-sessions
+      region: auto
+      endpoint: https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com
+      prefix: agentapi-sessions/
+      accessKeyIdSecretRef:
+        name: agentapi-r2-credentials
+        key: access-key-id
+      secretAccessKeySecretRef:
+        name: agentapi-r2-credentials
+        key: secret-access-key
 ```
 
 The endpoint enables path-style S3 requests, which are supported by R2. The

@@ -273,10 +273,6 @@ func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
 	put("storage.redis_address", cfg.Redis.Addr)
 	put("storage.redis_password", cfg.Redis.Password)
 	put("storage.redis_tls_enabled", cfg.Redis.TLSEnabled)
-	put("storage.session_persistence_backend", cfg.SessionPersistence.Backend)
-	if cfg.SessionPersistence.S3 != nil {
-		put("storage.session_persistence_bucket", cfg.SessionPersistence.S3.Bucket)
-	}
 	put("integrations.scia_enabled", cfg.Scia.Enabled)
 	put("integrations.todoist_enabled", cfg.Scia.TodoistCredential != "")
 

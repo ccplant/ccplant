@@ -138,7 +138,7 @@ export const adminSections: AdminSection[] = [
     ],
   },
   {
-    id: 'storage', title: 'ストレージ', description: 'KV、使用量、Redis、セッション永続化',
+    id: 'storage', title: 'ストレージ', description: 'KV、使用量、Redis',
     group: '実行基盤', icon: Database,
     fields: [
       { path: 'backend', label: 'KV Backend', type: 'select', options: [{ label: 'Kubernetes', value: 'kubernetes' }, { label: 'libSQL', value: 'libsql' }] },
@@ -149,8 +149,6 @@ export const adminSections: AdminSection[] = [
       { path: 'redis_address', label: 'External Redis Address', type: 'text' },
       { path: 'redis_password', label: 'Redis Password', type: 'secret' },
       { path: 'redis_tls_enabled', label: 'Redis TLS', type: 'toggle' },
-      { path: 'session_persistence_backend', label: 'Session Persistence', type: 'select', options: [{ label: 'Disabled', value: '' }, { label: 'Volume', value: 'volume' }, { label: 'S3', value: 's3' }] },
-      { path: 'session_persistence_bucket', label: 'S3 Bucket', type: 'text' },
     ],
   },
   {

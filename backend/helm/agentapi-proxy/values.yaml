@@ -818,26 +818,6 @@ asset:
     prefix: "agentapi-assets/"
     endpoint: ""
 
-# ACP conversation snapshots. "volume" stores each snapshot on its session's
-# workdir PVC; "s3" uses Garage/AWS-compatible object storage.
-sessionPersistence:
-  backend: ""
-  # Suspend the workload this long after an ACP turn is checkpointed.
-  suspendAfter: 1h
-  s3:
-    bucket: ""
-    region: garage
-    prefix: agentapi-sessions/
-    endpoint: ""
-    # Optional static credentials. Cloudflare R2 users can point these at an
-    # R2 API token Secret; workload identity remains available when omitted.
-    accessKeyIdSecretRef:
-      name: ""
-      key: access-key-id
-    secretAccessKeySecretRef:
-      name: ""
-      key: secret-access-key
-
 ingress:
   enabled: false
   className: "nginx"

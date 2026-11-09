@@ -350,13 +350,11 @@ func applySections(cfg *config.Config, sections map[string]interface{}) error {
 	}
 
 	var storage struct {
-		UsageEnabled              *bool   `json:"usage_enabled"`
-		RedisEnabled              *bool   `json:"redis_enabled"`
-		RedisAddress              *string `json:"redis_address"`
-		RedisPassword             *string `json:"redis_password"`
-		RedisTLSEnabled           *bool   `json:"redis_tls_enabled"`
-		SessionPersistenceBackend *string `json:"session_persistence_backend"`
-		SessionPersistenceBucket  *string `json:"session_persistence_bucket"`
+		UsageEnabled    *bool   `json:"usage_enabled"`
+		RedisEnabled    *bool   `json:"redis_enabled"`
+		RedisAddress    *string `json:"redis_address"`
+		RedisPassword   *string `json:"redis_password"`
+		RedisTLSEnabled *bool   `json:"redis_tls_enabled"`
 	}
 	decode("storage", &storage)
 	if storage.UsageEnabled != nil {
@@ -374,16 +372,6 @@ func applySections(cfg *config.Config, sections map[string]interface{}) error {
 	if storage.RedisTLSEnabled != nil {
 		cfg.Redis.TLSEnabled = *storage.RedisTLSEnabled
 	}
-	if storage.SessionPersistenceBackend != nil {
-		cfg.SessionPersistence.Backend = *storage.SessionPersistenceBackend
-	}
-	if storage.SessionPersistenceBucket != nil {
-		if cfg.SessionPersistence.S3 == nil {
-			cfg.SessionPersistence.S3 = &config.S3StorageConfig{}
-		}
-		cfg.SessionPersistence.S3.Bucket = *storage.SessionPersistenceBucket
-	}
-
 	var integrations struct {
 		SciaEnabled    *bool `json:"scia_enabled"`
 		TodoistEnabled *bool `json:"todoist_enabled"`

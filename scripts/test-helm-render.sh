@@ -233,22 +233,6 @@ assert_contains 'name: "session-count-db"' "$TMP_DIR/session-count.yaml"
 assert_contains 'name: AGENTAPI_SESSION_COUNT_ENABLED' "$TMP_DIR/session-count-cloud-run.yaml"
 assert_contains 'name: AGENTAPI_SESSION_COUNT_DATABASE_URL' "$TMP_DIR/session-count-cloud-run.yaml"
 
-# Cloudflare R2 session persistence injects credentials only into the API role
-# when the in-process session manager owns suspend/resume checkpoints.
-"$HELM_BIN" template backend-r2 "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --set sessionPersistence.backend=s3 \
-  --set sessionPersistence.s3.bucket=api-sessions \
-  --set sessionPersistence.s3.region=auto \
-  --set sessionPersistence.s3.endpoint=https://account-id.r2.cloudflarestorage.com \
-  --set sessionPersistence.s3.accessKeyIdSecretRef.name=r2-credentials \
-  --set sessionPersistence.s3.secretAccessKeySecretRef.name=r2-credentials \
-  >"$TMP_DIR/backend-r2.yaml"
-assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_REGION' "$TMP_DIR/backend-r2.yaml"
-assert_contains 'value: "auto"' "$TMP_DIR/backend-r2.yaml"
-assert_contains 'name: AWS_ACCESS_KEY_ID' "$TMP_DIR/backend-r2.yaml"
-assert_contains 'name: AWS_SECRET_ACCESS_KEY' "$TMP_DIR/backend-r2.yaml"
-assert_not_contains 'app.kubernetes.io/component: session-manager' "$TMP_DIR/backend-r2.yaml"
-
 # The umbrella chart keeps the full image as the session/runtime fallback while
 # selecting the lightweight image only for the API Deployment.
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant-default.yaml"

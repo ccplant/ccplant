@@ -11,7 +11,7 @@ A session-based proxy server for [coder/agentapi](https://github.com/coder/agent
 - **Session Search**: Query and filter active sessions by user ID and status
 - **Request Routing**: Proxy requests to appropriate agentapi server instances based on session ID
 - **Authentication & Authorization**: Role-based access control with API key management
-- **Session Persistence**: Optional session data persistence across server restarts
+- **Session Persistence**: Session Manager-owned checkpoint persistence across suspend/resume
 - **Graceful Shutdown**: Proper cleanup of all running sessions on server shutdown
 - **Client Library**: Go client for programmatic interaction with the proxy server
 
