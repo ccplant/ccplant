@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/acp/jsonrpc"
 )
@@ -34,6 +35,8 @@ type Client struct {
 	agentCaps   AgentCapabilities
 	mu          sync.RWMutex
 	sessionInfo SessionRuntimeInfo
+
+	loadingSession atomic.Bool
 
 	// updateCh is closed when the client is stopped.
 	updateCh chan SessionUpdate
@@ -63,6 +66,7 @@ func (c *Client) registerHandlers() {
 			log.Printf("[acp] session/update parse error: %v", err)
 			return
 		}
+		n.Update.Replayed = c.loadingSession.Load()
 		if n.Update.Kind == SessionUpdateKindConfigOptionUpdate {
 			c.updateSessionConfigOptions(n.Update.ConfigOptions)
 		}
@@ -290,7 +294,9 @@ func (c *Client) LoadSession(ctx context.Context, sessionId, cwd string, mcpServ
 		mcpServers = []McpServer{}
 	}
 	params := SessionLoadParams{SessionId: sessionId, Cwd: cwd, McpServers: mcpServers}
+	c.loadingSession.Store(true)
 	raw, err := c.rpc.Call(ctx, "session/load", params)
+	c.loadingSession.Store(false)
 	if err != nil {
 		return fmt.Errorf("acp session/load: %w", err)
 	}
