@@ -11,7 +11,7 @@ func TestBuildGitHubTagsIncludesSenderCredentialSource(t *testing.T) {
 	trigger := entities.NewWebhookTrigger("trigger-1", "Pull request")
 
 	tags := buildGitHubTags(webhook, &trigger, "pull_request", &GitHubPayload{
-		Sender: &GitHubUser{Login: " octocat "},
+		Sender: &GitHubUser{Login: " octocat ", ID: 42},
 	})
 
 	if got := tags["github_sender"]; got != "octocat" {
@@ -19,5 +19,8 @@ func TestBuildGitHubTagsIncludesSenderCredentialSource(t *testing.T) {
 	}
 	if got := tags["credential_source"]; got != "github_sender" {
 		t.Fatalf("credential_source = %q, want github_sender", got)
+	}
+	if got := tags["github_sender_id"]; got != "42" {
+		t.Fatalf("github_sender_id = %q, want 42", got)
 	}
 }

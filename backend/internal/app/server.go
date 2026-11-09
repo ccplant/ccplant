@@ -1172,6 +1172,15 @@ func (s *Server) GetApplicationKVStore() kvstore.Store {
 	return kvstore.NewKubernetesStore(s.persistenceClient)
 }
 
+// ResolveApplicationUserIDForGitHubUser maps a GitHub webhook sender to the
+// same stable application user ID used when personal credentials are saved.
+func (s *Server) ResolveApplicationUserIDForGitHubUser(ctx context.Context, githubUserID int64, login string) (string, error) {
+	if s.router == nil || s.router.handlers == nil || s.router.handlers.githubConnectionsController == nil {
+		return strings.TrimSpace(login), nil
+	}
+	return s.router.handlers.githubConnectionsController.ResolveApplicationUserIDForGitHubUser(ctx, githubUserID, login)
+}
+
 // SetSessionManager allows configuration of a custom session manager (for testing)
 func (s *Server) SetSessionManager(manager portrepos.SessionManager) {
 	s.sessionManager = manager

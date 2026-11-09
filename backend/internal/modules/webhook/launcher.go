@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -21,6 +22,13 @@ type WebhookSessionService struct {
 	repo           repositories.WebhookRepository
 	sessionManager repositories.SessionManager
 	launcher       *sessionuc.LaunchUseCase
+	githubUsers    GitHubApplicationUserResolver
+}
+
+// GitHubApplicationUserResolver maps GitHub's immutable numeric user ID to the
+// application user ID that owns personal resources such as Codex auth.json.
+type GitHubApplicationUserResolver interface {
+	ResolveApplicationUserIDForGitHubUser(context.Context, int64, string) (string, error)
 }
 
 // NewWebhookSessionService creates a new WebhookSessionService.
@@ -30,6 +38,14 @@ func NewWebhookSessionService(repo repositories.WebhookRepository, sessionManage
 		sessionManager: sessionManager,
 		launcher:       sessionuc.NewLaunchUseCase(sessionManager).WithSessionProfileRepository(sessionProfileRepo),
 	}
+}
+
+// WithGitHubApplicationUserResolver enables stable credential-owner resolution
+// for GitHub webhook senders. Without a resolver the legacy login-name behavior
+// is retained for compatibility with no-auth deployments.
+func (s *WebhookSessionService) WithGitHubApplicationUserResolver(resolver GitHubApplicationUserResolver) *WebhookSessionService {
+	s.githubUsers = resolver
+	return s
 }
 
 // SessionCreationParams holds all parameters needed to create a session from a webhook delivery.
@@ -78,7 +94,11 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		return "", false, fmt.Errorf("failed to render session params: %w", err)
 	}
 	credentialSource := resolveCredentialSource(tags, renderedParams)
-	triggeredUsername := applyTriggeredUsernameTags(tags, params.Payload, credentialSource)
+	triggeredUsername, err := s.resolveTriggeredUserID(ctx, tags, params.Payload, credentialSource)
+	if err != nil {
+		return "", false, err
+	}
+	applyTriggeredUserIDTags(tags, triggeredUsername, credentialSource)
 
 	initialMessage, err := s.determineInitialMessage(sessionConfig, renderedParams, params.Payload, params.DefaultMessage)
 	if err != nil {
@@ -187,15 +207,38 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	return result.SessionID, result.SessionReused, nil
 }
 
+func (s *WebhookSessionService) resolveTriggeredUserID(ctx context.Context, tags map[string]string, payload map[string]interface{}, credentialSource string) (string, error) {
+	username := resolveTriggeredUsername(tags, payload, credentialSource)
+	if credentialSource != "github_sender" || s.githubUsers == nil {
+		return username, nil
+	}
+	senderID, err := strconv.ParseInt(strings.TrimSpace(tags["github_sender_id"]), 10, 64)
+	if err != nil || senderID <= 0 {
+		return username, nil
+	}
+	userID, err := s.githubUsers.ResolveApplicationUserIDForGitHubUser(ctx, senderID, username)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve GitHub webhook sender credential owner: %w", err)
+	}
+	if strings.TrimSpace(userID) == "" {
+		return username, nil
+	}
+	return strings.TrimSpace(userID), nil
+}
+
 // applyTriggeredUsernameTags resolves the external actor selected by the
 // credential source and records the canonical value in the session tags.
 func applyTriggeredUsernameTags(tags map[string]string, payload map[string]interface{}, credentialSource string) string {
 	username := resolveTriggeredUsername(tags, payload, credentialSource)
-	if credentialSource == "triggered_user" && username != "" && strings.TrimSpace(tags["username"]) == "" {
-		tags["username"] = username
-	}
-	tags["triggered_user_id"] = username
+	applyTriggeredUserIDTags(tags, username, credentialSource)
 	return username
+}
+
+func applyTriggeredUserIDTags(tags map[string]string, userID, credentialSource string) {
+	if credentialSource == "triggered_user" && userID != "" && strings.TrimSpace(tags["username"]) == "" {
+		tags["username"] = userID
+	}
+	tags["triggered_user_id"] = userID
 }
 
 func resolveCredentialSource(tags map[string]string, params *entities.SessionParams) string {

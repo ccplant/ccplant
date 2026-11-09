@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/authzscope"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 )
 
@@ -21,6 +22,28 @@ type triggerIdentityCreator struct {
 	request  entities.StartRequest
 	id, user string
 	teams    []string
+}
+
+func TestWithTriggerCredentialPrincipalDelegatesOnlyExplicitCredentialSources(t *testing.T) {
+	base := authzscope.WithPrincipal(context.Background(), authzscope.Principal{
+		ActorID: "sa-org-team", UserID: "sa-org-team", TeamIDs: []string{"org/team"},
+	})
+	claims := executiontoken.ExecutionClaims{TriggeredUserID: "principal-123"}
+
+	for _, source := range []string{"github_sender", "triggered_user"} {
+		principal, ok := authzscope.FromContext(withTriggerCredentialPrincipal(base, claims, source))
+		require.True(t, ok)
+		require.Equal(t, "sa-org-team", principal.ActorID)
+		require.Equal(t, "sa-org-team", principal.UserID)
+		require.Equal(t, []string{"org/team"}, principal.TeamIDs)
+		require.Equal(t, []string{"principal-123"}, principal.DelegatedUserIDs)
+	}
+
+	for _, source := range []string{"", "team", "session_user", "none"} {
+		principal, ok := authzscope.FromContext(withTriggerCredentialPrincipal(base, claims, source))
+		require.True(t, ok)
+		require.Empty(t, principal.DelegatedUserIDs)
+	}
 }
 
 type triggerIdentityManager struct{ repositories.SessionManager }

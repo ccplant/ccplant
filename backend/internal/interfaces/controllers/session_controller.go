@@ -28,6 +28,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/authzscope"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -373,6 +374,11 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 				startReq.Tags[key] = id
 			}
 		}
+		credentialSource := ""
+		if startReq.Params != nil {
+			credentialSource = startReq.Params.CredentialSource
+		}
+		ctx.SetRequest(ctx.Request().WithContext(withTriggerCredentialPrincipal(ctx.Request().Context(), claims, credentialSource)))
 	}
 	explicitSandbox := startReq.Params != nil && startReq.Params.Sandbox != nil
 	explicitDocker := startReq.Params != nil && startReq.Params.Docker != nil
@@ -713,6 +719,23 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		response["context_template_id"] = contextTemplate.ID
 	}
 	return ctx.JSON(http.StatusOK, response)
+}
+
+func withTriggerCredentialPrincipal(ctx context.Context, claims executiontoken.ExecutionClaims, credentialSource string) context.Context {
+	if claims.TriggeredUserID == "" || (credentialSource != "triggered_user" && credentialSource != "github_sender") {
+		return ctx
+	}
+	principal, ok := authzscope.FromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	for _, userID := range principal.DelegatedUserIDs {
+		if userID == claims.TriggeredUserID {
+			return ctx
+		}
+	}
+	principal.DelegatedUserIDs = append(principal.DelegatedUserIDs, claims.TriggeredUserID)
+	return authzscope.WithPrincipal(ctx, principal)
 }
 
 func (c *SessionController) previewReuseStartSession(ctx echo.Context, startReq entities.StartRequest, ownerUserID string) (string, bool, string, error) {

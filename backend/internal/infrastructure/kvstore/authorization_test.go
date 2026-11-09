@@ -91,6 +91,23 @@ func TestEncryptedStoreRejectsTeamSwap(t *testing.T) {
 	}
 }
 
+func TestEncryptedStoreAllowsExplicitDelegatedUser(t *testing.T) {
+	backend := newMemoryStore()
+	store := encryptedTestStore(t, backend, "current", map[string]string{"current": randomEncodedKey(t)})
+	labels := map[string]string{"resource": "credentials", "agentapi.proxy/credentials-name": "alice"}
+	value := secretDocument(t, "alice", labels, "alice-secret")
+	if _, err := store.Create(context.Background(), Record{Kind: KindSecret, Namespace: "ns", Key: "alice", Labels: labels, Value: value}); err != nil {
+		t.Fatal(err)
+	}
+
+	teamServiceAccount := authzscope.WithPrincipal(context.Background(), authzscope.Principal{
+		ActorID: "sa-org-red", UserID: "sa-org-red", TeamIDs: []string{"org/red"}, DelegatedUserIDs: []string{"alice"},
+	})
+	if _, err := store.Get(teamServiceAccount, KindSecret, "ns", "alice"); err != nil {
+		t.Fatalf("delegated user Get: %v", err)
+	}
+}
+
 func hashIdentity(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
