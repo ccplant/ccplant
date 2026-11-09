@@ -86,11 +86,14 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 		log.Printf("[SETUP] Warning: write-pem skipped: %v", err)
 	}
 
-	// 2. Clone repository if configured
+	// 2. Configure broker-backed GitHub authentication even when no repository
+	// is preloaded. Profiles may allow repositories that the agent clones later.
+	if err := configureGitHubTokenBroker(settings); err != nil {
+		return fmt.Errorf("configure GitHub token broker: %w", err)
+	}
+
+	// Clone repository if configured.
 	if (settings.Repository != nil && settings.Repository.FullName != "") || len(settings.Repositories) > 0 {
-		if err := configureGitHubTokenBroker(settings); err != nil {
-			return fmt.Errorf("configure GitHub token broker: %w", err)
-		}
 		if settings.Repository != nil && settings.Repository.FullName != "" {
 			if err := cloneRepository(settings, settings.Repository); err != nil {
 				return fmt.Errorf("clone-repo failed: %w", err)

@@ -87,3 +87,13 @@ func TestConfigureGitHubTokenBrokerGHWrapperRequestsCloneRepository(t *testing.T
 		}
 	}
 }
+
+func TestSetupSettingsConfiguresGitHubBrokerWithoutPreloadedRepositories(t *testing.T) {
+	settings := &SessionSettings{Env: map[string]string{
+		"AGENTAPI_GITHUB_BROKER_URL": "https://broker.example.test/credentials",
+	}}
+	err := SetupSettings(settings, SetupOptions{CompileOptions: CompileOptions{OutputDir: t.TempDir()}})
+	if err == nil || !strings.Contains(err.Error(), "broker URL and token must both be configured") {
+		t.Fatalf("SetupSettings() error = %v, want incomplete broker configuration error", err)
+	}
+}
