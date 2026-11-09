@@ -163,6 +163,33 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.Equal(t, 3, installationCalls)
 	require.Equal(t, 3, tokenCalls)
 
+	dynamicLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-dynamic", "", "", []string{"acme/shared"})
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Empty(t, connectionID)
+	require.NotEmpty(t, dynamicLease)
+
+	dynamicReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-dynamic/github-credentials?repository=acme%2Fshared", nil)
+	dynamicReq.Header.Set("Authorization", "Bearer "+dynamicLease)
+	dynamicRecorder := httptest.NewRecorder()
+	dynamicCtx := e.NewContext(dynamicReq, dynamicRecorder)
+	dynamicCtx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	dynamicCtx.SetParamNames("sessionId")
+	dynamicCtx.SetParamValues("session-dynamic")
+	require.NoError(t, controller.BrokerCredentials(dynamicCtx))
+	require.Equal(t, http.StatusOK, dynamicRecorder.Code)
+
+	dynamicDeniedReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-dynamic/github-credentials?repository=acme%2Fsecret", nil)
+	dynamicDeniedReq.Header.Set("Authorization", "Bearer "+dynamicLease)
+	dynamicDeniedCtx := e.NewContext(dynamicDeniedReq, httptest.NewRecorder())
+	dynamicDeniedCtx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	dynamicDeniedCtx.SetParamNames("sessionId")
+	dynamicDeniedCtx.SetParamValues("session-dynamic")
+	err = controller.BrokerCredentials(dynamicDeniedCtx)
+	var deniedHTTPError *echo.HTTPError
+	require.ErrorAs(t, err, &deniedHTTPError)
+	require.Equal(t, http.StatusForbidden, deniedHTTPError.Code)
+
 	deniedReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-1/github-credentials?repository=acme%2Fsecret", nil)
 	deniedReq.Header.Set("Authorization", "Bearer "+lease)
 	deniedCtx := e.NewContext(deniedReq, httptest.NewRecorder())
@@ -170,7 +197,6 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	deniedCtx.SetParamNames("sessionId")
 	deniedCtx.SetParamValues("session-1")
 	err = controller.BrokerCredentials(deniedCtx)
-	var deniedHTTPError *echo.HTTPError
 	require.ErrorAs(t, err, &deniedHTTPError)
 	require.Equal(t, http.StatusForbidden, deniedHTTPError.Code)
 

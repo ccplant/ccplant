@@ -416,7 +416,16 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 	}
 	brokerConfigured := false
-	if shouldUseGitHubBroker(startReq, repository) && c.githubTokenResolver != nil {
+	useBroker := shouldUseGitHubBroker(startReq, repository)
+	var allowedRepositories []string
+	if !useBroker && startReq.Scope == entities.ScopeTeam && repository == "" && startReq.Params != nil && startReq.Params.GithubToken == "" && startReq.Params.ConnectionID == "" && c.githubTokenResolver != nil {
+		allowedRepositories, err = c.githubRepositoriesForSession(ctx.Request().Context(), startReq, userID, authzCtx)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		useBroker = len(allowedRepositories) > 0
+	}
+	if useBroker && c.githubTokenResolver != nil {
 		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
 			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))
 		}
@@ -424,12 +433,18 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		var matched bool
 		var err error
 		if dryRun {
-			_, connectionID, matched, err = c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(repository))
+			if repository == "" {
+				matched = len(allowedRepositories) > 0
+			} else {
+				_, connectionID, matched, err = c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(repository))
+			}
 			lease = "<generated-at-apply>"
 		} else {
-			allowedRepositories, allowedErr := c.githubRepositoriesForSession(ctx.Request().Context(), startReq, userID, authzCtx)
-			if allowedErr != nil {
-				return echo.NewHTTPError(http.StatusBadRequest, allowedErr.Error())
+			if allowedRepositories == nil {
+				allowedRepositories, err = c.githubRepositoriesForSession(ctx.Request().Context(), startReq, userID, authzCtx)
+				if err != nil {
+					return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+				}
 			}
 			lease, connectionID, matched, err = c.githubTokenResolver.IssueBrokerLeaseForRepositories(ctx.Request().Context(), sessionID, repositoryOwner(repository), repository, allowedRepositories)
 		}
@@ -438,11 +453,13 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		if matched {
 			brokerConfigured = true
-			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
-				if !dryRun {
-					c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+			if connectionID != "" {
+				if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
+					if !dryRun {
+						c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+					}
+					return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 				}
-				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 			}
 			brokerURL, err := githubBrokerURL(ctx, sessionID, c.githubBrokerBaseURL)
 			if err != nil {

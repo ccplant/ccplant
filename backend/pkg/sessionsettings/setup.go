@@ -182,7 +182,17 @@ printf 'username=x-access-token\npassword=%s\n\n' "$token"
 		wrapperPath := filepath.Join(binDir, "gh")
 		wrapper := fmt.Sprintf(`#!/bin/sh
 set -eu
-response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+repository=""
+if [ "${1:-}" = "repo" ] && [ "${2:-}" = "clone" ] && [ -n "${3:-}" ]; then
+  repository="${3#https://*/}"
+  repository="${repository%%/}"
+  repository="${repository%%.git}"
+fi
+if [ -n "$repository" ]; then
+  response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+else
+  response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+fi
 token="$(printf '%%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 [ -n "$token" ] || exit 1
 GH_TOKEN="$token" exec %q "$@"
