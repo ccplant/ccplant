@@ -88,7 +88,6 @@ AgentAPI Proxy MCP Server はセッション操作に加えて、CLI のリソ�
 
 | リソース | MCP tools |
 |---|---|
-| Asset | `create_asset` |
 | Schedule | `list_schedules`, `get_schedule`, `create_schedule`, `update_schedule`, `delete_schedule` |
 | Webhook | `list_webhooks`, `get_webhook`, `create_webhook`, `update_webhook`, `delete_webhook`, `regenerate_webhook_secret` |
 | SlackBot | `list_slackbots`, `get_slackbot`, `create_slackbot`, `update_slackbot`, `delete_slackbot`, `simulate_slackbot` |

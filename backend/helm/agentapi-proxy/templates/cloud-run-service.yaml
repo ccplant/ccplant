@@ -5,7 +5,6 @@
 {{- $kv := $api.kvStore }}
 {{- $redis := $api.redis | default dict }}
 {{- $oauth := .Values.config.auth.github.oauth }}
-{{- $asset := .Values.asset }}
 {{- $authConfigSecretRef := $cloudRun.authConfigSecretRef }}
 apiVersion: serving.knative.dev/v1
 kind: Service
@@ -118,9 +117,6 @@ spec:
             {{- with .Values.config.webhook.baseUrl }}
             - {name: AGENTAPI_WEBHOOK_BASE_URL, value: {{ . | quote }}}
             {{- end }}
-            - {name: AGENTAPI_ASSET_BACKEND, value: {{ $asset.backend | quote }}}
-            - {name: AGENTAPI_ASSET_PUBLIC_BASE_URL, value: {{ $asset.publicBaseUrl | quote }}}
-            - {name: AGENTAPI_ASSET_STORAGE_PATH, value: {{ $asset.storagePath | quote }}}
             - {name: AGENTAPI_SCIA_ENABLED, value: {{ .Values.scia.enabled | quote }}}
             - {name: AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED, value: {{ $cloudRun.localSessionFallbackEnabled | quote }}}
             {{- with .Values.config.vapid.publicKey }}

@@ -1,19 +1,10 @@
 {{- if .Values.ingress.enabled -}}
-{{- $asset := .Values.asset | default dict }}
 {{- $scia := .Values.scia | default dict }}
 {{- $sciaService := $scia.service | default dict }}
 {{- $sciaEnabled := true }}
 {{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
 {{- $sciaEnabled = $scia.enabled }}
 {{- end }}
-{{- $assetBackend := $asset.backend | default "nginx" }}
-{{- $assetEnabled := true }}
-{{- if hasKey $asset "enabled" }}
-{{- $assetEnabled = $asset.enabled }}
-{{- end }}
-{{- $assetNginx := $asset.nginx | default dict }}
-{{- $assetNginxService := $assetNginx.service | default dict }}
-{{- $assetNginxServicePort := $assetNginxService.port | default 80 }}
 {{- $ingressClassName := .Values.ingress.className }}
 {{- if .Values.global }}
   {{- if .Values.global.ingress }}
@@ -71,22 +62,6 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
-          {{- if and $assetEnabled (eq $assetBackend "nginx") }}
-          - path: /assets
-            {{- if semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion }}
-            pathType: Prefix
-            {{- end }}
-            backend:
-              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
-              service:
-                name: {{ include "agentapi-proxy.fullname" $ }}-assets
-                port:
-                  number: {{ $assetNginxServicePort }}
-              {{- else }}
-              serviceName: {{ include "agentapi-proxy.fullname" $ }}-assets
-              servicePort: {{ $assetNginxServicePort }}
-              {{- end }}
-          {{- end }}
           {{- if $sciaEnabled }}
           {{- range list "/oauth/authorize" "/oauth/callback" "/oauth/logout" "/oauth/refresh" }}
           - path: {{ . }}
@@ -170,22 +145,6 @@ spec:
     - host: {{ $apiHostname | quote }}
       http:
         paths:
-          {{- if and $assetEnabled (eq $assetBackend "nginx") }}
-          - path: /assets
-            {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
-            pathType: Prefix
-            {{- end }}
-            backend:
-              {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
-              service:
-                name: {{ include "agentapi-proxy.fullname" . }}-assets
-                port:
-                  number: {{ $assetNginxServicePort }}
-              {{- else }}
-              serviceName: {{ include "agentapi-proxy.fullname" . }}-assets
-              servicePort: {{ $assetNginxServicePort }}
-              {{- end }}
-          {{- end }}
           {{- if $sciaEnabled }}
           {{- range list "/oauth/authorize" "/oauth/callback" "/oauth/logout" "/oauth/refresh" }}
           - path: {{ . }}

@@ -266,7 +266,6 @@ assert_not_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-d
 assert_not_contains 'app.kubernetes.io/component: worker' "$TMP_DIR/backend-default.yaml"
 assert_not_contains '^kind: PersistentVolumeClaim$' "$TMP_DIR/ccplant-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: scia' "$TMP_DIR/ccplant-default.yaml"
-assert_not_contains 'app.kubernetes.io/component: asset' "$TMP_DIR/ccplant-default.yaml"
 
 # The frontend must configure the environment name consumed by the application
 # and derive http URLs when TLS is disabled.

@@ -35,7 +35,6 @@ process startup, but are not hot-swapped in a running process:
 - usage database;
 - Redis connections;
 - encryption backend/key;
-- asset backend;
 - OAuth provider enable/disable transitions and credentials that require a
   provider to be created or removed;
 - Slack Socket Mode and external session-manager connections.

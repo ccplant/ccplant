@@ -434,25 +434,6 @@ type SessionPersistenceConfig struct {
 	S3           *S3StorageConfig `json:"s3,omitempty" mapstructure:"s3"`
 }
 
-// AssetConfig represents static asset upload configuration.
-type AssetConfig struct {
-	// Backend is the storage backend type: "nginx" (default) or "s3".
-	Backend string `json:"backend" mapstructure:"backend"`
-	// PublicBaseURL is the externally reachable base URL used to build asset URLs.
-	PublicBaseURL string `json:"public_base_url" mapstructure:"public_base_url"`
-	// StoragePath is the local directory shared with nginx when Backend is "nginx".
-	StoragePath string         `json:"storage_path" mapstructure:"storage_path"`
-	S3          *AssetS3Config `json:"s3,omitempty" mapstructure:"s3"`
-}
-
-// AssetS3Config represents S3 backend configuration for static assets.
-type AssetS3Config struct {
-	Bucket   string `json:"bucket" mapstructure:"bucket"`
-	Region   string `json:"region" mapstructure:"region"`
-	Prefix   string `json:"prefix" mapstructure:"prefix"`
-	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
-}
-
 // SessionManagerConfig holds configuration for the session manager forwarding endpoint.
 // When enabled, External Session Manager (small-cluster mode) accepts pre-built SessionSettings from a
 // trusted upstream proxy (親プロキシ) and creates sessions without requiring local secrets.
@@ -649,8 +630,6 @@ type Config struct {
 	// Scia is the configuration for scia OAuth token broker/proxy integration.
 	Scia               SciaConfig               `json:"scia" mapstructure:"scia"`
 	SessionPersistence SessionPersistenceConfig `json:"session_persistence" mapstructure:"session_persistence"`
-	// Asset is the configuration for static asset upload and serving.
-	Asset AssetConfig `json:"asset" mapstructure:"asset"`
 	// Slack is the configuration for Slack bot inbound webhook functionality
 	Slack SlackConfig `json:"slack" mapstructure:"slack"`
 	// SessionManager is the configuration for the session manager forwarding endpoint.
@@ -1048,40 +1027,6 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		}
 	}
 
-	if backend := os.Getenv("AGENTAPI_ASSET_BACKEND"); backend != "" {
-		config.Asset.Backend = backend
-	}
-	if publicBaseURL := os.Getenv("AGENTAPI_ASSET_PUBLIC_BASE_URL"); publicBaseURL != "" {
-		config.Asset.PublicBaseURL = publicBaseURL
-	}
-	if storagePath := os.Getenv("AGENTAPI_ASSET_STORAGE_PATH"); storagePath != "" {
-		config.Asset.StoragePath = storagePath
-	}
-	if bucket := os.Getenv("AGENTAPI_ASSET_S3_BUCKET"); bucket != "" {
-		if config.Asset.S3 == nil {
-			config.Asset.S3 = &AssetS3Config{}
-		}
-		config.Asset.S3.Bucket = bucket
-	}
-	if region := os.Getenv("AGENTAPI_ASSET_S3_REGION"); region != "" {
-		if config.Asset.S3 == nil {
-			config.Asset.S3 = &AssetS3Config{}
-		}
-		config.Asset.S3.Region = region
-	}
-	if prefix := os.Getenv("AGENTAPI_ASSET_S3_PREFIX"); prefix != "" {
-		if config.Asset.S3 == nil {
-			config.Asset.S3 = &AssetS3Config{}
-		}
-		config.Asset.S3.Prefix = prefix
-	}
-	if endpoint := os.Getenv("AGENTAPI_ASSET_S3_ENDPOINT"); endpoint != "" {
-		if config.Asset.S3 == nil {
-			config.Asset.S3 = &AssetS3Config{}
-		}
-		config.Asset.S3.Endpoint = endpoint
-	}
-
 	if enabled, ok := os.LookupEnv("AGENTAPI_SCIA_ENABLED"); ok {
 		config.Scia.Enabled = strings.EqualFold(enabled, "true")
 	}
@@ -1396,15 +1341,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_persistence.s3.access_key_id", "AGENTAPI_SESSION_PERSISTENCE_S3_ACCESS_KEY_ID")
 	_ = v.BindEnv("session_persistence.s3.secret_access_key", "AGENTAPI_SESSION_PERSISTENCE_S3_SECRET_ACCESS_KEY")
 
-	// Asset backend configuration
-	_ = v.BindEnv("asset.backend", "AGENTAPI_ASSET_BACKEND")
-	_ = v.BindEnv("asset.public_base_url", "AGENTAPI_ASSET_PUBLIC_BASE_URL")
-	_ = v.BindEnv("asset.storage_path", "AGENTAPI_ASSET_STORAGE_PATH")
-	_ = v.BindEnv("asset.s3.bucket", "AGENTAPI_ASSET_S3_BUCKET")
-	_ = v.BindEnv("asset.s3.region", "AGENTAPI_ASSET_S3_REGION")
-	_ = v.BindEnv("asset.s3.prefix", "AGENTAPI_ASSET_S3_PREFIX")
-	_ = v.BindEnv("asset.s3.endpoint", "AGENTAPI_ASSET_S3_ENDPOINT")
-
 	// External memory-server backend configuration
 
 	// Redis configuration
@@ -1585,14 +1521,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("session_persistence.suspend_after", "1h")
 	v.SetDefault("session_persistence.s3.prefix", "agentapi-sessions/")
 
-	// Asset backend defaults
-	v.SetDefault("asset.backend", "nginx")
-	v.SetDefault("asset.public_base_url", "")
-	v.SetDefault("asset.storage_path", "/var/lib/agentapi-assets")
-	v.SetDefault("asset.s3.prefix", "agentapi-assets/")
-	v.SetDefault("asset.s3.region", "")
-	v.SetDefault("asset.s3.endpoint", "")
-
 	// Slack defaults
 	v.SetDefault("slack.dry_run", false)
 
@@ -1631,15 +1559,6 @@ func applyConfigDefaults(config *Config) {
 		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
 			config.Auth.GitHub.OAuth.Scope = "read:user read:org project"
 		}
-	}
-	if config.Asset.Backend == "" {
-		config.Asset.Backend = "nginx"
-	}
-	if config.Asset.StoragePath == "" {
-		config.Asset.StoragePath = "/var/lib/agentapi-assets"
-	}
-	if config.Asset.S3 != nil && config.Asset.S3.Prefix == "" {
-		config.Asset.S3.Prefix = "agentapi-assets/"
 	}
 	if config.Scia.NoProxy == "" {
 		config.Scia.NoProxy = "localhost,127.0.0.1,.svc,.cluster.local"
@@ -1781,13 +1700,6 @@ func DefaultConfig() *Config {
 			LeaseDuration: "9m",
 			RenewDeadline: "6m",
 			RetryPeriod:   "1m",
-		},
-		Asset: AssetConfig{
-			Backend:     "nginx",
-			StoragePath: "/var/lib/agentapi-assets",
-			S3: &AssetS3Config{
-				Prefix: "agentapi-assets/",
-			},
 		},
 	}
 }

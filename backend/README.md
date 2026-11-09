@@ -71,7 +71,7 @@ Production deployments should set `AGENTAPI_KV_STORE_BACKEND` and
 `AGENTAPI_KV_STORE_DATABASE_URL` (plus `AGENTAPI_KV_STORE_AUTH_TOKEN` when the
 database requires one). Set `AGENTAPI_SESSION_MANAGER_API_URL` and
 `AGENTAPI_SESSION_MANAGER_API_TOKEN` when session execution is remote.
-Authentication, Redis, encryption, asset storage, and provider-specific environment variables remain
+Authentication, Redis, encryption, and provider-specific environment variables remain
 feature-dependent; the Helm chart renders these from `api.*` values. Mount a
 JSON/YAML config and add `server --config /path/to/config` only when file-based
 configuration is preferred. Static API/OpenAPI content is embedded in the Go

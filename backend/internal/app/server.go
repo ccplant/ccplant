@@ -99,8 +99,7 @@ type Server struct {
 	scheduleManager             schedule.Manager
 	apiTokenRepo                portrepos.APITokenRepository // Named API token repository
 	localUserRepo               portrepos.LocalUserRepository
-	apiTokenDeps                *apiTokenInitDeps   // Wiring for bootstrap/reconcile
-	assetStore                  services.AssetStore // Static asset storage backend
+	apiTokenDeps                *apiTokenInitDeps // Wiring for bootstrap/reconcile
 	sessionStateStore           services.SessionStateStore
 	sessionControlStore         sessioncontrol.Store
 	esmControlStore             esmcontrol.Store
@@ -174,7 +173,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "assets" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "storages" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "storages" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
 			}
 			return false
 		},
@@ -504,11 +503,6 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 	log.Printf("[SERVER] Session profile repository initialized")
 
-	assetStore, err := services.NewAssetStore(context.Background(), cfg.Asset)
-	if err != nil {
-		log.Fatalf("[SERVER] Failed to initialize asset store: %v", err)
-	}
-	log.Printf("[SERVER] Asset store initialized (backend: %s)", cfg.Asset.Backend)
 	sessionStateStore, err := services.NewSessionStateStore(context.Background(), cfg.SessionPersistence)
 	if err != nil {
 		if cfg.SessionPersistence.Backend != "s3" {
@@ -584,7 +578,6 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		localUserRepo:               localUserRepo,
 		namespace:                   namespace,
 		personalAPIKeyRepo:          personalAPIKeyRepo,
-		assetStore:                  assetStore,
 		sessionStateStore:           sessionStateStore,
 		sessionControlStore:         sessionControlStore,
 		esmControlStore:             esmControlStore,

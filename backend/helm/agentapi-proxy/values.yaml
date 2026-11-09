@@ -204,7 +204,7 @@ api:
       key: token
 
 # Optional Google Cloud Run output. The application configuration continues to
-# come from this chart's existing api/config/github/asset/scia
+# come from this chart's existing api/config/github/scia
 # values; this section contains only Cloud Run platform settings.
 cloudRun:
   enabled: false
@@ -785,38 +785,6 @@ scia:
   nodeSelector: {}
   tolerations: []
   affinity: {}
-
-asset:
-  enabled: false
-  backend: nginx
-  publicBaseUrl: ""
-  storagePath: /var/lib/agentapi-assets
-  nginx:
-    image:
-      repository: nginx
-      tag: "1.27-alpine"
-      pullPolicy: IfNotPresent
-    replicaCount: 1
-    service:
-      port: 80
-    resources:
-      requests:
-        memory: "64Mi"
-        cpu: "50m"
-      limits:
-        memory: "128Mi"
-        cpu: "250m"
-  persistence:
-    enabled: false
-    storageClass: ""
-    accessModes:
-      - ReadWriteOnce
-    size: 1Gi
-  s3:
-    bucket: ""
-    region: ""
-    prefix: "agentapi-assets/"
-    endpoint: ""
 
 ingress:
   enabled: false
