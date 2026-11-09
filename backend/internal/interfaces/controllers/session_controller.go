@@ -178,12 +178,18 @@ func (c *SessionController) githubRepositoriesForSession(ctx context.Context, re
 		}
 	}
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" && c.settingsRepo != nil {
-		settings, err := c.settingsRepo.FindByName(ctx, req.TeamID)
+		exists, err := c.settingsRepo.Exists(ctx, req.TeamID)
 		if err != nil {
-			return nil, fmt.Errorf("load team GitHub repositories: %w", err)
+			return nil, fmt.Errorf("check team GitHub repositories: %w", err)
 		}
-		if settings != nil {
-			repositories = append(repositories, settings.GitHubRepositories()...)
+		if exists {
+			settings, err := c.settingsRepo.FindByName(ctx, req.TeamID)
+			if err != nil {
+				return nil, fmt.Errorf("load team GitHub repositories: %w", err)
+			}
+			if settings != nil {
+				repositories = append(repositories, settings.GitHubRepositories()...)
+			}
 		}
 	}
 	return normalizeRepositoryPatterns(repositories)
