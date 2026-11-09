@@ -18,7 +18,7 @@ printf 'header = "X-API-Key: %s"\n' "$key" > "$work_dir/curl.conf"
 unset key
 curl -fsS "$api_url/health" >/dev/null
 curl -fsS --max-time 300 --config "$work_dir/curl.conf" \
-  -H 'Content-Type: application/json' -d '{"agent_type":"claude-acp","tags":{"test":"k3s-smoke"}}' \
+  -H 'Content-Type: application/json' -d '{"params":{"agent_type":"claude-acp"},"tags":{"test":"k3s-smoke"}}' \
   "$api_url/start" > "$work_dir/start.json"
 session_id=$(jq -er '.session_id' "$work_dir/start.json")
 # /start accepts an allocation asynchronously; wait for its Pod to exist before
