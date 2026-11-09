@@ -81,7 +81,7 @@ func principalCanAccess(principal authzscope.Principal, labels map[string]string
 	}
 	for _, key := range userOwnerLabels {
 		if owner := labels[key]; owner != "" {
-			return identityMatches(owner, principal.UserID)
+			return identityMatches(owner, principal.UserID) || anyIdentityMatches(owner, principal.DelegatedUserIDs)
 		}
 	}
 	for _, key := range ambiguousOwnerLabels {
@@ -90,6 +90,9 @@ func principalCanAccess(principal authzscope.Principal, labels map[string]string
 				return principal.Admin || anyIdentityMatches(owner, principal.TeamIDs)
 			}
 			if identityMatches(owner, principal.UserID) {
+				return true
+			}
+			if anyIdentityMatches(owner, principal.DelegatedUserIDs) {
 				return true
 			}
 			return principal.Admin || anyIdentityMatches(owner, principal.TeamIDs)

@@ -10,14 +10,16 @@ type contextKey struct{}
 // An absent Principal denotes an internal/system operation for backwards
 // compatibility with workers and administrative migration commands.
 type Principal struct {
-	ActorID string
-	UserID  string
-	TeamIDs []string
-	Admin   bool
+	ActorID          string
+	UserID           string
+	TeamIDs          []string
+	DelegatedUserIDs []string
+	Admin            bool
 }
 
 func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 	principal.TeamIDs = append([]string(nil), principal.TeamIDs...)
+	principal.DelegatedUserIDs = append([]string(nil), principal.DelegatedUserIDs...)
 	return context.WithValue(ctx, contextKey{}, principal)
 }
 

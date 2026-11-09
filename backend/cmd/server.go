@@ -552,7 +552,8 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 	}
 
 	// Create and register webhook handlers with baseURL from config
-	webhookHandlers := webhook.NewHandlers(webhookRepo, newTriggerSessionManager(configData), configData.Webhook.BaseURL, proxyServer.GetSessionProfileRepository())
+	webhookHandlers := webhook.NewHandlers(webhookRepo, newTriggerSessionManager(configData), configData.Webhook.BaseURL, proxyServer.GetSessionProfileRepository()).
+		WithGitHubApplicationUserResolver(proxyServer)
 	proxyServer.AddCustomHandler(webhookHandlers)
 
 	if configData.Webhook.BaseURL != "" {

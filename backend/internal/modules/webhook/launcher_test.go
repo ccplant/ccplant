@@ -2,12 +2,25 @@ package webhook
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
+
+type githubApplicationUserResolverStub struct {
+	userID string
+	err    error
+	id     int64
+	login  string
+}
+
+func (r *githubApplicationUserResolverStub) ResolveApplicationUserIDForGitHubUser(_ context.Context, id int64, login string) (string, error) {
+	r.id, r.login = id, login
+	return r.userID, r.err
+}
 
 type webhookLaunchSessionManager struct {
 	existing          []entities.Session
@@ -102,6 +115,41 @@ func TestCreateSessionFromWebhookDefersReuseToStartAPI(t *testing.T) {
 	}
 }
 
+func TestCreateSessionFromGitHubWebhookUsesStableCredentialOwner(t *testing.T) {
+	manager := &webhookLaunchSessionManager{}
+	resolver := &githubApplicationUserResolverStub{userID: "principal-123"}
+	webhook := entities.NewWebhook("webhook-1", "test", "webhook-owner", entities.WebhookTypeGitHub)
+	trigger := entities.NewWebhookTrigger("trigger-1", "test")
+	service := NewWebhookSessionService(nil, manager, nil).
+		WithGitHubApplicationUserResolver(resolver)
+
+	_, _, err := service.CreateSessionFromWebhook(context.Background(), SessionCreationParams{
+		Webhook: webhook,
+		Trigger: &trigger,
+		Payload: map[string]interface{}{},
+		Tags: map[string]string{
+			"credential_source": "github_sender",
+			"github_sender":     "octocat",
+			"github_sender_id":  "42",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateSessionFromWebhook() error = %v", err)
+	}
+	if manager.createdRequest == nil {
+		t.Fatal("CreateSession was not called")
+	}
+	if got := manager.createdRequest.TriggeredUserID; got != "principal-123" {
+		t.Fatalf("TriggeredUserID = %q, want principal-123", got)
+	}
+	if got := manager.createdRequest.CredentialSource; got != "github_sender" {
+		t.Fatalf("CredentialSource = %q, want github_sender", got)
+	}
+	if got := manager.createdRequest.Tags["triggered_user_id"]; got != "principal-123" {
+		t.Fatalf("triggered_user_id tag = %q, want principal-123", got)
+	}
+}
+
 func TestResolveTriggeredUsername(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -163,6 +211,56 @@ func TestResolveTriggeredUsername(t *testing.T) {
 				t.Fatalf("resolveTriggeredUsername() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveTriggeredUserIDUsesStableGitHubApplicationUserID(t *testing.T) {
+	resolver := &githubApplicationUserResolverStub{userID: "principal-123"}
+	service := NewWebhookSessionService(nil, &webhookLaunchSessionManager{}, nil).
+		WithGitHubApplicationUserResolver(resolver)
+
+	got, err := service.resolveTriggeredUserID(context.Background(), map[string]string{
+		"github_sender":    "octocat",
+		"github_sender_id": "42",
+	}, nil, "github_sender")
+	if err != nil {
+		t.Fatalf("resolveTriggeredUserID() error = %v", err)
+	}
+	if got != "principal-123" {
+		t.Fatalf("resolveTriggeredUserID() = %q, want principal-123", got)
+	}
+	if resolver.id != 42 || resolver.login != "octocat" {
+		t.Fatalf("resolver input = (%d, %q), want (42, octocat)", resolver.id, resolver.login)
+	}
+}
+
+func TestResolveTriggeredUserIDFallsBackToLoginWithoutNumericSenderID(t *testing.T) {
+	resolver := &githubApplicationUserResolverStub{userID: "principal-123"}
+	service := NewWebhookSessionService(nil, &webhookLaunchSessionManager{}, nil).
+		WithGitHubApplicationUserResolver(resolver)
+
+	got, err := service.resolveTriggeredUserID(context.Background(), map[string]string{
+		"github_sender": "octocat",
+	}, nil, "github_sender")
+	if err != nil || got != "octocat" {
+		t.Fatalf("resolveTriggeredUserID() = %q, %v; want octocat, nil", got, err)
+	}
+	if resolver.id != 0 {
+		t.Fatalf("resolver called with id %d", resolver.id)
+	}
+}
+
+func TestResolveTriggeredUserIDReturnsResolverFailure(t *testing.T) {
+	resolver := &githubApplicationUserResolverStub{err: errors.New("store unavailable")}
+	service := NewWebhookSessionService(nil, &webhookLaunchSessionManager{}, nil).
+		WithGitHubApplicationUserResolver(resolver)
+
+	_, err := service.resolveTriggeredUserID(context.Background(), map[string]string{
+		"github_sender":    "octocat",
+		"github_sender_id": "42",
+	}, nil, "github_sender")
+	if err == nil {
+		t.Fatal("resolveTriggeredUserID() error = nil")
 	}
 }
 

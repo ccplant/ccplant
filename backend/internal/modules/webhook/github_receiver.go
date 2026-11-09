@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -648,6 +649,9 @@ func buildGitHubTags(
 	}
 	if payload.Sender != nil && strings.TrimSpace(payload.Sender.Login) != "" {
 		tags["github_sender"] = strings.TrimSpace(payload.Sender.Login)
+		if payload.Sender.ID > 0 {
+			tags["github_sender_id"] = strconv.FormatInt(payload.Sender.ID, 10)
+		}
 		tags["credential_source"] = "github_sender"
 	}
 	return tags

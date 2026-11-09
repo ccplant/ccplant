@@ -35,6 +35,13 @@ func NewHandlers(repo repositories.WebhookRepository, sessionManager repositorie
 	}
 }
 
+// WithGitHubApplicationUserResolver configures stable GitHub sender identity
+// resolution for signed deliveries and management-API test triggers.
+func (h *Handlers) WithGitHubApplicationUserResolver(resolver GitHubApplicationUserResolver) *Handlers {
+	h.githubController.sessionService.WithGitHubApplicationUserResolver(resolver)
+	return h
+}
+
 // GetName returns the name of this handler for logging
 func (h *Handlers) GetName() string {
 	return "WebhookHandlers"
