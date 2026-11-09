@@ -99,3 +99,56 @@ func TestEnsureSessionWorkloadRecreatesMissingDeployment(t *testing.T) {
 		t.Fatalf("post-resume suspend deadline was not scheduled: %#v", service.Annotations)
 	}
 }
+
+func TestEnsureSessionWorkloadKeepsLocalManagerResumeBehavior(t *testing.T) {
+	pvcEnabled := true
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: &pvcEnabled, CPURequest: "100m", CPULimit: "1",
+		MemoryRequest: "128Mi", MemoryLimit: "512Mi",
+	}, SessionPersistence: config.SessionPersistenceConfig{Backend: "volume", SuspendAfter: "1h"}}
+	settingsData, err := sessionsettings.MarshalYAML(&sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		ID: "session-1", UserID: "user-1", AgentType: "claude-acp", PersistenceEnabled: true, ResumeFrom: "tpl_source",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := fake.NewSimpleClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1-svc", Namespace: "test-ns", Annotations: map[string]string{
+			sessionSuspendedAtAnnotation: time.Now().UTC().Format(time.RFC3339Nano),
+		}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1-settings", Namespace: "test-ns"}, Data: map[string][]byte{"settings.yaml": settingsData}},
+	)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.suspendCancel != nil {
+		manager.suspendCancel()
+	}
+	session := NewKubernetesSession(
+		"session-1", &entities.RunServerRequest{UserID: "user-1", AgentType: "claude-acp"}, "agentapi-session-session-1",
+		"agentapi-session-session-1-svc", "agentapi-session-session-1-pvc",
+		"test-ns", 9000, nil, nil,
+	)
+	manager.sessions[session.id] = session
+	session.SetStatus("suspended")
+
+	if _, restoring, err := manager.EnsureSessionWorkload(context.Background(), session.id); err != nil || !restoring {
+		t.Fatalf("restoring=%v err=%v", restoring, err)
+	}
+	if _, err := client.AppsV1().Deployments("test-ns").Get(context.Background(), session.DeploymentName(), metav1.GetOptions{}); err != nil {
+		t.Fatalf("local manager runtime access did not recreate the workload: %v", err)
+	}
+	secret, err := client.CoreV1().Secrets("test-ns").Get(context.Background(), "agentapi-session-session-1-settings", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resumed sessionsettings.SessionSettings
+	if err := yaml.Unmarshal(secret.Data["settings.yaml"], &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Session.ResumeFrom != "tpl_source" {
+		t.Fatalf("resume_from=%q, want unchanged local manager value tpl_source", resumed.Session.ResumeFrom)
+	}
+}

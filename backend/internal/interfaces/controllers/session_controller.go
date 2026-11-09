@@ -2092,16 +2092,10 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
 		}
-		ctx.Response().Header().Set("Retry-After", "2")
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
-			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
-		})
+		return sessionResumingResponse(ctx, route.SessionID)
 	}
 	if route.Status == "resuming" {
-		ctx.Response().Header().Set("Retry-After", "2")
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
-			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
-		})
+		return sessionResumingResponse(ctx, route.SessionID)
 	}
 
 	// Check authorization
@@ -2157,22 +2151,45 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 
 	if c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		requestURL := &url.URL{Scheme: "http", Host: "esm.local", Path: targetPath, RawQuery: ctx.Request().URL.RawQuery}
-		req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, requestURL.String(), bytes.NewReader(body))
-		if reqErr != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build outbound ESM request")
+		send := func() (*http.Response, error) {
+			req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, requestURL.String(), bytes.NewReader(body))
+			if reqErr != nil {
+				return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build outbound ESM request")
+			}
+			req.Header = ctx.Request().Header.Clone()
+			telemetry.InjectHTTP(ctx.Request().Context(), req)
+			authzCtx := auth.GetAuthorizationContext(ctx)
+			if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
+				req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+			}
+			if route.TeamID != "" {
+				req.Header.Set("X-Forwarded-Team", route.TeamID)
+			}
+			resp, tunnelErr := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+			if tunnelErr != nil {
+				return nil, echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
+			}
+			return resp, nil
 		}
-		req.Header = ctx.Request().Header.Clone()
-		telemetry.InjectHTTP(ctx.Request().Context(), req)
-		authzCtx := auth.GetAuthorizationContext(ctx)
-		if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
-			req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+		resp, err := send()
+		if err != nil {
+			return err
 		}
-		if route.TeamID != "" {
-			req.Header.Set("X-Forwarded-Team", route.TeamID)
-		}
-		resp, tunnelErr := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
-		if tunnelErr != nil {
-			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
+		if remoteWorkloadSuspended(resp) {
+			_ = resp.Body.Close()
+			if suffix == "/status" && ctx.Request().Method == http.MethodGet {
+				if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "suspended"); err != nil {
+					log.Printf("[ROUTE] Failed to record suspended status for %s: %v", route.SessionID, err)
+				}
+				return ctx.JSON(http.StatusOK, map[string]string{"status": "suspended"})
+			}
+			resp, err = c.resumeAndRetryRemoteRequest(ctx, route, send)
+			if err != nil {
+				return err
+			}
+			if resp == nil {
+				return sessionResumingResponse(ctx, route.SessionID)
+			}
 		}
 		defer func() { _ = resp.Body.Close() }()
 		if suffix == "/status" && ctx.Request().Method == http.MethodGet {
@@ -2182,6 +2199,50 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 		return streamTunnelResponse(ctx, resp)
 	}
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+}
+
+func (c *SessionController) resumeAndRetryRemoteRequest(ctx echo.Context, route *repositories.SessionRoute, send func() (*http.Response, error)) (*http.Response, error) {
+	resumeResp, err := c.requestRemoteResume(ctx, route)
+	if err != nil {
+		return nil, err
+	}
+	_ = resumeResp.Body.Close()
+	if resumeResp.StatusCode < 200 || resumeResp.StatusCode >= 300 {
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
+	}
+	resp, err := send()
+	if err != nil {
+		return nil, err
+	}
+	if remoteWorkloadSuspended(resp) {
+		_ = resp.Body.Close()
+		return nil, nil
+	}
+	return resp, nil
+}
+
+func remoteWorkloadSuspended(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusConflict {
+		return false
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(data), resp.Body), resp.Body}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(data, &payload) == nil && payload.Error.Code == "session_suspended"
+}
+
+func sessionResumingResponse(ctx echo.Context, sessionID string) error {
+	ctx.Response().Header().Set("Retry-After", "2")
+	return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+		"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": sessionID, "status": "resuming"},
+	})
 }
 
 func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
