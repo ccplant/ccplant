@@ -75,6 +75,45 @@ func TestGenericModelOverrideUsesSelectedAgent(t *testing.T) {
 	require.NotContains(t, pi.Env, "PI_MODEL")
 }
 
+func TestApplyBedrockCredentialsProfile(t *testing.T) {
+	settings := &sessionsettings.SessionSettings{Env: map[string]string{
+		"CLAUDE_CODE_USE_BEDROCK":                "1",
+		"AWS_ACCESS_KEY_ID":                      "AKIATEST",
+		"AWS_SECRET_ACCESS_KEY":                  "secret/key",
+		"AWS_SESSION_TOKEN":                      "stale-session-token",
+		"AWS_ROLE_ARN":                           "arn:aws:iam::123:role/wif",
+		"AWS_WEB_IDENTITY_TOKEN_FILE":            "/var/run/token",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI":     "http://169.254.170.23/v1/credentials",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE": "/var/run/pod-identity-token",
+	}}
+
+	applyBedrockCredentialsProfile(settings)
+
+	require.Equal(t, bedrockAWSProfile, settings.Env["AWS_PROFILE"])
+	require.Equal(t, bedrockCredentialsFile, settings.Env["AWS_SHARED_CREDENTIALS_FILE"])
+	for _, key := range bedrockAmbientCredentialEnvKeys {
+		require.NotContains(t, settings.Env, key)
+		require.Contains(t, settings.UnsetEnv, key)
+	}
+	require.Len(t, settings.Files, 1)
+	require.Equal(t, bedrockCredentialsFile, settings.Files[0].Path)
+	require.Equal(t, "0600", settings.Files[0].Permissions)
+	require.Equal(t, "[bedrock]\naws_access_key_id = AKIATEST\naws_secret_access_key = secret/key\n", settings.Files[0].Content)
+}
+
+func TestApplyBedrockCredentialsProfileRequiresCompleteSafePair(t *testing.T) {
+	for _, env := range []map[string]string{
+		{"CLAUDE_CODE_USE_BEDROCK": "0", "AWS_ACCESS_KEY_ID": "AKIA", "AWS_SECRET_ACCESS_KEY": "secret"},
+		{"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_ACCESS_KEY_ID": "AKIA"},
+		{"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_ACCESS_KEY_ID": "AKIA\ninjected", "AWS_SECRET_ACCESS_KEY": "secret"},
+	} {
+		settings := &sessionsettings.SessionSettings{Env: env}
+		applyBedrockCredentialsProfile(settings)
+		require.Empty(t, settings.Files)
+		require.Empty(t, settings.Env["AWS_PROFILE"])
+	}
+}
+
 func TestPiProfileConnectionIsResolvedWithoutEnvironment(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetPiConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://mock.example/v1", Model: "ani-1", Authentication: "none"})

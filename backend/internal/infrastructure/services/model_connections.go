@@ -12,6 +12,24 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
+const (
+	bedrockAWSProfile      = "bedrock"
+	bedrockCredentialsFile = "/tmp/ccplant/aws/credentials"
+)
+
+var bedrockAmbientCredentialEnvKeys = []string{
+	"AWS_ACCESS_KEY_ID",
+	"AWS_SECRET_ACCESS_KEY",
+	"AWS_SESSION_TOKEN",
+	"AWS_ROLE_ARN",
+	"AWS_ROLE_SESSION_NAME",
+	"AWS_WEB_IDENTITY_TOKEN_FILE",
+	"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+	"AWS_CONTAINER_AUTHORIZATION_TOKEN",
+	"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+}
+
 // Resolve once so auto selection, local allocation and remote provisioning agree.
 func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, req *entities.RunServerRequest) error {
 	if req.ProvisionSettings != nil || req.ModelConnectionsResolved {
@@ -228,6 +246,39 @@ func applyModelConnections(settings *sessionsettings.SessionSettings, req *entit
 	case "", "claude-acp", "claude-legacy", "claude":
 		settings.Env["ANTHROPIC_MODEL"] = req.Model
 	}
+}
+
+// applyBedrockCredentialsProfile moves a complete static Bedrock credential pair
+// out of the process environment and into a session-scoped shared credentials
+// file. Selecting the dedicated profile and removing ambient credential sources
+// keeps EKS web/container identity from changing which AWS principal Claude uses.
+func applyBedrockCredentialsProfile(settings *sessionsettings.SessionSettings) {
+	if settings == nil || settings.Env["CLAUDE_CODE_USE_BEDROCK"] != "1" {
+		return
+	}
+	accessKeyID := settings.Env["AWS_ACCESS_KEY_ID"]
+	secretAccessKey := settings.Env["AWS_SECRET_ACCESS_KEY"]
+	if accessKeyID == "" || secretAccessKey == "" {
+		return
+	}
+	// Newlines are not valid in AWS access keys and would also make it possible
+	// to inject another INI property or profile.
+	if strings.ContainsAny(accessKeyID, "\r\n") || strings.ContainsAny(secretAccessKey, "\r\n") {
+		return
+	}
+
+	content := fmt.Sprintf("[%s]\naws_access_key_id = %s\naws_secret_access_key = %s\n", bedrockAWSProfile, accessKeyID, secretAccessKey)
+	settings.Files = append(settings.Files, sessionsettings.ManagedFile{
+		Path:        bedrockCredentialsFile,
+		Content:     content,
+		Permissions: "0600",
+	})
+	for _, key := range bedrockAmbientCredentialEnvKeys {
+		delete(settings.Env, key)
+		settings.UnsetEnv = append(settings.UnsetEnv, key)
+	}
+	settings.Env["AWS_PROFILE"] = bedrockAWSProfile
+	settings.Env["AWS_SHARED_CREDENTIALS_FILE"] = bedrockCredentialsFile
 }
 
 func (m *KubernetesSessionManager) SetSessionProfileRepository(repo portrepos.SessionProfileRepository) {
