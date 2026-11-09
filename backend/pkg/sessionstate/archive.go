@@ -64,6 +64,15 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 	if err := add(filepath.Join(home, ".session", "acp-history.jsonl"), "home/.session/acp-history.jsonl"); err != nil {
 		return err
 	}
+	markers, err := filepath.Glob(filepath.Join(home, ".session", "initial-message-sent-*"))
+	if err != nil {
+		return err
+	}
+	for _, marker := range markers {
+		if err := add(marker, filepath.Join("home", ".session", filepath.Base(marker))); err != nil {
+			return err
+		}
+	}
 	if err := add(filepath.Join(cwd, ".acp-session-id"), "cwd/.acp-session-id"); err != nil {
 		return err
 	}
