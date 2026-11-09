@@ -52,6 +52,7 @@ jobs:
           for component in proxy session-manager worker; do
             kubectl --context k3d-ccplant-dev -n ccplant-dev logs -l app.kubernetes.io/component=$component --all-containers --tail=150 || true
           done
+          kubectl --context k3d-ccplant-dev -n ccplant-dev logs -l agentapi.proxy/session-id --all-containers --tail=150 --max-log-requests=10 || true
       - name: Delete development cluster
         if: always()
         run: make k3s-down
