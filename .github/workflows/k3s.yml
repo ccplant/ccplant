@@ -1,13 +1,8 @@
 name: k3s development stack
 
 on:
-  pull_request:
-    paths:
-      - 'backend/**'
-      - 'dev/k3s/**'
-      - 'scripts/*k3s*'
-      - 'Makefile'
-      - '.github/workflows/k3s.yml'
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
