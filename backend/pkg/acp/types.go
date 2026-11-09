@@ -310,6 +310,8 @@ type SessionUpdate struct {
 
 	// config_option_update
 	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
+
+	Replayed bool `json:"-"`
 }
 
 // SessionUpdateNotification is the params for the "session/update" notification
