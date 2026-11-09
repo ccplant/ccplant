@@ -41,6 +41,22 @@ type Handlers struct {
 	hmacSecret     []byte
 }
 
+type parentResumer interface {
+	ResumeParentSession(context.Context, string, *sessionsettings.SessionSettings) (entities.Session, bool, error)
+}
+
+type parentSuspender interface {
+	SuspendSessionWithSettings(context.Context, string, *sessionsettings.SessionSettings) error
+}
+
+type parentPauser interface {
+	PauseSessionWithSettings(context.Context, string, *sessionsettings.SessionSettings) error
+}
+
+type workloadSuspensionReporter interface {
+	SessionWorkloadSuspended(context.Context, string) (bool, error)
+}
+
 type operationalProvider interface {
 	OperationalStatus(context.Context, []string) (map[string]interface{}, error)
 	OperationalLogs(context.Context, string, string, int) ([]string, string, error)
@@ -212,22 +228,17 @@ func (h *Handlers) GetOperationalLogs(c echo.Context) error {
 }
 
 func (h *Handlers) ResumeSession(c echo.Context) error {
+	var settings *sessionsettings.SessionSettings
 	if c.Request().ContentLength != 0 {
-		var settings sessionsettings.SessionSettings
-		if err := c.Bind(&settings); err != nil {
+		settings = &sessionsettings.SessionSettings{}
+		if err := c.Bind(settings); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid resume settings")
 		}
-		if preparer, ok := h.sessionManager.(repositories.SessionResumePreparer); ok {
-			if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
-				return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
-			}
-		}
 	}
-	ensurer, ok := h.sessionManager.(repositories.SessionWorkloadEnsurer)
-	if !ok {
-		return echo.NewHTTPError(http.StatusNotImplemented, "session resume is not supported")
+	session, restoring, err := h.resumeWorkload(c.Request().Context(), c.Param("sessionId"), settings)
+	if httpErr, ok := err.(*echo.HTTPError); ok {
+		return httpErr
 	}
-	session, restoring, err := ensurer.EnsureSessionWorkload(c.Request().Context(), c.Param("sessionId"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 	}
@@ -243,6 +254,24 @@ func (h *Handlers) ResumeSession(c echo.Context) error {
 	return c.JSON(code, map[string]string{"session_id": c.Param("sessionId"), "status": status})
 }
 
+func (h *Handlers) resumeWorkload(ctx context.Context, sessionID string, settings *sessionsettings.SessionSettings) (entities.Session, bool, error) {
+	if resumer, ok := h.sessionManager.(parentResumer); ok {
+		return resumer.ResumeParentSession(ctx, sessionID, settings)
+	}
+	if settings != nil {
+		if preparer, ok := h.sessionManager.(repositories.SessionResumePreparer); ok {
+			if err := preparer.PrepareSessionResume(ctx, sessionID, settings); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	ensurer, ok := h.sessionManager.(repositories.SessionWorkloadEnsurer)
+	if !ok {
+		return nil, false, echo.NewHTTPError(http.StatusNotImplemented, "session resume is not supported")
+	}
+	return ensurer.EnsureSessionWorkload(ctx, sessionID)
+}
+
 func (h *Handlers) SuspendSession(c echo.Context) error {
 	if c.Request().ContentLength == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "suspend settings are required")
@@ -250,6 +279,12 @@ func (h *Handlers) SuspendSession(c echo.Context) error {
 	var settings sessionsettings.SessionSettings
 	if err := c.Bind(&settings); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid suspend settings")
+	}
+	if suspender, ok := h.sessionManager.(parentSuspender); ok {
+		if err := suspender.SuspendSessionWithSettings(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+		}
+		return c.NoContent(http.StatusNoContent)
 	}
 	preparer, ok := h.sessionManager.(repositories.SessionResumePreparer)
 	if !ok {
@@ -276,6 +311,9 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}
+	if session.Status() == "suspended" && h.workloadSuspended(c.Request().Context(), sessionID) {
+		return suspendedSessionResponse(c, sessionID)
+	}
 	addr := strings.TrimSpace(session.Addr())
 	if addr == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session runtime is not ready")
@@ -301,12 +339,35 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 		req.URL.RawPath = ""
 		req.Host = target.Host
 	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
+	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, proxyErr error) {
+		if h.workloadSuspended(req.Context(), sessionID) {
+			_ = suspendedSessionResponse(c, sessionID)
+			return
+		}
 		log.Printf("[SESSION_MANAGER] Proxy session %s failed: %v", sessionID, proxyErr)
 		http.Error(w, "session runtime unavailable", http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(c.Response(), c.Request())
 	return nil
+}
+
+func (h *Handlers) workloadSuspended(ctx context.Context, sessionID string) bool {
+	reporter, ok := h.sessionManager.(workloadSuspensionReporter)
+	if !ok {
+		return false
+	}
+	suspended, err := reporter.SessionWorkloadSuspended(ctx, sessionID)
+	if err != nil {
+		log.Printf("[SESSION_MANAGER] Inspect workload of session %s failed: %v", sessionID, err)
+		return false
+	}
+	return suspended
+}
+
+func suspendedSessionResponse(c echo.Context, sessionID string) error {
+	return c.JSON(http.StatusConflict, map[string]interface{}{
+		"error": map[string]string{"code": "session_suspended", "message": "Session workload is suspended", "session_id": sessionID, "status": "suspended"},
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -578,6 +639,12 @@ func (h *Handlers) PauseSession(c echo.Context) error {
 		var current sessionsettings.SessionSettings
 		if err := c.Bind(&current); err != nil {
 			return echo.NewHTTPError(400, "invalid current settings")
+		}
+		if pauser, ok := h.sessionManager.(parentPauser); ok {
+			if err := pauser.PauseSessionWithSettings(c.Request().Context(), c.Param("sessionId"), &current); err != nil {
+				return echo.NewHTTPError(503, "session pause failed").SetInternal(err)
+			}
+			return c.NoContent(204)
 		}
 		preparer, ok := h.sessionManager.(repositories.SessionResumePreparer)
 		if !ok {

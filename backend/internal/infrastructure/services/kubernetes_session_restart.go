@@ -27,7 +27,15 @@ type restartContextKey struct{}
 
 // PauseSession persists a hold before checkpointing, so ordinary reads cannot wake it.
 func (m *KubernetesSessionManager) PauseSession(ctx context.Context, id string) error {
-	ks, err := m.restartableSession(id)
+	return m.pauseSession(ctx, id, nil)
+}
+
+func (m *KubernetesSessionManager) PauseSessionWithSettings(ctx context.Context, id string, current *sessionsettings.SessionSettings) error {
+	return m.pauseSession(ctx, id, current)
+}
+
+func (m *KubernetesSessionManager) pauseSession(ctx context.Context, id string, current *sessionsettings.SessionSettings) error {
+	ks, err := m.restartableSessionWith(id, current)
 	if err != nil {
 		return err
 	}
@@ -67,13 +75,21 @@ func (m *KubernetesSessionManager) PauseSession(ctx context.Context, id string) 
 	return m.setRestartPhase(ctx, ks, "manual", "process_paused")
 }
 func (m *KubernetesSessionManager) restartableSession(id string) (*KubernetesSession, error) {
+	return m.restartableSessionWith(id, nil)
+}
+
+func (m *KubernetesSessionManager) restartableSessionWith(id string, current *sessionsettings.SessionSettings) (*KubernetesSession, error) {
 	ks, ok := m.GetSession(id).(*KubernetesSession)
 	if !ok || ks == nil {
 		return nil, fmt.Errorf("session settings unavailable")
 	}
-	settings, err := m.CurrentSessionSettings(context.Background(), id)
-	if err != nil {
-		return nil, err
+	settings := m.normalizeProvisionSettings(current)
+	if settings == nil {
+		var err error
+		settings, err = m.CurrentSessionSettings(context.Background(), id)
+		if err != nil {
+			return nil, err
+		}
 	}
 	ks.SetProvisionSettings(settings)
 	if err := sessionsettings.ValidateRestart(settings, settings); err != nil {
@@ -270,7 +286,7 @@ func (m *KubernetesSessionManager) CurrentSessionSettings(ctx context.Context, i
 		return nil, err
 	}
 	if ks.ProvisionSettings() == nil {
-		return nil, fmt.Errorf("session settings unavailable")
+		return nil, errSessionSettingsUnavailable
 	}
 	return ks.ProvisionSettings(), nil
 }
