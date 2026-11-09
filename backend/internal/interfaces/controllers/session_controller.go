@@ -459,6 +459,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		if matched {
 			brokerConfigured = true
+			if startReq.Environment == nil {
+				startReq.Environment = make(map[string]string)
+			}
 			if connectionID != "" {
 				if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
 					if !dryRun {
