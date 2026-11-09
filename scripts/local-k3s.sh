@@ -23,6 +23,8 @@ case "${1:-up}" in
       -t "ccplant-local-api:$version" backend
     k3d image import "ccplant-local-api:$version" --cluster "$cluster"
     "${kube[@]}" create namespace "$namespace" --dry-run=client -o yaml | "${kube[@]}" apply -f -
+    "${kube[@]}" apply -f dev/k3s/redis.yaml
+    "${kube[@]}" rollout status deployment/ccplant-redis --timeout=180s
     if ! "${kube[@]}" get secret ccplant-local >/dev/null 2>&1; then
       secret_dir=$(mktemp -d)
       trap 'rm -r -- "$secret_dir"' EXIT

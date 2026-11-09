@@ -16,6 +16,7 @@ make k3s-smoke
 
 `k3s-up` はソースから軽量 API image をビルドし、k3s へ取り込み、同じ image で
 API・session-manager・worker を起動します。worker は schedule 処理を有効にします。
+API と session-manager の協調用に、一時的な Redis もクラスター内で起動します。
 セッションには通常の ccplant-agent image を使い、作業領域は k3s の local-path PVC に保存します。
 再実行すると image を再ビルドし、3つの Deployment を更新します。
 

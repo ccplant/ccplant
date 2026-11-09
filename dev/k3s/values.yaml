@@ -5,6 +5,8 @@ ingress:
 controlPlaneService:
   retainOnDelete: false
 api:
+  redis:
+    addr: ccplant-redis:6379
   image:
     repository: ccplant-local-api
   resources:
@@ -30,6 +32,8 @@ worker:
 sessionManager:
   enabled: true
   autoUpgrade: false
+  redis:
+    addr: ccplant-redis:6379
   image:
     repository: ccplant-local-api
   internalApi:
