@@ -2,6 +2,16 @@
 
 HELM ?= helm
 
+.PHONY: k3s-up k3s-forward k3s-smoke k3s-down
+k3s-up:
+	bash scripts/local-k3s.sh up
+k3s-forward:
+	bash scripts/local-k3s.sh forward
+k3s-smoke:
+	bash scripts/smoke-k3s.sh
+k3s-down:
+	bash scripts/local-k3s.sh down
+
 backend-build:
 	$(MAKE) -C backend build
 

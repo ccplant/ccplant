@@ -1,0 +1,53 @@
+name: k3s development stack
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  session-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.34.1
+      - name: Install k3d
+        run: |
+          curl -fsSL https://github.com/k3d-io/k3d/releases/download/v5.8.3/k3d-linux-amd64 -o /tmp/k3d
+          sudo install /tmp/k3d /usr/local/bin/k3d
+      - name: Lint scripts and development values
+        run: |
+          shellcheck scripts/local-k3s.sh scripts/smoke-k3s.sh
+          helm dependency build backend/helm/agentapi-proxy
+          helm lint backend/helm/agentapi-proxy --strict -f dev/k3s/values.yaml
+      - name: Build and start API, session-manager and worker on k3s
+        run: make k3s-up
+      - name: Create and route a session
+        run: |
+          make k3s-forward > /tmp/ccplant-forward.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then break; fi
+            sleep 1
+          done
+          make k3s-smoke
+      - name: Cluster diagnostics
+        if: failure()
+        run: |
+          kubectl --context k3d-ccplant-dev -n ccplant-dev get pods,deployments,services,pvc -o wide
+          kubectl --context k3d-ccplant-dev -n ccplant-dev get events --sort-by=.lastTimestamp
+          for component in proxy session-manager worker; do
+            kubectl --context k3d-ccplant-dev -n ccplant-dev logs -l app.kubernetes.io/component=$component --all-containers --tail=150 || true
+          done
+          kubectl --context k3d-ccplant-dev -n ccplant-dev logs -l agentapi.proxy/session-id --all-containers --tail=150 --max-log-requests=10 || true
+      - name: Delete development cluster
+        if: always()
+        run: make k3s-down
