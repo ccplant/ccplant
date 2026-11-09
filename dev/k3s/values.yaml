@@ -1,0 +1,48 @@
+# Single-node development only. API and manager databases are ephemeral.
+fullnameOverride: ccplant
+ingress:
+  enabled: false
+controlPlaneService:
+  retainOnDelete: false
+api:
+  image:
+    repository: ccplant-local-api
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+  sessionManager:
+    url: http://ccplant-session-manager:8080
+    tokenSecretRef: {name: ccplant-local, key: manager-token}
+  workerControl:
+    tokenSecretRef: {name: ccplant-local, key: worker-token}
+    executionTokenSigningKeySecretRef: {name: ccplant-local, key: execution-token-signing-key}
+config:
+  auth:
+    adminKeySecretRef: {name: ccplant-local, key: admin-key}
+worker:
+  enabled: true
+  image:
+    repository: ccplant-local-api
+  controlApi:
+    tokenSecretRef: {name: ccplant-local, key: worker-token}
+    executionTokenSigningKeySecretRef: {name: ccplant-local, key: execution-token-signing-key}
+  schedule:
+    enabled: true
+sessionManager:
+  enabled: true
+  autoUpgrade: false
+  image:
+    repository: ccplant-local-api
+  internalApi:
+    tokenSecretRef: {name: ccplant-local, key: manager-token}
+  kvStore:
+    databaseUrl: file:///tmp/ccplant-manager.db
+  kubernetesSession:
+    provisioner:
+      tokenSecretRef: {name: ccplant-local, key: provisioner-token}
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: '2', memory: 2Gi}
+    pvc:
+      enabled: true
+      storageClass: local-path
+      storageSize: 2Gi
