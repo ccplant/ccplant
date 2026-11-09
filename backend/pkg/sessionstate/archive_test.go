@@ -189,3 +189,25 @@ func assertFile(t *testing.T, path, want string) {
 		t.Fatalf("%s = %q, want %q", path, got, want)
 	}
 }
+
+func TestPackUnpackInitialMessageMarkers(t *testing.T) {
+	srcHome, srcCwd := t.TempDir(), t.TempDir()
+	id := "44444444-4444-4444-4444-444444444444"
+	mustWrite(t, filepath.Join(srcCwd, ".acp-session-id"), id)
+	mustWrite(t, filepath.Join(srcHome, ".session", "initial-message-sent-session-a"), "sent\n")
+	mustWrite(t, filepath.Join(srcHome, ".session", "initial-message-sent-session-b"), "sent\n")
+	mustWrite(t, filepath.Join(srcHome, ".session", "private-key"), "do-not-archive")
+	var archive bytes.Buffer
+	if err := Pack(&archive, "claude-acp", id, srcHome, srcCwd); err != nil {
+		t.Fatal(err)
+	}
+	dstHome, dstCwd := t.TempDir(), t.TempDir()
+	if err := Unpack(&archive, dstHome, dstCwd); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(dstHome, ".session", "initial-message-sent-session-a"), "sent\n")
+	assertFile(t, filepath.Join(dstHome, ".session", "initial-message-sent-session-b"), "sent\n")
+	if _, err := os.Stat(filepath.Join(dstHome, ".session", "private-key")); !os.IsNotExist(err) {
+		t.Fatalf("unrelated session file restored: %v", err)
+	}
+}
