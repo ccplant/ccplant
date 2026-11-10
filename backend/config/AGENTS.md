@@ -24,6 +24,19 @@ ccplant client consume-secret
 
 mise コマンドを利用することができます。言語のインタプリタが存在しない場合や実行したいコマンドが存在しない場合、積極的に mise を活用して作業を実施してください。
 
+## Agent image に同梱されているソフトウェア
+
+このセッションの標準 agent image には、主に以下のソフトウェアが同梱されています。追加インストールの前に、利用可能なコマンドを確認してください。
+
+- Agent CLI: `claude`、`codex`、`agent` / `cursor-agent`、`pi`
+- Agent Client Protocol adapter: `claude-agent-acp`、`codex-acp`、`pi-acp`、Pi 用 MCP adapter
+- セッション・連携: `ccplant`、`agentapi`、`acp-posts`、`github-mcp-server`、`skills`
+- 永続ターミナル: herdr-core の `hc`。バックグラウンド実行、detach/attach、画面履歴の取得、別 agent の起動や待機に利用できます。agent 向けの利用方法は `hc --skill`、コマンド一覧は `hc --help` で確認してください。
+- 開発・運用 CLI: `git`、`gh`、`docker`、`docker compose`、`mise`、`uv` / `uvx`、`otelcol`
+- 基本ツール: `bash`、`curl`、`make`、`jq`、`sudo`、`procps`、`iptables`
+
+`docker` は CLI と Compose plugin のみで、Docker daemon は同梱されていません。`npm`、`npx`、`node`、`bun`、`bunx` は同梱の Bun/Claude executable を利用する互換ラッパーです。必要な言語処理系や追加ツールが見つからない場合は `mise` または `uv` を優先して利用してください。
+
 ### test, lint
 
 リモートにプッシュする前に、ローカルでのテストと lint 実行を徹底してください。
