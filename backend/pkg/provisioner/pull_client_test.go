@@ -94,3 +94,29 @@ func TestLocalPullProxyAddress(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyRunnerClaimParentRoutesSessionEnvToParent(t *testing.T) {
+	const parent = "https://cc-api.example.com/api/v1"
+	claim := &runnerClaimResponse{RuntimeToken: "runtime", Settings: &sessionsettings.SessionSettings{Env: map[string]string{
+		sessionsettings.GitHubBrokerURLEnv: "http://agentapi-proxy.ccplant.svc.cluster.local:8080/internal/sessions/public/github-credentials",
+	}}}
+	claim.Allocation.SessionID = "public"
+	claim.Allocation.ManagerID = "manager"
+	claim.Allocation.Generation = 3
+
+	applyRunnerClaimParent(claim, parent)
+
+	require.Equal(t, parent, claim.Settings.ParentRuntime.Endpoint)
+	require.Equal(t, "public", claim.Settings.ParentRuntime.SessionID)
+	require.Equal(t, int64(3), claim.Settings.ParentRuntime.Generation)
+	require.Equal(t, parent, claim.Settings.Env[sessionsettings.ProxyEndpointEnv])
+	require.Equal(t, parent+"/internal/sessions/public/github-credentials", claim.Settings.Env[sessionsettings.GitHubBrokerURLEnv])
+}
+
+func TestApplyRunnerClaimParentCreatesEnv(t *testing.T) {
+	claim := &runnerClaimResponse{Settings: &sessionsettings.SessionSettings{}}
+
+	applyRunnerClaimParent(claim, "https://cc-api.example.com/api/v1")
+
+	require.Equal(t, "https://cc-api.example.com/api/v1", claim.Settings.Env[sessionsettings.ProxyEndpointEnv])
+}
