@@ -7986,6 +7986,7 @@ fi`,
 	}
 	settings.ParentRuntime = req.ParentRuntime
 	applyModelConnections(settings, req)
+	applyBedrockCredentialsProfile(settings)
 
 	return settings
 }
