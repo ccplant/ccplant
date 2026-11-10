@@ -260,6 +260,10 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		query, _ := url.ParseQuery(command.RawQuery)
 		payload, _ := json.Marshal(map[string]string{"snapshot_id": query.Get("snapshot_id")})
 		err := executeControlCommand(commandCtx, w.client, w.checkpointAgentType(commandCtx), controlCommand{Type: "checkpoint_session_state", Payload: payload})
+		if status := sessionSetupCheckpointStatus(err); status != 0 {
+			_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: status, Done: true, CreatedAt: time.Now().UTC()}})
+			return
+		}
 		if err != nil {
 			w.postExecutionError(commandCtx, command, err)
 			return
@@ -370,6 +374,16 @@ func (w *directRuntimeWorker) checkpointAgentType(ctx context.Context) string {
 		return ""
 	}
 	return status.AgentType
+}
+
+func sessionSetupCheckpointStatus(err error) int {
+	switch sessionSetupCheckpointReason(err) {
+	case "setup_in_progress":
+		return http.StatusTooEarly
+	case "setup_failed":
+		return http.StatusFailedDependency
+	}
+	return 0
 }
 
 func (w *directRuntimeWorker) postExecutionError(ctx context.Context, command core.Command, err error) {

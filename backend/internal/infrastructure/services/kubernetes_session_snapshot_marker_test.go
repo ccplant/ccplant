@@ -28,8 +28,14 @@ type snapshotMarkerFixture struct {
 
 func newSnapshotMarkerFixture(t *testing.T, checkpointStatus int) *snapshotMarkerFixture {
 	t.Helper()
+	return newSnapshotMarkerFixtureWithCheckpoint(t, func(*snapshotMarkerFixture) int { return checkpointStatus })
+}
+
+func newSnapshotMarkerFixtureWithCheckpoint(t *testing.T, checkpoint func(*snapshotMarkerFixture) int) *snapshotMarkerFixture {
+	t.Helper()
+	fixture := &snapshotMarkerFixture{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(checkpointStatus)
+		w.WriteHeader(checkpoint(fixture))
 	}))
 	t.Cleanup(server.Close)
 	pvcEnabled := true
@@ -37,7 +43,7 @@ func newSnapshotMarkerFixture(t *testing.T, checkpointStatus int) *snapshotMarke
 		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000, ProvisionerToken: "provisioner",
 		PVCEnabled: &pvcEnabled, CPURequest: "100m", CPULimit: "1",
 		MemoryRequest: "128Mi", MemoryLimit: "512Mi",
-	}, SessionPersistence: config.SessionPersistenceConfig{Backend: "volume", SuspendAfter: "1h"}}
+	}}
 	settings := &sessionsettings.SessionSettings{
 		Session:        sessionsettings.SessionMeta{ID: "public-1", UserID: "user-1", AgentType: "claude-acp", PersistenceEnabled: true},
 		InitialMessage: "original",
@@ -48,7 +54,7 @@ func newSnapshotMarkerFixture(t *testing.T, checkpointStatus int) *snapshotMarke
 		t.Fatal(err)
 	}
 	client := fake.NewSimpleClientset(
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-runner-1-svc", Namespace: "test-ns"}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-runner-1-svc", Namespace: "test-ns", Labels: map[string]string{"agentapi.proxy/session-id": "runner-1"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-runner-1-settings", Namespace: "test-ns"}, Data: map[string][]byte{"settings.yaml": settingsData}},
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-runner-1", Namespace: "test-ns"}},
 	)
@@ -56,9 +62,7 @@ func newSnapshotMarkerFixture(t *testing.T, checkpointStatus int) *snapshotMarke
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manager.suspendCancel != nil {
-		manager.suspendCancel()
-	}
+	manager.config.SessionPersistence = config.SessionPersistenceConfig{Backend: "volume", SuspendAfter: "1h"}
 	manager.restartHTTPClient = &http.Client{Transport: restartRoundTripper(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}"))}, nil
 	})}
@@ -69,7 +73,8 @@ func newSnapshotMarkerFixture(t *testing.T, checkpointStatus int) *snapshotMarke
 	session.SetProvisionSettings(settings)
 	session.SetStatus("active")
 	manager.sessions[session.id] = session
-	return &snapshotMarkerFixture{manager: manager, client: client, session: session}
+	fixture.manager, fixture.client, fixture.session = manager, client, session
+	return fixture
 }
 
 func (f *snapshotMarkerFixture) stored(t *testing.T) sessionsettings.SessionSettings {
