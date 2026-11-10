@@ -1315,6 +1315,9 @@ kubernetesSession:
   #         "env_vars": {"MY_GLOBAL_VAR": "value"}
   #       }
   settingsBaseSecret: ""
+  # Legacy organization-wide MCP Secret. The API mounts this optional Secret
+  # read-only and backfills it into libSQL during startup.
+  mcpServersBaseSecret: "mcp-servers-base"
 
   # Slack Integration
   # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar).

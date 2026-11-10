@@ -8342,6 +8342,41 @@ func (m *KubernetesSessionManager) readSettingsPatch(ctx context.Context, secret
 	return &patch
 }
 
+// readLegacyBaseMCPPatch reads the organization-wide MCP configuration used
+// before MCP servers were folded into agentapi-settings-base. The persistence
+// client may be backed by Kubernetes or by the libSQL compatibility adapter.
+func (m *KubernetesSessionManager) readLegacyBaseMCPPatch(ctx context.Context, secretName string) *settingspatch.SettingsPatch {
+	if secretName == "" {
+		return nil
+	}
+	client, namespace := m.client, m.namespace
+	if m.settingsSecretClient != nil {
+		client, namespace = m.settingsSecretClient, m.settingsSecretNamespace
+	}
+	secret, err := client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Printf("[K8S_SESSION] Warning: failed to read legacy MCP base secret %s: %v", secretName, err)
+		}
+		return nil
+	}
+	data, ok := secret.Data["mcp-servers.json"]
+	if !ok {
+		return nil
+	}
+	var legacy struct {
+		MCPServers map[string]*settingspatch.MCPServerPatch `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to parse mcp-servers.json from secret %s: %v", secretName, err)
+		return nil
+	}
+	if len(legacy.MCPServers) == 0 {
+		return nil
+	}
+	return &settingspatch.SettingsPatch{MCPServers: legacy.MCPServers}
+}
+
 // readSettingsPatchByName reads an agentapi settings entry through SettingsRepository.
 // The repository is responsible for storage details such as encrypted_env_vars, so
 // session startup receives plaintext values before merge/materialize.
@@ -8456,7 +8491,10 @@ func (m *KubernetesSessionManager) resolveSettings(
 		}
 	}
 
-	// 1. base (lowest priority)
+	// 1. legacy MCP base, then unified base. The unified base wins on conflicts.
+	if p := m.readLegacyBaseMCPPatch(ctx, m.k8sConfig.MCPServersBaseSecret); p != nil {
+		layers = append(layers, *p)
+	}
 	if m.k8sConfig.SettingsBaseSecret != "" {
 		appendIfExists(m.k8sConfig.SettingsBaseSecret)
 	}
