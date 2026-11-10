@@ -2722,6 +2722,10 @@ func (m *KubernetesSessionManager) normalizeProvisionSettings(settings *sessions
 	normalized.Session = settings.Session
 	normalized.Session.PersistenceEnabled = m.config.SessionPersistence.Backend != ""
 	normalized.ParentRuntime = m.executionPlaneParentRuntime(settings.ParentRuntime)
+	m.mutex.RLock()
+	parentURL := m.runnerParentURL
+	m.mutex.RUnlock()
+	sessionsettings.RouteEnvToParent(normalized.Env, parentURL)
 	return &normalized
 }
 
