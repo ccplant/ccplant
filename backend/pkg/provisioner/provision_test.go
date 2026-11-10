@@ -186,7 +186,7 @@ func TestWritePiAgentInstructionsSkipsMissingSource(t *testing.T) {
 	}
 }
 
-func TestWritePiMCPServersMergesSettings(t *testing.T) {
+func TestWritePiSettingsMergesSettings(t *testing.T) {
 	settingsPath := filepath.Join(t.TempDir(), ".pi", "agent", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		t.Fatalf("mkdir settings dir: %v", err)
@@ -210,8 +210,8 @@ func TestWritePiMCPServersMergesSettings(t *testing.T) {
 			},
 		},
 	}
-	if err := writePiMCPServers(settingsPath, servers); err != nil {
-		t.Fatalf("writePiMCPServers: %v", err)
+	if err := writePiSettings(settingsPath, servers); err != nil {
+		t.Fatalf("writePiSettings: %v", err)
 	}
 
 	data, err := os.ReadFile(settingsPath)
@@ -225,12 +225,38 @@ func TestWritePiMCPServersMergesSettings(t *testing.T) {
 	if got["defaultProvider"] != "ollama-cloud" || got["theme"] != "dark" {
 		t.Fatalf("existing settings not preserved: %#v", got)
 	}
+	if got["defaultProjectTrust"] != "always" {
+		t.Fatalf("defaultProjectTrust = %#v, want always", got["defaultProjectTrust"])
+	}
 	gotServers, ok := got["mcpServers"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("mcpServers = %T, want map", got["mcpServers"])
 	}
 	if _, ok := gotServers["github"]; !ok {
 		t.Fatalf("github MCP server missing: %#v", gotServers)
+	}
+}
+
+func TestWritePiSettingsEnablesProjectTrustWithoutMCPServers(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), ".pi", "agent", "settings.json")
+
+	if err := writePiSettings(settingsPath, nil); err != nil {
+		t.Fatalf("writePiSettings: %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("parse settings: %v", err)
+	}
+	if got["defaultProjectTrust"] != "always" {
+		t.Fatalf("defaultProjectTrust = %#v, want always", got["defaultProjectTrust"])
+	}
+	if _, ok := got["mcpServers"]; ok {
+		t.Fatalf("mcpServers should be omitted when none are configured: %#v", got)
 	}
 }
 
