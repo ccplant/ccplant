@@ -375,6 +375,7 @@ func TestBuildSessionSettings_WritesBedrockStaticCredentialsAsProfile(t *testing
 	userSettings := entities.NewSettings("test-user")
 	userSettings.SetAuthMode(entities.AuthModeBedrock)
 	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("arn:aws:bedrock:ap-northeast-1:123456789012:inference-profile/example")
 	bedrock.SetAccessKeyID("AKIATEST")
 	bedrock.SetSecretAccessKey("secret/key")
 	userSettings.SetBedrock(bedrock)
@@ -389,6 +390,9 @@ func TestBuildSessionSettings_WritesBedrockStaticCredentialsAsProfile(t *testing
 
 	if settings.Env["AWS_PROFILE"] != bedrockAWSProfile || settings.Env["AWS_SHARED_CREDENTIALS_FILE"] != bedrockCredentialsFile {
 		t.Fatalf("Bedrock profile environment was not configured: %#v", settings.Env)
+	}
+	if settings.Env["AWS_REGION"] != "ap-northeast-1" {
+		t.Fatalf("AWS_REGION = %q, want ap-northeast-1", settings.Env["AWS_REGION"])
 	}
 	if _, exists := settings.Env["AWS_ACCESS_KEY_ID"]; exists {
 		t.Fatal("AWS_ACCESS_KEY_ID must not remain in the session environment")
