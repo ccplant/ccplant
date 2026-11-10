@@ -55,6 +55,8 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -285,6 +287,33 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		}
 		if wrapPersistence {
 			persistenceClient = kvstore.NewKubernetesAdapter(persistenceClient, applicationKVStore)
+		}
+	}
+	if backend := configuredKVBackend(cfg.KVStore); backend == "libsql" || backend == "libsql-encrypted" {
+		destinationName := cfg.KubernetesSession.SettingsBaseSecret
+		if destinationName == "" {
+			destinationName = "agentapi-settings-base"
+		}
+		changed, backfillErr := backfillLegacyMCPServersBase(
+			context.Background(), persistenceClient, namespace,
+			cfg.KubernetesSession.MCPServersBaseSecret,
+			destinationName,
+		)
+		if backfillErr != nil {
+			log.Fatalf("[SERVER] Failed to backfill legacy MCP base settings: %v", backfillErr)
+		}
+		// Helm historically rendered an empty settings base name to disable the
+		// unified base. When migration material is present, enable the canonical
+		// destination so this and later starts use the normal settings path.
+		if cfg.KubernetesSession.SettingsBaseSecret == "" {
+			if _, getErr := persistenceClient.CoreV1().Secrets(namespace).Get(context.Background(), destinationName, metav1.GetOptions{}); getErr == nil {
+				cfg.KubernetesSession.SettingsBaseSecret = destinationName
+			} else if !apierrors.IsNotFound(getErr) {
+				log.Fatalf("[SERVER] Failed to verify backfilled MCP base settings: %v", getErr)
+			}
+		}
+		if changed {
+			log.Printf("[SERVER] Backfilled legacy MCP base settings into %s", destinationName)
 		}
 	}
 	runtimeProvider := runtimeconfig.New(cfg, applicationKVStore, namespace)
