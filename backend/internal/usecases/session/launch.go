@@ -183,6 +183,9 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 				return LaunchResult{}, err
 			}
 			applyProfileToLaunchRequest(cfg, &req)
+			if profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam && req.SettingsTeamID == "" {
+				req.SettingsTeamID = profile.TeamID()
+			}
 			req.ResolvedSessionProfileID = profile.ID()
 			if req.Tags == nil {
 				req.Tags = make(map[string]string)
@@ -339,6 +342,14 @@ func profileSelectionTags(req LaunchRequest) map[string]string {
 }
 
 func profileMatchesLaunchTenant(profile *entities.SessionProfile, req LaunchRequest) bool {
+	if profile != nil && profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam {
+		for _, teamID := range req.Teams {
+			if profile.TeamID() == teamID {
+				return true
+			}
+		}
+		return false
+	}
 	return profileMatchesTenant(profile, req.Scope, req.UserID, req.TeamID)
 }
 
@@ -382,7 +393,11 @@ func resolveEffectiveSessionProfileConfig(
 	if err != nil {
 		return entities.SessionProfileConfig{}, err
 	}
-	if !profileMatchesTenant(source, scope, userID, teamID) {
+	// The selected profile has already been authorized by the caller. Inherited
+	// profiles must stay within that profile's ownership tenant; this also lets a
+	// team profile retain its team-local inheritance when used by a personal
+	// session.
+	if !profilesShareTenant(source, profile) {
 		return entities.SessionProfileConfig{}, entities.ErrSessionProfileAccessDenied{ID: source.ID()}
 	}
 	visited[source.ID()] = struct{}{}
@@ -391,6 +406,16 @@ func resolveEffectiveSessionProfileConfig(
 		return entities.SessionProfileConfig{}, err
 	}
 	return mergeProfileConfigSources(sourceCfg, cfg), nil
+}
+
+func profilesShareTenant(left, right *entities.SessionProfile) bool {
+	if left == nil || right == nil || left.Scope() != right.Scope() {
+		return false
+	}
+	if left.Scope() == entities.ScopeTeam {
+		return left.TeamID() != "" && left.TeamID() == right.TeamID()
+	}
+	return left.UserID() != "" && left.UserID() == right.UserID()
 }
 
 func profileMatchesTenant(profile *entities.SessionProfile, scope entities.ResourceScope, userID, teamID string) bool {

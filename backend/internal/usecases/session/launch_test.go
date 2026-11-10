@@ -351,6 +351,54 @@ func TestLaunchRejectsProfileOutsideLaunchTenant(t *testing.T) {
 	}
 }
 
+func TestLaunchAllowsTeamProfileForPersonalSessionWhenUserBelongsToTeam(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-team", "shared", "owner")
+	profile.SetScope(entities.ScopeTeam)
+	profile.SetTeamID("acme/platform")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetEnvironment(map[string]string{"SHARED": "team-value"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1", Scope: entities.ScopeUser, Teams: []string{"acme/platform"},
+		SessionProfileID: "profile-team",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.ProfileEnvironment["SHARED"]; got != "team-value" {
+		t.Fatalf("profile environment = %q, want team-value", got)
+	}
+	if got := sessionManager.req.SettingsTeamID; got != "acme/platform" {
+		t.Fatalf("SettingsTeamID = %q, want acme/platform", got)
+	}
+}
+
+func TestLaunchRejectsTeamProfileForPersonalSessionOutsideUserTeams(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-team", "shared", "owner")
+	profile.SetScope(entities.ScopeTeam)
+	profile.SetTeamID("other/team")
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1", Scope: entities.ScopeUser, Teams: []string{"acme/platform"},
+		SessionProfileID: "profile-team",
+	})
+	if err == nil {
+		t.Fatal("expected access denied error")
+	}
+	if sessionManager.req != nil {
+		t.Fatal("team profile must not be applied outside the user's teams")
+	}
+}
+
 func TestLaunchPropagatesProfileFiles(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "files", "user-1")

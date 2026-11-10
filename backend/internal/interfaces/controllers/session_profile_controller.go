@@ -232,12 +232,27 @@ func (c *SessionProfileController) ListSessionProfiles(ctx echo.Context) error {
 	}
 	if scopeFilter != "team" && teamIDFilter == "" {
 		filter.UserID = userID
+		filter.Scope = entities.ScopeUser
 	}
 
 	profiles, err := c.repo.List(ctx.Request().Context(), filter)
 	if err != nil {
 		log.Printf("Failed to list session profiles: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list session profiles")
+	}
+	// Personal sessions may explicitly use profiles owned by any team the user
+	// belongs to. Keep the personal query separate so repository filters remain
+	// simple AND filters, then append the accessible team profiles.
+	if scopeFilter != "team" && teamIDFilter == "" && len(userTeamIDs) > 0 {
+		teamProfiles, listErr := c.repo.List(ctx.Request().Context(), repositories.SessionProfileFilter{
+			Scope:   entities.ScopeTeam,
+			TeamIDs: userTeamIDs,
+		})
+		if listErr != nil {
+			log.Printf("Failed to list team session profiles: %v", listErr)
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to list session profiles")
+		}
+		profiles = append(profiles, teamProfiles...)
 	}
 
 	responses := make([]SessionProfileResponse, 0, len(profiles))

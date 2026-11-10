@@ -3023,7 +3023,10 @@ func (c *SessionController) canUseSessionProfile(
 	case entities.ScopeUser:
 		return requestedScope == entities.ScopeUser && profile.UserID() == authzCtx.PersonalScope.UserID
 	case entities.ScopeTeam:
-		return requestedScope == entities.ScopeTeam && profile.TeamID() == requestedTeamID
+		if requestedScope == entities.ScopeTeam {
+			return profile.TeamID() == requestedTeamID && authzCtx.CanAccessTeam(profile.TeamID())
+		}
+		return requestedScope == entities.ScopeUser && authzCtx.CanAccessTeam(profile.TeamID())
 	default:
 		return false
 	}
