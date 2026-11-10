@@ -221,6 +221,17 @@ func (c *GitHubConnectionsController) builtInConnection() githubConnection {
 	return githubConnection{ID: "github", APIURL: c.builtInAPIURL, Enabled: true}
 }
 
+func (c *GitHubConnectionsController) isBuiltInConnection(connection githubConnection) bool {
+	builtInAPIURL := strings.TrimSuffix(strings.TrimSpace(c.builtInAPIURL), "/")
+	connectionAPIURL := strings.TrimSuffix(strings.TrimSpace(connection.APIURL), "/")
+	if builtInAPIURL != "" && connectionAPIURL != "" {
+		return strings.EqualFold(builtInAPIURL, connectionAPIURL)
+	}
+	// Keep compatibility with principals created by the default GitHub.com
+	// provider before the built-in API URL was recorded by this controller.
+	return strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(connection.BaseURL), "/"), "https://github.com")
+}
+
 func (c *GitHubConnectionsController) SetMembershipRepository(repo ports.TeamMembershipRepository) {
 	c.membershipRepo = repo
 }
@@ -631,7 +642,7 @@ func (c *GitHubConnectionsController) ResolvePrincipalIDForGitHubUser(ctx contex
 			continue
 		}
 		connection, _, _, err := c.loadConnection(ctx, identity.ConnectionID)
-		if err == nil && connection.BaseURL == "https://github.com" {
+		if err == nil && c.isBuiltInConnection(connection) {
 			return identity.PrincipalID, nil
 		}
 	}
@@ -661,7 +672,7 @@ func (c *GitHubConnectionsController) ResolveApplicationUserIDForGitHubUser(ctx 
 			continue
 		}
 		connection, _, _, loadErr := c.loadConnection(ctx, identity.ConnectionID)
-		if loadErr != nil || connection.BaseURL != "https://github.com" {
+		if loadErr != nil || !c.isBuiltInConnection(connection) {
 			continue
 		}
 		for _, principal := range principals {
@@ -1429,6 +1440,17 @@ func (c *GitHubConnectionsController) resolveLoginPrincipalWithCreated(ctx conte
 	var identity githubIdentity
 	_, err := c.loadObject(ctx, identitySecretName(connection.ID, user.ID), &identity)
 	if apierrors.IsNotFound(err) {
+		if c.isBuiltInConnection(connection) {
+			principal, principalErr := c.loadPrincipal(ctx, fmt.Sprintf("github:%d", user.ID))
+			if principalErr == nil {
+				identity = githubIdentity{ID: uuid.NewString(), PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: user.ID, Login: user.Login, AvatarURL: user.AvatarURL, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+				_, linkErr := c.linkIdentity(ctx, identity, token, expiresAt)
+				return principal, linkErr == nil, linkErr
+			}
+			if !apierrors.IsNotFound(principalErr) {
+				return githubPrincipal{}, false, principalErr
+			}
+		}
 		if !connection.AllowUserCreation {
 			return githubPrincipal{}, false, errors.New("user creation is disabled for this GitHub connection")
 		}
