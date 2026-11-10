@@ -51,6 +51,17 @@ assert_not_contains() {
   fi
 }
 
+assert_no_session_env_except_mcp_backfill() {
+  local file="$1"
+  local unexpected
+  unexpected="$(grep 'AGENTAPI_K8S_SESSION_' "$file" | grep -Ev 'MCP_SERVERS_BASE_(SECRET|FILE)' || true)"
+  if [[ -n "$unexpected" ]]; then
+    echo "unexpected in-process session environment found ($file):" >&2
+    echo "$unexpected" >&2
+    exit 1
+  fi
+}
+
 assert_contains 'ingressClassName: nginx' "$TMP_DIR/backend-internal-ingress.yaml"
 assert_contains 'host: "api.xx.com"' "$TMP_DIR/backend-internal-ingress.yaml"
 assert_contains 'host: "xx.com"' "$TMP_DIR/backend-internal-ingress.yaml"
@@ -72,6 +83,13 @@ assert_env_value() {
     exit 1
   fi
 }
+
+# The API reads the legacy organization-wide MCP Secret through an optional
+# volume so libSQL-only deployments do not need a Kubernetes API token.
+assert_env_value 'AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_SECRET' 'mcp-servers-base' "$TMP_DIR/backend-default.yaml"
+assert_env_value 'AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_FILE' '/etc/legacy-mcp-base/mcp-servers.json' "$TMP_DIR/backend-default.yaml"
+assert_contains 'name: legacy-mcp-base' "$TMP_DIR/backend-default.yaml"
+assert_contains 'secretName: "mcp-servers-base"' "$TMP_DIR/backend-default.yaml"
 
 # Executor isolation is opt-in for built-in, bundled external, and standalone
 # session managers. Explicitly enabling it must still render true.
@@ -203,7 +221,7 @@ assert_contains 'prometheus.io/port: "9090"' "$TMP_DIR/backend-default.yaml"
 assert_contains 'prometheus.io/path: /metrics' "$TMP_DIR/backend-default.yaml"
 assert_not_contains '^kind: Role$' "$TMP_DIR/backend-default.yaml"
 assert_not_contains '^kind: RoleBinding$' "$TMP_DIR/backend-default.yaml"
-assert_not_contains 'AGENTAPI_K8S_SESSION_' "$TMP_DIR/backend-default.yaml"
+assert_no_session_env_except_mcp_backfill "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-default.yaml"
 
@@ -399,7 +417,7 @@ assert_contains 'name: AGENTAPI_REDIS_DB, value: "4"' "$TMP_DIR/backend-deployme
 assert_contains 'name: AGENTAPI_REDIS_TLS_ENABLED, value: "true"' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: "shared-encryption"' "$TMP_DIR/backend-deployment.yaml"
 assert_not_contains 'AGENTAPI_SESSION_PERSISTENCE_' "$TMP_DIR/backend-deployment.yaml"
-assert_not_contains 'AGENTAPI_K8S_SESSION_' "$TMP_DIR/backend-deployment.yaml"
+assert_no_session_env_except_mcp_backfill "$TMP_DIR/backend-deployment.yaml"
 assert_not_contains 'AGENTAPI_SCHEDULE_WORKER_' "$TMP_DIR/backend-deployment.yaml"
 assert_not_contains 'AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN' "$TMP_DIR/backend-deployment.yaml"
 assert_not_contains 'name: "provisioner"' "$TMP_DIR/backend-deployment.yaml"

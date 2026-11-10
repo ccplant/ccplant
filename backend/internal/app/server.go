@@ -294,11 +294,30 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		if destinationName == "" {
 			destinationName = "agentapi-settings-base"
 		}
-		changed, backfillErr := backfillLegacyMCPServersBase(
-			context.Background(), persistenceClient, namespace,
-			cfg.KubernetesSession.MCPServersBaseSecret,
-			destinationName,
-		)
+		var changed bool
+		var backfillErr error
+		if sourceFile := strings.TrimSpace(cfg.KubernetesSession.MCPServersBaseFile); sourceFile != "" {
+			legacyData, readErr := os.ReadFile(sourceFile)
+			switch {
+			case readErr == nil:
+				changed, backfillErr = backfillLegacyMCPServersBaseData(
+					context.Background(), persistenceClient, namespace,
+					cfg.KubernetesSession.MCPServersBaseSecret, destinationName, legacyData,
+				)
+			case !errors.Is(readErr, os.ErrNotExist):
+				backfillErr = fmt.Errorf("read mounted legacy MCP base settings: %w", readErr)
+			default:
+				changed, backfillErr = backfillLegacyMCPServersBase(
+					context.Background(), persistenceClient, namespace,
+					cfg.KubernetesSession.MCPServersBaseSecret, destinationName,
+				)
+			}
+		} else {
+			changed, backfillErr = backfillLegacyMCPServersBase(
+				context.Background(), persistenceClient, namespace,
+				cfg.KubernetesSession.MCPServersBaseSecret, destinationName,
+			)
+		}
 		if backfillErr != nil {
 			log.Fatalf("[SERVER] Failed to backfill legacy MCP base settings: %v", backfillErr)
 		}

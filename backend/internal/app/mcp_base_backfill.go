@@ -30,6 +30,13 @@ func backfillLegacyMCPServersBase(ctx context.Context, client kubernetes.Interfa
 	if !ok {
 		return false, nil
 	}
+	return backfillLegacyMCPServersBaseData(ctx, client, namespace, sourceName, destinationName, legacyData)
+}
+
+func backfillLegacyMCPServersBaseData(ctx context.Context, client kubernetes.Interface, namespace, sourceName, destinationName string, legacyData []byte) (bool, error) {
+	if destinationName == "" || len(legacyData) == 0 {
+		return false, nil
+	}
 	var legacyDocument struct {
 		MCPServers map[string]json.RawMessage `json:"mcpServers"`
 	}

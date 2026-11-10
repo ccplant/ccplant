@@ -20,11 +20,8 @@ func TestBackfillLegacyMCPServersBaseIntoLibSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), store)
+	legacyData := []byte(`{"mcpServers":{"legacy":{"type":"http","url":"https://legacy.example/mcp"},"shared":{"type":"http","url":"https://legacy.example/shared"}}}`)
 	for _, secret := range []*corev1.Secret{
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "mcp-servers-base", Namespace: namespace, Labels: map[string]string{"agentapi.proxy/mcp-servers": "true"}},
-			Data:       map[string][]byte{"mcp-servers.json": []byte(`{"mcpServers":{"legacy":{"type":"http","url":"https://legacy.example/mcp"},"shared":{"type":"http","url":"https://legacy.example/shared"}}}`)},
-		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-settings-base", Namespace: namespace},
 			Data:       map[string][]byte{"settings.json": []byte(`{"env_vars":{"KEEP":"value"},"mcp_servers":{"shared":{"type":"http","url":"https://settings.example/shared"}}}`)},
@@ -35,7 +32,9 @@ func TestBackfillLegacyMCPServersBaseIntoLibSQL(t *testing.T) {
 		}
 	}
 
-	changed, err := backfillLegacyMCPServersBase(ctx, client, namespace, "mcp-servers-base", "agentapi-settings-base")
+	// The legacy Secret is deliberately absent from libSQL. Its mounted data is
+	// the only source, matching a Kubernetes-only mcp-servers-base deployment.
+	changed, err := backfillLegacyMCPServersBaseData(ctx, client, namespace, "mcp-servers-base", "agentapi-settings-base", legacyData)
 	if err != nil || !changed {
 		t.Fatalf("first backfill = (%t, %v), want changed", changed, err)
 	}
@@ -61,7 +60,7 @@ func TestBackfillLegacyMCPServersBaseIntoLibSQL(t *testing.T) {
 		t.Fatalf("shared URL = %q", sharedURL)
 	}
 
-	changed, err = backfillLegacyMCPServersBase(ctx, client, namespace, "mcp-servers-base", "agentapi-settings-base")
+	changed, err = backfillLegacyMCPServersBaseData(ctx, client, namespace, "mcp-servers-base", "agentapi-settings-base", legacyData)
 	if err != nil || changed {
 		t.Fatalf("second backfill = (%t, %v), want unchanged", changed, err)
 	}
