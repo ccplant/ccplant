@@ -232,6 +232,15 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		NotificationsDir:          filepath.Join(runtimeHome, "notifications"),
 		RegisterMarketplaces:      true,
 	}
+	if archivePath := strings.TrimSpace(os.Getenv("AGENTAPI_REPO_ARCHIVE_PATH")); archivePath != "" && settings.Repository != nil && settings.Repository.CloneDir != "" {
+		cloneDir := settings.Repository.CloneDir
+		s.setPhase("provision:restore-repository")
+		if restored, err := sessionstate.RestoreRepository(archivePath, cloneDir); err != nil {
+			log.Printf("[PROVISIONER] Repository archive restore failed; cloning instead: %v", err)
+		} else if restored {
+			log.Printf("[PROVISIONER] Restored repository %s from %s", cloneDir, archivePath)
+		}
+	}
 	s.setPhase("provision:session-setup")
 	log.Printf("[PROVISIONER] Running session setup")
 	if err := sessionsettings.SetupSettings(settings, opts); err != nil {

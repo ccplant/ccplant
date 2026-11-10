@@ -65,6 +65,12 @@ const provisionerPort = 9001
 
 const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
 
+const (
+	sessionPersistVolumeName             = "persist"
+	sessionPersistMountPath              = "/home/agentapi/persist"
+	sessionTerminationGracePeriodSeconds = 100
+)
+
 var instrumentedHTTPClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
 const (
@@ -4051,20 +4057,28 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		// non-root provisioner tries to clone or restore repository state.
 		rootUID := int64(0)
 		falseVal := false
+		volumeName, mountPath := "workdir", "/home/agentapi/workdir"
+		if m.usesVolumeSessionState() {
+			volumeName, mountPath = sessionPersistVolumeName, sessionPersistMountPath
+		}
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "prepare-workdir-permissions",
 			Image:           m.k8sConfig.Image,
 			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-			Command:         []string{"chown", "-R", "999:999", "/home/agentapi/workdir"},
+			Command:         []string{"chown", "-R", "999:999", mountPath},
 			SecurityContext: &corev1.SecurityContext{
 				RunAsUser:    &rootUID,
 				RunAsNonRoot: &falseVal,
 			},
 			VolumeMounts: []corev1.VolumeMount{{
-				Name:      "workdir",
-				MountPath: "/home/agentapi/workdir",
+				Name:      volumeName,
+				MountPath: mountPath,
 			}},
 		})
+	}
+	var terminationGracePeriod *int64
+	if m.usesVolumeSessionState() {
+		terminationGracePeriod = int64Ptr(sessionTerminationGracePeriodSeconds)
 	}
 
 	var sciaInitContainer *corev1.Container
@@ -4396,10 +4410,11 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName:           sessionServiceAccount,
-					EnableServiceLinks:           boolPtr(!m.k8sConfig.DisableServiceLinks),
-					AutomountServiceAccountToken: boolPtr(!m.k8sConfig.DisableServiceAccountToken),
-					RestartPolicy:                corev1.RestartPolicyAlways,
+					ServiceAccountName:            sessionServiceAccount,
+					EnableServiceLinks:            boolPtr(!m.k8sConfig.DisableServiceLinks),
+					AutomountServiceAccountToken:  boolPtr(!m.k8sConfig.DisableServiceAccountToken),
+					RestartPolicy:                 corev1.RestartPolicyAlways,
+					TerminationGracePeriodSeconds: terminationGracePeriod,
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup:    int64Ptr(999),
 						RunAsUser:  int64Ptr(999),
@@ -5337,22 +5352,16 @@ func buildResourceRequirements(cpuReq, cpuLim, memReq, memLim string) corev1.Res
 
 // buildVolumes builds the volume configuration for the session pod
 func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []corev1.Volume {
-	// Build workdir volume - use PVC if enabled, otherwise EmptyDir
-	var workdirVolume corev1.Volume
-	if m.isPVCEnabled() {
-		workdirVolume = corev1.Volume{
-			Name: "workdir",
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: session.PVCName(),
-				},
-			},
-		}
-	} else {
-		workdirVolume = corev1.Volume{
-			Name: "workdir",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
+	workdirVolume := corev1.Volume{
+		Name: "workdir",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+	if m.isPVCEnabled() && !m.usesVolumeSessionState() {
+		workdirVolume.VolumeSource = corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: session.PVCName(),
 			},
 		}
 	}
@@ -5363,7 +5372,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 	// watches the file and syncs any changes back to the Secret.
 
 	volumes := []corev1.Volume{
-		// Workdir volume (PVC or EmptyDir based on configuration)
 		workdirVolume,
 		// dot-claude EmptyDir – used by main container for Claude Code settings
 		{
@@ -5380,6 +5388,16 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
+	}
+	if m.usesVolumeSessionState() {
+		volumes = append(volumes, corev1.Volume{
+			Name: sessionPersistVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: session.PVCName(),
+				},
+			},
+		})
 	}
 
 	// Add notification subscription Secret volume (source for init container)
@@ -5875,7 +5893,10 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		},
 	)
 	if m.config.SessionPersistence.Backend == "volume" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SESSION_STATE_VOLUME_PATH", Value: "/home/agentapi/workdir/.agentapi/session-state.tar.zst"})
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "AGENTAPI_SESSION_STATE_VOLUME_PATH", Value: sessionPersistMountPath + "/.agentapi/session-state.tar.zst"},
+			corev1.EnvVar{Name: "AGENTAPI_REPO_ARCHIVE_PATH", Value: sessionPersistMountPath + "/.agentapi/repo.tar"},
+		)
 	}
 	// Add CLAUDE_ARGS from request environment or proxy's environment
 	claudeArgs := ""
@@ -6084,6 +6105,10 @@ func int64Ptr(i int64) *int64 {
 // boolPtr returns a pointer to a bool
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+func (m *KubernetesSessionManager) usesVolumeSessionState() bool {
+	return m.config.SessionPersistence.Backend == "volume"
 }
 
 // isPVCEnabled returns whether PVC is enabled for session workdir
@@ -6725,6 +6750,12 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			MountPath: "/notification-subscriptions-source",
 			ReadOnly:  true,
 		},
+	}
+	if m.usesVolumeSessionState() {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      sessionPersistVolumeName,
+			MountPath: sessionPersistMountPath,
+		})
 	}
 
 	// session-settings Secret – optional mount for Pod restart auto-provisioning.

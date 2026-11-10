@@ -124,16 +124,48 @@ func TestVolumePersistenceUsesPerSessionWorkdirPVC(t *testing.T) {
 	if !manager.isPVCEnabled() {
 		t.Fatal("volume persistence must enable the per-session workdir PVC")
 	}
-	env := manager.buildEnvVars(session, session.Request())
-	for _, item := range env {
-		if item.Name == "AGENTAPI_SESSION_STATE_VOLUME_PATH" {
-			if item.Value != "/home/agentapi/workdir/.agentapi/session-state.tar.zst" {
-				t.Fatalf("volume path = %q", item.Value)
-			}
-			return
-		}
+	env := map[string]string{}
+	for _, item := range manager.buildEnvVars(session, session.Request()) {
+		env[item.Name] = item.Value
 	}
-	t.Fatal("session state volume path was not injected")
+	if got := env["AGENTAPI_SESSION_STATE_VOLUME_PATH"]; got != "/home/agentapi/persist/.agentapi/session-state.tar.zst" {
+		t.Fatalf("volume path = %q", got)
+	}
+	if got := env["AGENTAPI_REPO_ARCHIVE_PATH"]; got != "/home/agentapi/persist/.agentapi/repo.tar" {
+		t.Fatalf("repository archive path = %q", got)
+	}
+}
+
+func TestVolumePersistenceKeepsWorkdirOnNodeLocalStorage(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.config.SessionPersistence.Backend = "volume"
+	session := newWorkloadTestSession()
+	deployment, err := manager.buildDeployment(context.Background(), session, session.Request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := deployment.Spec.Template.Spec
+	volumes := map[string]corev1.Volume{}
+	for _, volume := range spec.Volumes {
+		volumes[volume.Name] = volume
+	}
+	if volumes["workdir"].EmptyDir == nil {
+		t.Fatalf("workdir volume = %#v, want emptyDir", volumes["workdir"])
+	}
+	if claim := volumes["persist"].PersistentVolumeClaim; claim == nil || claim.ClaimName != session.PVCName() {
+		t.Fatalf("persist volume = %#v, want session PVC", volumes["persist"])
+	}
+	main := findContainerByName(spec.Containers, "agentapi")
+	if main == nil || !hasMount(main.VolumeMounts, "persist", "/home/agentapi/persist", "") {
+		t.Fatalf("main container mounts = %#v, want persist mount", main)
+	}
+	if spec.TerminationGracePeriodSeconds == nil || *spec.TerminationGracePeriodSeconds != 100 {
+		t.Fatalf("terminationGracePeriodSeconds = %v, want 100", spec.TerminationGracePeriodSeconds)
+	}
+	init := findContainerByName(spec.InitContainers, "prepare-workdir-permissions")
+	if init == nil || !hasMount(init.VolumeMounts, "persist", "/home/agentapi/persist", "") {
+		t.Fatalf("permission init container = %#v, want persist mount", init)
+	}
 }
 
 func TestGetSessionRepairsStockAdoptionMetadataFromService(t *testing.T) {

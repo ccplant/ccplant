@@ -75,7 +75,7 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 		sig := <-sigCh
 		log.Printf("[PROVISIONER] Received signal %s; preparing persistent session for termination", sig)
 		if strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")) != "" {
-			terminationCtx, terminationCancel := context.WithTimeout(context.Background(), 25*time.Second)
+			terminationCtx, terminationCancel := context.WithTimeout(context.Background(), 90*time.Second)
 			err := preparePersistentSessionForTermination(
 				terminationCtx,
 				srv,

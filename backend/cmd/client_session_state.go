@@ -75,6 +75,13 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 		if err := writeSessionStateVolume(volumePath, agentType, readACPSessionID(cwd), home, cwd); err != nil {
 			return err
 		}
+		archivePath := strings.TrimSpace(os.Getenv("AGENTAPI_REPO_ARCHIVE_PATH"))
+		cloneDir := strings.TrimSpace(os.Getenv("AGENTAPI_CLONE_DIR"))
+		if archivePath != "" && cloneDir != "" {
+			if err := sessionstate.BackupRepository(cloneDir, archivePath); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "repository archive skipped: %v\n", err)
+			}
+		}
 		if snapshotID := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_TEMPLATE_SNAPSHOT_ID")); snapshotID != "" {
 			return uploadVolumeTemplateSnapshot(proxy, token, snapshotID, volumePath)
 		}
