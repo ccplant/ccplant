@@ -388,20 +388,23 @@ func TestBuildSessionSettings_WritesBedrockStaticCredentialsAsProfile(t *testing
 		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
 	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
 
-	if settings.Env["AWS_PROFILE"] != bedrockAWSProfile || settings.Env["AWS_SHARED_CREDENTIALS_FILE"] != bedrockCredentialsFile {
+	if settings.Env["AWS_PROFILE"] != bedrockAWSProfile || settings.Env["AWS_SHARED_CREDENTIALS_FILE"] != bedrockCredentialsFile || settings.Env["AWS_CONFIG_FILE"] != bedrockConfigFile {
 		t.Fatalf("Bedrock profile environment was not configured: %#v", settings.Env)
 	}
-	if settings.Env["AWS_REGION"] != "ap-northeast-1" {
-		t.Fatalf("AWS_REGION = %q, want ap-northeast-1", settings.Env["AWS_REGION"])
+	if _, exists := settings.Env["AWS_REGION"]; exists {
+		t.Fatal("AWS_REGION must not remain in the session environment")
 	}
 	if _, exists := settings.Env["AWS_ACCESS_KEY_ID"]; exists {
 		t.Fatal("AWS_ACCESS_KEY_ID must not remain in the session environment")
 	}
-	if len(settings.Files) != 1 {
-		t.Fatalf("managed files count = %d, want 1", len(settings.Files))
+	if len(settings.Files) != 2 {
+		t.Fatalf("managed files count = %d, want 2", len(settings.Files))
 	}
 	if got := settings.Files[0]; got.Path != bedrockCredentialsFile || got.Permissions != "0600" || got.Content != "[bedrock]\naws_access_key_id = AKIATEST\naws_secret_access_key = secret/key\n" {
 		t.Fatalf("Bedrock credentials file = %#v", got)
+	}
+	if got := settings.Files[1]; got.Path != bedrockConfigFile || got.Permissions != "0600" || got.Content != "[profile bedrock]\nregion = ap-northeast-1\n" {
+		t.Fatalf("Bedrock config file = %#v", got)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -15,9 +16,12 @@ import (
 const (
 	bedrockAWSProfile      = "bedrock"
 	bedrockCredentialsFile = "/tmp/ccplant/aws/credentials"
+	bedrockConfigFile      = "/tmp/ccplant/aws/config"
 )
 
-var bedrockAmbientCredentialEnvKeys = []string{
+var validAWSRegionPattern = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+
+var bedrockAmbientEnvKeys = []string{
 	"AWS_ACCESS_KEY_ID",
 	"AWS_SECRET_ACCESS_KEY",
 	"AWS_SESSION_TOKEN",
@@ -28,6 +32,8 @@ var bedrockAmbientCredentialEnvKeys = []string{
 	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
 	"AWS_CONTAINER_AUTHORIZATION_TOKEN",
 	"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+	"AWS_REGION",
+	"AWS_DEFAULT_REGION",
 }
 
 // Resolve once so auto selection, local allocation and remote provisioning agree.
@@ -258,6 +264,10 @@ func applyBedrockCredentialsProfile(settings *sessionsettings.SessionSettings) {
 	}
 	accessKeyID := settings.Env["AWS_ACCESS_KEY_ID"]
 	secretAccessKey := settings.Env["AWS_SECRET_ACCESS_KEY"]
+	region := settings.Env["AWS_REGION"]
+	if region == "" {
+		region = settings.Env["AWS_DEFAULT_REGION"]
+	}
 	if accessKeyID == "" || secretAccessKey == "" {
 		return
 	}
@@ -273,7 +283,15 @@ func applyBedrockCredentialsProfile(settings *sessionsettings.SessionSettings) {
 		Content:     content,
 		Permissions: "0600",
 	})
-	for _, key := range bedrockAmbientCredentialEnvKeys {
+	if region != "" && validAWSRegionPattern.MatchString(region) {
+		settings.Files = append(settings.Files, sessionsettings.ManagedFile{
+			Path:        bedrockConfigFile,
+			Content:     fmt.Sprintf("[profile %s]\nregion = %s\n", bedrockAWSProfile, region),
+			Permissions: "0600",
+		})
+		settings.Env["AWS_CONFIG_FILE"] = bedrockConfigFile
+	}
+	for _, key := range bedrockAmbientEnvKeys {
 		delete(settings.Env, key)
 		settings.UnsetEnv = append(settings.UnsetEnv, key)
 	}
