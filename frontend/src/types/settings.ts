@@ -138,6 +138,7 @@ export interface SettingsData {
   notification_channels?: string[];  // Active notification channels (e.g. ["web", "slack"])
   external_session_managers?: ExternalSessionManagerConfig[];  // External session managers
   default_session_profile_id?: string;  // Default session profile ID for this settings scope
+  enabled_team_session_profile_ids?: string[]; // Team profiles opted into personal-session use
   default_agent_type?: Exclude<AgentApiType, 'default' | 'claude-legacy'>;  // Personal or team default for sessions without an explicit agent type
   auto_suspend?: {
     enabled: boolean;
@@ -443,6 +444,10 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
 
   if (data.default_session_profile_id !== undefined) {
     prepared.default_session_profile_id = data.default_session_profile_id
+  }
+
+  if (data.enabled_team_session_profile_ids !== undefined) {
+    prepared.enabled_team_session_profile_ids = data.enabled_team_session_profile_ids
   }
 
   if (data.auto_suspend !== undefined) {

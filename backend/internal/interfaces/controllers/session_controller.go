@@ -2978,6 +2978,19 @@ func (c *SessionController) resolveSessionProfile(
 				entities.ErrSessionProfileAccessDenied{ID: profile.ID()}.Error(),
 			)
 		}
+		if profile.Scope() == entities.ScopeTeam && scope == entities.ScopeUser {
+			enabledProfiles, enabledErr := listEnabledTeamSessionProfiles(ctx, c.sessionProfileRepo, c.settingsRepo, userID, authzCtx.TeamScope.Teams)
+			if enabledErr != nil {
+				return nil, "", echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve enabled team profiles")
+			}
+			enabled := false
+			for _, candidate := range enabledProfiles {
+				enabled = enabled || candidate.ID() == profile.ID()
+			}
+			if !enabled {
+				return nil, "", echo.NewHTTPError(http.StatusForbidden, entities.ErrSessionProfileAccessDenied{ID: profile.ID()}.Error())
+			}
+		}
 		return profile, "explicit_profile_selected", nil
 	}
 
@@ -2992,6 +3005,18 @@ func (c *SessionController) resolveSessionProfile(
 	if err != nil {
 		log.Printf("[SESSION] Warning: could not list session profiles for default lookup: %v", err)
 		return nil, "profile_list_unavailable", nil
+	}
+	if scope == entities.ScopeUser {
+		var userTeamIDs []string
+		if authzCtx != nil {
+			userTeamIDs = authzCtx.TeamScope.Teams
+		}
+		teamProfiles, teamErr := listEnabledTeamSessionProfiles(ctx, c.sessionProfileRepo, c.settingsRepo, userID, userTeamIDs)
+		if teamErr != nil {
+			log.Printf("[SESSION] Warning: could not list enabled team profiles: %v", teamErr)
+			return nil, "profile_list_unavailable", nil
+		}
+		profiles = append(profiles, teamProfiles...)
 	}
 	if profile := selectSessionProfileByTags(profiles, tags); profile != nil {
 		log.Printf("[SESSION] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)

@@ -99,7 +99,8 @@ type UpdateSettingsRequest struct {
 	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`      // Active notification channels (e.g. ["web", "slack"])
 	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"`  // External session managers (External Session Manager registrations)
 	DefaultSessionProfileID *string                          `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
-	DefaultAgentType        *string                          `json:"default_agent_type,omitempty"`         // Default agent type for sessions in this settings scope
+	EnabledTeamProfileIDs   *[]string                        `json:"enabled_team_session_profile_ids,omitempty"`
+	DefaultAgentType        *string                          `json:"default_agent_type,omitempty"` // Default agent type for sessions in this settings scope
 	AutoSuspend             *entities.AutoSuspendSettings    `json:"auto_suspend,omitempty"`
 }
 
@@ -158,7 +159,8 @@ type SettingsResponse struct {
 	NotificationChannels    []string                         `json:"notification_channels,omitempty"`      // Active notification channels
 	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"`  // Registered external session managers
 	DefaultSessionProfileID string                           `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
-	DefaultAgentType        string                           `json:"default_agent_type,omitempty"`         // Default agent type for sessions in this settings scope
+	EnabledTeamProfileIDs   []string                         `json:"enabled_team_session_profile_ids,omitempty"`
+	DefaultAgentType        string                           `json:"default_agent_type,omitempty"` // Default agent type for sessions in this settings scope
 	AutoSuspend             *entities.AutoSuspendSettings    `json:"auto_suspend,omitempty"`
 	CreatedAt               string                           `json:"created_at"`
 	UpdatedAt               string                           `json:"updated_at"`
@@ -292,6 +294,24 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	var req UpdateSettingsRequest
 	if err := ctx.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+	if req.EnabledTeamProfileIDs != nil {
+		if name != string(user.ID()) {
+			return echo.NewHTTPError(http.StatusBadRequest, "enabled_team_session_profile_ids is available only in personal settings")
+		}
+		if len(*req.EnabledTeamProfileIDs) > 100 {
+			return echo.NewHTTPError(http.StatusBadRequest, "enabled_team_session_profile_ids must contain at most 100 items")
+		}
+		seen := make(map[string]struct{}, len(*req.EnabledTeamProfileIDs))
+		for _, id := range *req.EnabledTeamProfileIDs {
+			if strings.TrimSpace(id) == "" {
+				return echo.NewHTTPError(http.StatusBadRequest, "enabled_team_session_profile_ids must not contain empty values")
+			}
+			if _, duplicate := seen[id]; duplicate {
+				return echo.NewHTTPError(http.StatusBadRequest, "enabled_team_session_profile_ids must not contain duplicates")
+			}
+			seen[id] = struct{}{}
+		}
 	}
 
 	// Get existing settings or create new one
@@ -537,6 +557,9 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 
 	if req.DefaultSessionProfileID != nil {
 		settings.SetDefaultSessionProfileID(*req.DefaultSessionProfileID)
+	}
+	if req.EnabledTeamProfileIDs != nil {
+		settings.SetEnabledTeamSessionProfileIDs(*req.EnabledTeamProfileIDs)
 	}
 	if req.GitHubRepositories != nil {
 		repositories, err := normalizeRepositoryPatterns(*req.GitHubRepositories)
@@ -810,6 +833,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
 	resp.DefaultSessionProfileID = settings.DefaultSessionProfileID()
+	resp.EnabledTeamProfileIDs = settings.EnabledTeamSessionProfileIDs()
 	resp.DefaultAgentType = settings.DefaultAgentType()
 	resp.AutoSuspend = settings.AutoSuspend()
 

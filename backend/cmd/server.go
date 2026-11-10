@@ -271,7 +271,8 @@ func registerScheduleHandlers(proxyServer *app.Server) {
 	scheduleManager := proxyServer.GetScheduleManager()
 
 	// Create and register schedule handlers
-	scheduleHandlers := schedule.NewHandlers(scheduleManager, newTriggerSessionManager(proxyServer.GetConfig()), proxyServer.GetSessionProfileRepository())
+	scheduleHandlers := schedule.NewHandlers(scheduleManager, newTriggerSessionManager(proxyServer.GetConfig()), proxyServer.GetSessionProfileRepository()).
+		WithSettingsRepository(proxyServer.GetSettingsRepository())
 	proxyServer.AddCustomHandler(scheduleHandlers)
 
 	log.Printf("[SCHEDULE_HANDLERS] Schedule handlers registered successfully")
@@ -340,7 +341,7 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 		workerConfig,
 		electionConfig,
 		proxyServer.GetSessionProfileRepository(),
-	)
+	).WithSettingsRepository(proxyServer.GetSettingsRepository())
 
 	// Start leader worker in background
 	go leaderWorker.Run(context.Background())
@@ -553,6 +554,7 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 
 	// Create and register webhook handlers with baseURL from config
 	webhookHandlers := webhook.NewHandlers(webhookRepo, newTriggerSessionManager(configData), configData.Webhook.BaseURL, proxyServer.GetSessionProfileRepository()).
+		WithSettingsRepository(proxyServer.GetSettingsRepository()).
 		WithGitHubApplicationUserResolver(proxyServer)
 	proxyServer.AddCustomHandler(webhookHandlers)
 
@@ -644,7 +646,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 		configData.Webhook.BaseURL,
 		configData.Slack.DryRun,
 		proxyServer.GetSessionProfileRepository(),
-	)
+	).WithSettingsRepository(proxyServer.GetSettingsRepository())
 	if configData.Slack.DryRun {
 		log.Printf("[SOCKET_MANAGER] Slack dry-run mode enabled: session creation and Slack posts will be logged only")
 	}

@@ -75,6 +75,18 @@ type fakeSessionProfileRepo struct {
 	profiles []*entities.SessionProfile
 }
 
+type fakeLaunchSettingsRepo struct{ settings *entities.Settings }
+
+func (r *fakeLaunchSettingsRepo) Save(context.Context, *entities.Settings) error { return nil }
+func (r *fakeLaunchSettingsRepo) FindByName(context.Context, string) (*entities.Settings, error) {
+	return r.settings, nil
+}
+func (r *fakeLaunchSettingsRepo) Delete(context.Context, string) error { return nil }
+func (r *fakeLaunchSettingsRepo) Exists(context.Context, string) (bool, error) {
+	return r.settings != nil, nil
+}
+func (r *fakeLaunchSettingsRepo) List(context.Context) ([]*entities.Settings, error) { return nil, nil }
+
 func (r *fakeSessionProfileRepo) Create(context.Context, *entities.SessionProfile) error {
 	return nil
 }
@@ -89,11 +101,23 @@ func (r *fakeSessionProfileRepo) Get(_ context.Context, id string) (*entities.Se
 func (r *fakeSessionProfileRepo) List(_ context.Context, filter repositories.SessionProfileFilter) ([]*entities.SessionProfile, error) {
 	var result []*entities.SessionProfile
 	for _, p := range r.profiles {
-		if p.UserID() != filter.UserID || p.Scope() != filter.Scope {
+		if filter.UserID != "" && p.UserID() != filter.UserID {
 			continue
 		}
-		if filter.Scope == entities.ScopeTeam && p.TeamID() != filter.TeamID {
+		if filter.Scope != "" && p.Scope() != filter.Scope {
 			continue
+		}
+		if filter.TeamID != "" && p.TeamID() != filter.TeamID {
+			continue
+		}
+		if len(filter.TeamIDs) > 0 && p.Scope() == entities.ScopeTeam {
+			matched := false
+			for _, teamID := range filter.TeamIDs {
+				matched = matched || p.TeamID() == teamID
+			}
+			if !matched {
+				continue
+			}
 		}
 		result = append(result, p)
 	}
@@ -360,9 +384,11 @@ func TestLaunchAllowsTeamProfileForPersonalSessionWhenUserBelongsToTeam(t *testi
 	cfg.SetEnvironment(map[string]string{"SHARED": "team-value"})
 	profile.SetConfig(cfg)
 
-	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
-		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
-	)
+	settings := entities.NewSettings("user-1")
+	settings.SetEnabledTeamSessionProfileIDs([]string{"profile-team"})
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}}).
+		WithSettingsRepository(&fakeLaunchSettingsRepo{settings: settings})
 	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
 		UserID: "user-1", Scope: entities.ScopeUser, Teams: []string{"acme/platform"},
 		SessionProfileID: "profile-team",
@@ -396,6 +422,25 @@ func TestLaunchRejectsTeamProfileForPersonalSessionOutsideUserTeams(t *testing.T
 	}
 	if sessionManager.req != nil {
 		t.Fatal("team profile must not be applied outside the user's teams")
+	}
+}
+
+func TestLaunchRejectsTeamProfileForPersonalSessionWithoutOptIn(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-team", "shared", "owner")
+	profile.SetScope(entities.ScopeTeam)
+	profile.SetTeamID("acme/platform")
+	settings := entities.NewSettings("user-1")
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}}).
+		WithSettingsRepository(&fakeLaunchSettingsRepo{settings: settings})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1", Scope: entities.ScopeUser, Teams: []string{"acme/platform"},
+		SessionProfileID: "profile-team",
+	})
+	if err == nil {
+		t.Fatal("expected access denied error")
 	}
 }
 

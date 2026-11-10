@@ -2608,6 +2608,7 @@ export class AgentAPIProxyClient {
 
     if (params?.scope) searchParams.set('scope', params.scope);
     if (params?.team_id) searchParams.set('team_id', params.team_id);
+	if (params?.include_available_team_profiles) searchParams.set('include_available_team_profiles', 'true');
 
     const endpoint = `/session-profiles${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
     const result = await this.makeRequest<SessionProfile[] | SessionProfileListResponse>(endpoint);

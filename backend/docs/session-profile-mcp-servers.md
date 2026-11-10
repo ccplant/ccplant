@@ -26,7 +26,7 @@ The settings layers are resolved from lowest to highest priority:
 `base → team → user → session profile → oneshot`
 
 MCP maps merge by server name. A profile replaces a same-named tenant server as one atomic configuration and inherits servers with other names. The selected profile is propagated to direct, scheduled, webhook, SlackBot, and External Session Manager launches.
-An explicit `session_profile_id` must be accessible to the requester: a personal profile must belong to the same user, while a team profile may be used from personal scope by a member of that team. Team-scoped sessions remain limited to profiles owned by that same team. Invalid or unauthorized profile IDs fail before profile configuration is applied; defaults and tag selectors resolve only within the requested tenant, so team profiles are never applied automatically to personal sessions.
+An explicit `session_profile_id` must be accessible to the requester: a personal profile must belong to the same user, while a team profile may be used from personal scope when the user belongs to that team and has opted into it through personal `enabled_team_session_profile_ids`. Team-scoped sessions remain limited to profiles owned by that same team. Invalid or unauthorized profile IDs fail before profile configuration is applied. Opted-in team profiles join the personal profile set for explicit selection, selector matching, and default resolution.
 
 ## Profile-to-profile sources
 

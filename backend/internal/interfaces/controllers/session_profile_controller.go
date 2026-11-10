@@ -103,6 +103,7 @@ type SessionProfileResponse struct {
 	Config               SessionProfileConfigResponse `json:"config"`
 	CreatedAt            string                       `json:"created_at"`
 	UpdatedAt            string                       `json:"updated_at"`
+	PersonalEnabled      bool                         `json:"personal_enabled,omitempty"`
 }
 
 // SessionProfileConfigResponse represents session profile config in responses
@@ -243,7 +244,16 @@ func (c *SessionProfileController) ListSessionProfiles(ctx echo.Context) error {
 	// Personal sessions may explicitly use profiles owned by any team the user
 	// belongs to. Keep the personal query separate so repository filters remain
 	// simple AND filters, then append the accessible team profiles.
+	enabledTeamProfileIDs := map[string]struct{}{}
+	includeAvailableTeamProfiles := ctx.QueryParam("include_available_team_profiles") == "true"
 	if scopeFilter != "team" && teamIDFilter == "" && len(userTeamIDs) > 0 {
+		if c.settingsRepo != nil {
+			if settings, settingsErr := c.settingsRepo.FindByName(ctx.Request().Context(), userID); settingsErr == nil && settings != nil {
+				for _, id := range settings.EnabledTeamSessionProfileIDs() {
+					enabledTeamProfileIDs[id] = struct{}{}
+				}
+			}
+		}
 		teamProfiles, listErr := c.repo.List(ctx.Request().Context(), repositories.SessionProfileFilter{
 			Scope:   entities.ScopeTeam,
 			TeamIDs: userTeamIDs,
@@ -252,17 +262,64 @@ func (c *SessionProfileController) ListSessionProfiles(ctx echo.Context) error {
 			log.Printf("Failed to list team session profiles: %v", listErr)
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to list session profiles")
 		}
-		profiles = append(profiles, teamProfiles...)
+		for _, profile := range teamProfiles {
+			_, enabled := enabledTeamProfileIDs[profile.ID()]
+			if includeAvailableTeamProfiles || enabled {
+				profiles = append(profiles, profile)
+			}
+		}
 	}
 
 	responses := make([]SessionProfileResponse, 0, len(profiles))
 	for _, p := range profiles {
-		responses = append(responses, c.toResponse(p))
+		response := c.toResponse(p)
+		if p.Scope() == entities.ScopeTeam {
+			_, response.PersonalEnabled = enabledTeamProfileIDs[p.ID()]
+		}
+		responses = append(responses, response)
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_profiles": responses,
 	})
+}
+
+func listEnabledTeamSessionProfiles(
+	ctx context.Context,
+	profileRepo repositories.SessionProfileRepository,
+	settingsRepo repositories.SettingsRepository,
+	userID string,
+	teamIDs []string,
+) ([]*entities.SessionProfile, error) {
+	if profileRepo == nil || settingsRepo == nil || userID == "" || len(teamIDs) == 0 {
+		return nil, nil
+	}
+	exists, err := settingsRepo.Exists(ctx, userID)
+	if err != nil || !exists {
+		return nil, err
+	}
+	settings, err := settingsRepo.FindByName(ctx, userID)
+	if err != nil || settings == nil {
+		return nil, err
+	}
+	enabled := make(map[string]struct{})
+	for _, id := range settings.EnabledTeamSessionProfileIDs() {
+		enabled[id] = struct{}{}
+	}
+	if len(enabled) == 0 {
+		return nil, nil
+	}
+	profiles, err := profileRepo.List(ctx, repositories.SessionProfileFilter{Scope: entities.ScopeTeam, TeamIDs: teamIDs})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*entities.SessionProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		if _, ok := enabled[profile.ID()]; ok {
+			result = append(result, profile)
+		}
+	}
+	return result, nil
 }
 
 // PreviewSessionProfile handles POST /session-profiles/preview.
@@ -308,6 +365,14 @@ func (c *SessionProfileController) PreviewSessionProfile(ctx echo.Context) error
 	if err != nil {
 		log.Printf("Failed to list session profiles for preview: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list session profiles")
+	}
+	if scope == entities.ScopeUser {
+		teamProfiles, teamErr := listEnabledTeamSessionProfiles(ctx.Request().Context(), c.repo, c.settingsRepo, userID, userTeamIDs)
+		if teamErr != nil {
+			log.Printf("Failed to list enabled team session profiles for preview: %v", teamErr)
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to list session profiles")
+		}
+		profiles = append(profiles, teamProfiles...)
 	}
 
 	if profile := selectSessionProfileByTags(profiles, req.Tags); profile != nil {

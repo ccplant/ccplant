@@ -71,6 +71,7 @@ type settingsJSON struct {
 	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
 	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
 	DefaultSessionProfileID string                                 `json:"default_session_profile_id,omitempty"`
+	TeamProfileIDs          []string                               `json:"enabled_team_session_profile_ids,omitempty"`
 	DefaultAgentType        string                                 `json:"default_agent_type,omitempty"`
 	AutoSuspend             *entities.AutoSuspendSettings          `json:"auto_suspend,omitempty"`
 	SecretSettings          []secretSettingJSON                    `json:"secret_settings,omitempty"`
@@ -383,6 +384,7 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 	if id := settings.DefaultSessionProfileID(); id != "" {
 		sj.DefaultSessionProfileID = id
 	}
+	sj.TeamProfileIDs = settings.EnabledTeamSessionProfileIDs()
 	if agentType := settings.DefaultAgentType(); agentType != "" {
 		sj.DefaultAgentType = agentType
 	}
@@ -623,6 +625,8 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 	if sj.DefaultSessionProfileID != "" {
 		settings.SetDefaultSessionProfileID(sj.DefaultSessionProfileID)
 	}
+	settings.SetEnabledTeamSessionProfileIDs(sj.TeamProfileIDs)
+	settings.SetUpdatedAt(sj.UpdatedAt)
 	if sj.DefaultAgentType != "" {
 		settings.SetDefaultAgentType(sj.DefaultAgentType)
 	}

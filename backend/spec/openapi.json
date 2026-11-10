@@ -4113,6 +4113,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_available_team_profiles",
+            "in": "query",
+            "description": "For personal scope, include all profiles from the user's teams so personal opt-in can be managed.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -9948,6 +9957,12 @@
             "type": "string",
             "description": "Default session profile ID for this settings scope. Set to empty string to clear."
           },
+          "enabled_team_session_profile_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "uniqueItems": true,
+            "description": "Team session profile IDs opted into personal-session selection and automatic matching."
+          },
           "default_agent_type": {
             "type": "string",
             "enum": [
@@ -10161,6 +10176,11 @@
           "default_session_profile_id": {
             "type": "string",
             "description": "Default session profile ID for this settings scope."
+          },
+          "enabled_team_session_profile_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Team session profile IDs opted into personal-session selection and automatic matching."
           },
           "default_agent_type": {
             "type": "string",
@@ -11815,6 +11835,10 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "personal_enabled": {
+            "type": "boolean",
+            "description": "Whether this team profile is opted into the current user's personal scope."
           }
         }
       },
