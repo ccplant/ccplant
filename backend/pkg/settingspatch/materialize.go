@@ -52,6 +52,9 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 		if b := resolved.Bedrock; b != nil {
 			if b.Model != "" {
 				result.EnvVars["ANTHROPIC_MODEL"] = b.Model
+				if region := bedrockRegionFromModelARN(b.Model); region != "" {
+					result.EnvVars["AWS_REGION"] = region
+				}
 			}
 			if b.AccessKeyID != "" {
 				result.EnvVars["AWS_ACCESS_KEY_ID"] = b.AccessKeyID
@@ -127,6 +130,17 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 	}
 
 	return result, nil
+}
+
+// bedrockRegionFromModelARN returns the region encoded in a Bedrock model ARN.
+// Plain model IDs (including cross-region inference profile IDs) do not contain
+// a region and are intentionally left unchanged.
+func bedrockRegionFromModelARN(model string) string {
+	parts := strings.SplitN(model, ":", 6)
+	if len(parts) != 6 || parts[0] != "arn" || parts[1] == "" || parts[2] != "bedrock" {
+		return ""
+	}
+	return parts[3]
 }
 
 // validateEnvVars filters out invalid or dangerous environment variables.

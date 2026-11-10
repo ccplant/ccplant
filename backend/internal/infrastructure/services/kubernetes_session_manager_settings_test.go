@@ -358,6 +358,56 @@ func TestBuildSessionSettings_ProfileEnvironmentOverridesTeamBedrockAndRequestOv
 	}
 }
 
+func TestBuildSessionSettings_WritesBedrockStaticCredentialsAsProfile(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+
+	userSettings := entities.NewSettings("test-user")
+	userSettings.SetAuthMode(entities.AuthModeBedrock)
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("arn:aws:bedrock:ap-northeast-1:123456789012:inference-profile/example")
+	bedrock.SetAccessKeyID("AKIATEST")
+	bedrock.SetSecretAccessKey("secret/key")
+	userSettings.SetBedrock(bedrock)
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{
+		"test-user": userSettings,
+	}})
+
+	req := &entities.RunServerRequest{UserID: "test-user", AgentType: "claude-acp"}
+	session := NewKubernetesSession("test-session", req,
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	if settings.Env["AWS_PROFILE"] != bedrockAWSProfile || settings.Env["AWS_SHARED_CREDENTIALS_FILE"] != bedrockCredentialsFile || settings.Env["AWS_CONFIG_FILE"] != bedrockConfigFile {
+		t.Fatalf("Bedrock profile environment was not configured: %#v", settings.Env)
+	}
+	if _, exists := settings.Env["AWS_REGION"]; exists {
+		t.Fatal("AWS_REGION must not remain in the session environment")
+	}
+	if _, exists := settings.Env["AWS_ACCESS_KEY_ID"]; exists {
+		t.Fatal("AWS_ACCESS_KEY_ID must not remain in the session environment")
+	}
+	if len(settings.Files) != 2 {
+		t.Fatalf("managed files count = %d, want 2", len(settings.Files))
+	}
+	if got := settings.Files[0]; got.Path != bedrockCredentialsFile || got.Permissions != "0600" || got.Content != "[bedrock]\naws_access_key_id = AKIATEST\naws_secret_access_key = secret/key\n" {
+		t.Fatalf("Bedrock credentials file = %#v", got)
+	}
+	if got := settings.Files[1]; got.Path != bedrockConfigFile || got.Permissions != "0600" || got.Content != "[profile bedrock]\nregion = ap-northeast-1\n" {
+		t.Fatalf("Bedrock config file = %#v", got)
+	}
+}
+
 func TestBuildSessionSettings_MergesSettingsAndProfileSkills(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}})
 	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{

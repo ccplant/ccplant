@@ -37,6 +37,57 @@ func TestMaterialize_AuthMode(t *testing.T) {
 		assert.Equal(t, "arn:aws:iam::123:role/test", m.EnvVars["AWS_ROLE_ARN"])
 	})
 
+	t.Run("bedrock model ARN sets AWS region", func(t *testing.T) {
+		resolved := SettingsPatch{
+			AuthMode: "bedrock",
+			Bedrock: &BedrockPatch{
+				Model: "arn:aws:bedrock:ap-northeast-1:123456789012:inference-profile/example",
+			},
+		}
+
+		m, err := Materialize(resolved)
+		require.NoError(t, err)
+		assert.Equal(t, "ap-northeast-1", m.EnvVars["AWS_REGION"])
+	})
+
+	t.Run("bedrock model ARN region overrides settings env region", func(t *testing.T) {
+		resolved := SettingsPatch{
+			AuthMode: "bedrock",
+			EnvVars:  map[string]string{"AWS_REGION": "us-east-1"},
+			Bedrock: &BedrockPatch{
+				Model: "arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:inference-profile/example",
+			},
+		}
+
+		m, err := Materialize(resolved)
+		require.NoError(t, err)
+		assert.Equal(t, "us-gov-west-1", m.EnvVars["AWS_REGION"])
+	})
+
+	t.Run("plain model ID does not set AWS region", func(t *testing.T) {
+		resolved := SettingsPatch{
+			AuthMode: "bedrock",
+			Bedrock:  &BedrockPatch{Model: "global.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+		}
+
+		m, err := Materialize(resolved)
+		require.NoError(t, err)
+		_, ok := m.EnvVars["AWS_REGION"]
+		assert.False(t, ok)
+	})
+
+	t.Run("non-Bedrock ARN does not set AWS region", func(t *testing.T) {
+		resolved := SettingsPatch{
+			AuthMode: "bedrock",
+			Bedrock:  &BedrockPatch{Model: "arn:aws:sagemaker:ap-northeast-1:123456789012:model/example"},
+		}
+
+		m, err := Materialize(resolved)
+		require.NoError(t, err)
+		_, ok := m.EnvVars["AWS_REGION"]
+		assert.False(t, ok)
+	})
+
 	t.Run("bedrock mode without credentials sets only CLAUDE_CODE_USE_BEDROCK", func(t *testing.T) {
 		resolved := SettingsPatch{
 			AuthMode: "bedrock",

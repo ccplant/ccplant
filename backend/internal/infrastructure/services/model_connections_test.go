@@ -75,6 +75,66 @@ func TestGenericModelOverrideUsesSelectedAgent(t *testing.T) {
 	require.NotContains(t, pi.Env, "PI_MODEL")
 }
 
+func TestApplyBedrockCredentialsProfile(t *testing.T) {
+	settings := &sessionsettings.SessionSettings{Env: map[string]string{
+		"CLAUDE_CODE_USE_BEDROCK":                "1",
+		"AWS_ACCESS_KEY_ID":                      "AKIATEST",
+		"AWS_SECRET_ACCESS_KEY":                  "secret/key",
+		"AWS_SESSION_TOKEN":                      "stale-session-token",
+		"AWS_ROLE_ARN":                           "arn:aws:iam::123:role/wif",
+		"AWS_WEB_IDENTITY_TOKEN_FILE":            "/var/run/token",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI":     "http://169.254.170.23/v1/credentials",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE": "/var/run/pod-identity-token",
+		"AWS_REGION":                             "ap-northeast-1",
+	}}
+
+	applyBedrockCredentialsProfile(settings)
+
+	require.Equal(t, bedrockAWSProfile, settings.Env["AWS_PROFILE"])
+	require.Equal(t, bedrockCredentialsFile, settings.Env["AWS_SHARED_CREDENTIALS_FILE"])
+	require.Equal(t, bedrockConfigFile, settings.Env["AWS_CONFIG_FILE"])
+	for _, key := range bedrockAmbientEnvKeys {
+		require.NotContains(t, settings.Env, key)
+		require.Contains(t, settings.UnsetEnv, key)
+	}
+	require.Len(t, settings.Files, 2)
+	require.Equal(t, bedrockCredentialsFile, settings.Files[0].Path)
+	require.Equal(t, "0600", settings.Files[0].Permissions)
+	require.Equal(t, "[bedrock]\naws_access_key_id = AKIATEST\naws_secret_access_key = secret/key\n", settings.Files[0].Content)
+	require.Equal(t, bedrockConfigFile, settings.Files[1].Path)
+	require.Equal(t, "0600", settings.Files[1].Permissions)
+	require.Equal(t, "[profile bedrock]\nregion = ap-northeast-1\n", settings.Files[1].Content)
+}
+
+func TestApplyBedrockCredentialsProfileUsesDefaultRegion(t *testing.T) {
+	settings := &sessionsettings.SessionSettings{Env: map[string]string{
+		"CLAUDE_CODE_USE_BEDROCK": "1",
+		"AWS_ACCESS_KEY_ID":       "AKIATEST",
+		"AWS_SECRET_ACCESS_KEY":   "secret/key",
+		"AWS_DEFAULT_REGION":      "us-west-2",
+	}}
+
+	applyBedrockCredentialsProfile(settings)
+
+	require.NotContains(t, settings.Env, "AWS_DEFAULT_REGION")
+	require.Equal(t, bedrockConfigFile, settings.Env["AWS_CONFIG_FILE"])
+	require.Len(t, settings.Files, 2)
+	require.Equal(t, "[profile bedrock]\nregion = us-west-2\n", settings.Files[1].Content)
+}
+
+func TestApplyBedrockCredentialsProfileRequiresCompleteSafePair(t *testing.T) {
+	for _, env := range []map[string]string{
+		{"CLAUDE_CODE_USE_BEDROCK": "0", "AWS_ACCESS_KEY_ID": "AKIA", "AWS_SECRET_ACCESS_KEY": "secret"},
+		{"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_ACCESS_KEY_ID": "AKIA"},
+		{"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_ACCESS_KEY_ID": "AKIA\ninjected", "AWS_SECRET_ACCESS_KEY": "secret"},
+	} {
+		settings := &sessionsettings.SessionSettings{Env: env}
+		applyBedrockCredentialsProfile(settings)
+		require.Empty(t, settings.Files)
+		require.Empty(t, settings.Env["AWS_PROFILE"])
+	}
+}
+
 func TestPiProfileConnectionIsResolvedWithoutEnvironment(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetPiConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://mock.example/v1", Model: "ani-1", Authentication: "none"})
