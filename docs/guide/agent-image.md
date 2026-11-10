@@ -54,3 +54,16 @@ using the session Pod's imagePullSecrets/service account credentials.
 Manager auto-upgrades change the CLI source and manager image while preserving
 the agent asset reference. Already-running Pods keep their CLI. Nodes download
 new assets only when their hash changes or their cached image has been evicted.
+
+## npm compatibility
+
+The image runs JavaScript tools with the Bun runtime embedded in Claude. Its
+`npm` wrapper runs local `--prefix <directory>` and `--prefix=<directory>`
+commands in that directory, creates a missing prefix directory, and maps
+`--legacy-peer-deps` to `--omit=peer`. This keeps isolated package installations
+from changing the caller's project. Quoted arguments and arguments after `--`
+are preserved. The wrapper does not implement the entire npm CLI.
+
+Run `scripts/test-agent-npm-wrapper.sh` for argument-level regression tests.
+The agent image publishing workflow also runs its `--integration` mode against
+the image, using local fixture packages without registry access.

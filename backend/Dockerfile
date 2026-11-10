@@ -72,5 +72,5 @@ CMD ["server"]
 
 # Compatibility runtime for Docker Compose and local process sessions.
 # Kubernetes managers use the api target and inject its CLI into ccplant-agent.
-FROM ghcr.io/ccplant/ccplant-agent:assets-a35d56e71b4c2a73035704d53ed8996b AS runtime
+FROM ghcr.io/ccplant/ccplant-agent:assets-8c8fef49b8745085a1f37b899a344f45 AS runtime
 COPY --from=builder /app/bin/ccplant /opt/ccplant/bin/ccplant

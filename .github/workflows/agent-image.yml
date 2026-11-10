@@ -79,3 +79,10 @@ jobs:
           done
           docker run --rm --user 999:999 -v "$volume:/opt/ccplant/bin:ro" --entrypoint /bin/sh "$IMAGE" \
             -ec 'ccplant --help; agentapi --help; claude --version; codex --version; hc --version; command -v claude-agent-acp codex-acp pi pi-acp cursor-agent otelcol github-mcp-server herdr-core hc'
+      - name: Smoke-test npm prefix isolation
+        env:
+          IMAGE: ghcr.io/ccplant/ccplant-agent:${{ needs.metadata.outputs.tag }}
+        run: |
+          docker run --rm --network none --entrypoint /bin/bash \
+            -v "$PWD/scripts/test-agent-npm-wrapper.sh:/tmp/test-agent-npm-wrapper.sh:ro" \
+            "$IMAGE" /tmp/test-agent-npm-wrapper.sh --integration

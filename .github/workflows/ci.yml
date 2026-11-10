@@ -19,6 +19,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify agent image references
         run: scripts/check-agent-image-tag.sh
+      - name: Test npm wrapper argument compatibility
+        run: scripts/test-agent-npm-wrapper.sh
 
   changes:
     runs-on: ubuntu-latest

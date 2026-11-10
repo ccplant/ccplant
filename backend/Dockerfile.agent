@@ -159,10 +159,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
-# Create npm, npx, bun, bunx, and node wrapper scripts that use claude x with BUN_BE_BUN=1
-RUN printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
-    sudo chmod +x /usr/local/bin/npm && \
-    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
+# Keep npm's local-install prefix semantics when delegating to Bun.
+COPY --chmod=755 scripts/npm-bun.sh /usr/local/bin/npm
+
+# Create npx, bun, bunx, and node wrappers using Claude's embedded Bun runtime.
+RUN printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
     sudo chmod +x /usr/local/bin/npx && \
     printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
     sudo chmod +x /usr/local/bin/bun && \
@@ -210,28 +211,7 @@ RUN bun install -g \
       "pi-acp@${PI_ACP_VERSION}" && \
     mkdir -p /home/agentapi/.pi/agent/npm && \
     printf '{"private":true,"dependencies":{}}\n' > /home/agentapi/.pi/agent/npm/package.json && \
-    mkdir -p /tmp/pi-npm-shim && \
-    printf '%s\n' \
-      '#!/bin/sh' \
-      'set -e' \
-      'prefix=""' \
-      'packages=""' \
-      'while [ "$#" -gt 0 ]; do' \
-      '  case "$1" in' \
-      '    install) shift ;;' \
-      '    --prefix) prefix="$2"; shift 2 ;;' \
-      '    --legacy-peer-deps) shift ;;' \
-      '    *) packages="$packages $1"; shift ;;' \
-      '  esac' \
-      'done' \
-      'if [ -z "$prefix" ]; then prefix="$PWD"; fi' \
-      'mkdir -p "$prefix"' \
-      'test -f "$prefix/package.json" || printf "%s\n" "{\"private\":true,\"dependencies\":{}}" > "$prefix/package.json"' \
-      'exec bun add --cwd "$prefix" $packages' \
-      > /tmp/pi-npm-shim/npm && \
-    chmod +x /tmp/pi-npm-shim/npm && \
-    PATH="/tmp/pi-npm-shim:$PATH" pi install npm:pi-mcp-adapter && \
-    rm -rf /tmp/pi-npm-shim
+    pi install npm:pi-mcp-adapter
 
 # Install Cursor Agent CLI and place stable wrappers in /opt/cursor/bin.
 # Official install docs: https://cursor.com/docs/cli/installation
