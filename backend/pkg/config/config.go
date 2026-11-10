@@ -357,6 +357,10 @@ type KubernetesSessionConfig struct {
 	// mcp_servers, marketplaces, enabled_plugins, hooks) and is merged at the lowest priority
 	// level during session settings generation. Team and user settings can override it.
 	SettingsBaseSecret string `json:"settings_base_secret" mapstructure:"settings_base_secret"`
+	// MCPServersBaseSecret is the legacy organization-wide MCP Secret. It contains
+	// mcp-servers.json in the {"mcpServers": {...}} format. Keep reading it as a
+	// lower-priority compatibility layer while installations migrate to settings.json.
+	MCPServersBaseSecret string `json:"mcp_servers_base_secret" mapstructure:"mcp_servers_base_secret"`
 
 	// OpenTelemetry Collector configuration
 	// OtelCollectorEnabled enables OpenTelemetry Collector sidecar for metrics collection
@@ -1233,6 +1237,7 @@ func bindEnvVars(v *viper.Viper) {
 
 	// Settings base secret configuration
 	_ = v.BindEnv("kubernetes_session.settings_base_secret", "AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET")
+	_ = v.BindEnv("kubernetes_session.mcp_servers_base_secret", "AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_SECRET")
 
 	// OpenTelemetry Collector configuration
 	_ = v.BindEnv("kubernetes_session.otel_collector_enabled", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED")
@@ -1453,6 +1458,7 @@ func setDefaults(v *viper.Viper) {
 	// Settings base secret default (single base Secret shared by all sessions,
 	// merged with team/user settings at session settings generation time)
 	v.SetDefault("kubernetes_session.settings_base_secret", "agentapi-settings-base")
+	v.SetDefault("kubernetes_session.mcp_servers_base_secret", "mcp-servers-base")
 
 	// Schedule worker defaults
 	v.SetDefault("schedule_worker.enabled", true)
