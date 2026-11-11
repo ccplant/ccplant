@@ -55,6 +55,32 @@ func TestGoogleLoginUsesApplicationUserIDFromLinkedPrincipal(t *testing.T) {
 	require.Equal(t, principal.ID, resolved.ID)
 }
 
+func TestGoogleConnectionLoginCreatesLinkedIdentity(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	principals := NewGitHubConnectionsController(client, "test", "https://service.example.com")
+	controller := NewGoogleConnectionsController(client, "test", "https://service.example.com", true, principals)
+	connection := googleConnection{ID: "workspace", Name: "Google Workspace", AllowUserCreation: true}
+	claims := &googleClaims{
+		Subject:       "subject-1",
+		Email:         "alice@example.com",
+		EmailVerified: true,
+		Name:          "Alice",
+		Picture:       "https://example.com/alice.png",
+		HostedDomain:  "example.com",
+	}
+
+	principal, err := controller.resolveLoginPrincipal(context.Background(), connection, claims)
+	require.NoError(t, err)
+
+	var identity googleIdentity
+	_, err = principals.loadObject(context.Background(), googleIdentitySecretName(connection.ID, claims.Subject), &identity)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, identity.PrincipalID)
+	require.Equal(t, connection.ID, identity.ConnectionID)
+	require.Equal(t, claims.Email, identity.Email)
+}
+
 func TestApplicationUserIDFallsBackForExistingPrincipalRecords(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "local-user", applicationUserID(githubPrincipal{ID: "principal-id", InternalUserID: "internal:local-user"}))
