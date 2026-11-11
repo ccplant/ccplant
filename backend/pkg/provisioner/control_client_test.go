@@ -2,8 +2,11 @@ package provisioner
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -52,9 +55,69 @@ func TestPollControlCommandsNoContent(t *testing.T) {
 }
 
 func TestExecuteControlCommandCheckpointsThroughProxyBinary(t *testing.T) {
+	t.Setenv("AGENTAPI_SESSION_ID", "")
 	t.Setenv("CCPLANT_BINARY_PATH", "/bin/true")
 	err := executeControlCommand(context.Background(), http.DefaultClient, "codex-acp", controlCommand{Type: "checkpoint_session_state"})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExecuteControlCommandRejectsCheckpointUntilSetupCompletes(t *testing.T) {
+	tests := []struct {
+		name     string
+		aborted  bool
+		restored bool
+		payload  string
+		want     error
+		reason   string
+	}{
+		{name: "setup in progress", want: errSessionSetupInProgress, reason: "setup_in_progress"},
+		{name: "setup failed", aborted: true, want: errSessionSetupFailed, reason: "setup_failed"},
+		{name: "template snapshot during setup", payload: `{"snapshot_id":"tpl_1"}`, want: errSessionSetupInProgress, reason: "setup_in_progress"},
+		{name: "restore completed", aborted: true, restored: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			t.Setenv("AGENTAPI_SESSION_ID", "session-1")
+			t.Setenv("CCPLANT_BINARY_PATH", "/bin/false")
+			if tt.aborted {
+				if err := os.WriteFile(sessionProvisionAbortedMarkerPath("session-1"), []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.restored {
+				if err := os.WriteFile(sessionRestoreMarkerPath("session-1"), []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			command := controlCommand{Type: "checkpoint_session_state"}
+			if tt.payload != "" {
+				command.Payload = json.RawMessage(tt.payload)
+			}
+			err := executeControlCommand(context.Background(), http.DefaultClient, "codex-acp", command)
+			if tt.want == nil {
+				if err == nil || sessionSetupCheckpointReason(err) != "" {
+					t.Fatalf("err=%v, want the backup command failure", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.want) || sessionSetupCheckpointReason(err) != tt.reason {
+				t.Fatalf("err=%v reason=%q, want %v %q", err, sessionSetupCheckpointReason(err), tt.want, tt.reason)
+			}
+		})
+	}
+}
+
+func TestSessionSetupCheckpointStatus(t *testing.T) {
+	if got := sessionSetupCheckpointStatus(errSessionSetupInProgress); got != http.StatusTooEarly {
+		t.Fatalf("in progress status=%d", got)
+	}
+	if got := sessionSetupCheckpointStatus(errSessionSetupFailed); got != http.StatusFailedDependency {
+		t.Fatalf("failed status=%d", got)
+	}
+	if got := sessionSetupCheckpointStatus(errors.New("backup failed")); got != 0 {
+		t.Fatalf("other error status=%d", got)
 	}
 }

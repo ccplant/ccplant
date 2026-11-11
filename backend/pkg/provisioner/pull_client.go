@@ -59,7 +59,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 	}
 	srv.SetRestartSettingsHandler(func(settings *sessionsettings.SessionSettings) {
 		if settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
-			go runDirectRuntimeClient(ctx, client.Transport, settings.ParentRuntime, cfg.PodName)
+			go runDirectRuntimeClient(ctx, client.Transport, settings.ParentRuntime, cfg.PodName, srv.port)
 		}
 	})
 	if cfg.RunnerPool != "" {
@@ -97,7 +97,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 			continue
 		}
 		if runtime := provisionReq.Settings.ParentRuntime; runtime != nil && runtime.Enabled {
-			go runDirectRuntimeClient(ctx, client.Transport, runtime, cfg.PodName)
+			go runDirectRuntimeClient(ctx, client.Transport, runtime, cfg.PodName, srv.port)
 		}
 
 		srv.SetStatusReporter(func(st Status, msg, errorCode string) {
@@ -186,7 +186,7 @@ func runRunnerClaimClient(ctx context.Context, srv *Server, client *http.Client,
 			Enabled: true, Endpoint: cfg.ProxyURL, SessionID: claim.Allocation.SessionID,
 			ManagerID: claim.Allocation.ManagerID, Token: claim.RuntimeToken, Generation: claim.Allocation.Generation,
 		}
-		go runDirectRuntimeClient(ctx, client.Transport, claim.Settings.ParentRuntime, cfg.RunnerID)
+		go runDirectRuntimeClient(ctx, client.Transport, claim.Settings.ParentRuntime, cfg.RunnerID, srv.port)
 		if err := ackRunnerClaim(ctx, client, cfg, claim.Allocation.SessionID, claim.LeaseID); err != nil {
 			return fmt.Errorf("ack runner claim: %w", err)
 		}

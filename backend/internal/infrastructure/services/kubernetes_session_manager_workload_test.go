@@ -1126,6 +1126,42 @@ func TestRefreshRunnerSessionStatusUsesCanonicalSuspendState(t *testing.T) {
 	}
 }
 
+func TestRefreshRunnerSessionStatusUsesCanonicalProvisionError(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	const sessionID = "failed-provision-runner"
+	session := NewKubernetesSession(sessionID, &entities.RunServerRequest{}, "agentapi-session-"+sessionID, "agentapi-session-"+sessionID+"-svc", "", "test-ns", 9000, nil, nil)
+	session.SetStatus("starting")
+	manager.mutex.Lock()
+	manager.sessions[sessionID] = session
+	manager.mutex.Unlock()
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: session.ServiceName(), Namespace: "test-ns"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.saveProvisionRequest(ctx, &ProvisionRequest{
+		RequestID: "request-1", SessionID: sessionID, Status: "error",
+		Message: "setup failed: repository not found", ErrorCode: "setup_failed", UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.RefreshRunnerSessionStatus(ctx, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if session.Status() != "error" {
+		t.Fatalf("status = %q, want error", session.Status())
+	}
+	if session.StatusMessage() != "setup failed: repository not found" {
+		t.Fatalf("status message = %q", session.StatusMessage())
+	}
+	if session.ErrorCode() != "setup_failed" {
+		t.Fatalf("error code = %q", session.ErrorCode())
+	}
+}
+
 func TestRefreshRunnerSessionStatusCorrectsStoppedObservedFromOtherReplicaSuspend(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	ctx := context.Background()
