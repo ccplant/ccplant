@@ -391,8 +391,8 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	if err := writePiAgentInstructions(claudeMDPath, piAgentInstructionsPath); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to write Pi AGENTS.md: %v", err)
 	}
-	if err := writePiMCPServers(piSettingsPath, piMCPServers(settings)); err != nil {
-		log.Printf("[PROVISIONER] Warning: failed to write Pi MCP settings: %v", err)
+	if err := writePiSettings(piSettingsPath, piMCPServers(settings)); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write Pi settings: %v", err)
 	}
 
 	// ── Step 5: cd into cloned repo ───────────────────────────────────────────
@@ -1543,10 +1543,7 @@ func piMCPServers(settings *sessionsettings.SessionSettings) map[string]interfac
 	return nil
 }
 
-func writePiMCPServers(settingsPath string, mcpServers map[string]interface{}) error {
-	if len(mcpServers) == 0 {
-		return nil
-	}
+func writePiSettings(settingsPath string, mcpServers map[string]interface{}) error {
 	if strings.TrimSpace(settingsPath) == "" {
 		return fmt.Errorf("settings path must be set")
 	}
@@ -1560,7 +1557,13 @@ func writePiMCPServers(settingsPath string, mcpServers map[string]interface{}) e
 		return fmt.Errorf("read existing Pi settings: %w", err)
 	}
 
-	settingsJSON["mcpServers"] = mcpServers
+	// Session containers are already isolated by agentapi-proxy. Trust project
+	// resources automatically so pi-acp's non-interactive RPC process can load
+	// repository-local settings, skills, and extensions without a prompt.
+	settingsJSON["defaultProjectTrust"] = "always"
+	if len(mcpServers) > 0 {
+		settingsJSON["mcpServers"] = mcpServers
+	}
 
 	data, err := json.MarshalIndent(settingsJSON, "", "  ")
 	if err != nil {
@@ -1574,7 +1577,7 @@ func writePiMCPServers(settingsPath string, mcpServers map[string]interface{}) e
 	if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
 		return fmt.Errorf("write Pi settings: %w", err)
 	}
-	log.Printf("[PROVISIONER] Wrote Pi MCP settings to %s", settingsPath)
+	log.Printf("[PROVISIONER] Wrote Pi settings to %s", settingsPath)
 	return nil
 }
 
