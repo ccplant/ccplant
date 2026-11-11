@@ -7354,6 +7354,26 @@
         }
       }
     },
+    "/admin/principals/{principalId}": {
+      "delete": {
+        "summary": "Delete an unreferenced GitHub user principal",
+        "operationId": "deleteAdminPrincipal",
+        "tags": ["Users"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [{
+          "name": "principalId",
+          "in": "path",
+          "required": true,
+          "schema": {"type": "string", "format": "uuid"}
+        }],
+        "responses": {
+          "204": {"description": "Principal and linked identities deleted"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Principal not found"}
+        }
+      }
+    },
     "/admin/users/{principalId}/api-tokens": {
       "post": {
         "summary": "Create an API token for a user principal",

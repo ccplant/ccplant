@@ -857,6 +857,52 @@ func (c *GitHubConnectionsController) Unlink(ctx echo.Context) error {
 	return echo.NewHTTPError(http.StatusNotFound, "GitHub identity not found")
 }
 
+// DeletePrincipal removes an accidentally created GitHub principal and all of
+// its linked identities. Team membership snapshots are derived from external
+// GitHub state and may temporarily retain the deleted principal until the next
+// synchronization.
+func (c *GitHubConnectionsController) DeletePrincipal(ctx echo.Context) error {
+	principalID := strings.TrimSpace(ctx.Param("principalId"))
+	if principalID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "principal_id is required")
+	}
+
+	principals, err := c.listPrincipals(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list principals").SetInternal(err)
+	}
+	var target *githubPrincipal
+	for i := range principals {
+		if principals[i].ID == principalID {
+			target = &principals[i]
+			break
+		}
+	}
+	if target == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "principal not found")
+	}
+
+	identities, err := c.listIdentities(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list identities").SetInternal(err)
+	}
+	for _, identity := range identities {
+		if identity.PrincipalID != principalID {
+			continue
+		}
+		if err := c.client.CoreV1().Secrets(c.namespace).Delete(ctx.Request().Context(), identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete principal identity").SetInternal(err)
+		}
+	}
+	if err := c.client.CoreV1().Secrets(c.namespace).Delete(ctx.Request().Context(), principalSecretName(target.InternalUserID), metav1.DeleteOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			return echo.NewHTTPError(http.StatusNotFound, "principal not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete principal").SetInternal(err)
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
 var errIdentityConflict = errors.New("GitHub identity belongs to another principal")
 
 func (c *GitHubConnectionsController) linkIdentity(ctx context.Context, identity githubIdentity, accessToken string, expiresAt *time.Time) (bool, error) {

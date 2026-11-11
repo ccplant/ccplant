@@ -735,6 +735,7 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.PUT("/admin/github-connections/:id/github-app/private-key", controller.UpdateGitHubAppPrivateKey, admin)
 		r.echo.DELETE("/admin/github-connections/:id/github-app/private-key", controller.DeleteGitHubAppPrivateKey, admin)
 		r.echo.POST("/admin/github-connections/:id/github-app/test", controller.TestGitHubApp, admin)
+		r.echo.DELETE("/admin/principals/:principalId", controller.DeletePrincipal, admin)
 		r.echo.GET("/internal/sessions/:sessionId/github-credentials", controller.BrokerCredentials)
 		r.echo.GET("/github-connections", controller.ListAvailable, read)
 		r.echo.GET("/users/me/github-identities", controller.ListIdentities, read)

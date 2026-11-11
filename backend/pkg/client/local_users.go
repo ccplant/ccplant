@@ -99,3 +99,7 @@ func (c *Client) ListLocalUserTokens(ctx context.Context, id string) (*LocalUser
 func (c *Client) DeleteLocalUserToken(ctx context.Context, id, tokenID string) error {
 	return c.localUserRequest(ctx, http.MethodDelete, "/admin/users/"+url.PathEscape(id)+"/api-tokens/"+url.PathEscape(tokenID), nil, nil, http.StatusNoContent)
 }
+
+func (c *Client) DeletePrincipal(ctx context.Context, principalID string) error {
+	return c.localUserRequest(ctx, http.MethodDelete, "/admin/principals/"+url.PathEscape(principalID), nil, nil, http.StatusNoContent)
+}
