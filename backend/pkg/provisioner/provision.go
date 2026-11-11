@@ -82,8 +82,8 @@ func scheduleSessionSuspendFromReady(ctx context.Context) error {
 }
 
 const (
-	containerJavaScriptRuntime  = "/opt/claude/bin/claude"
-	containerCodexACPEntrypoint = "/home/agentapi/.bun/bin/codex-acp"
+	containerJavaScriptRuntime  = "/usr/local/bin/node"
+	containerCodexACPEntrypoint = "/home/agentapi/.npm-global/bin/codex-acp"
 )
 
 func envPath(name, fallback string) string {
@@ -453,7 +453,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 
 	// ── Step 5.5: run pre-script ─────────────────────────────────────────────
 	// Executes the optional shell pre-script before starting the agent.
-	// Pre-scripts are used for setup tasks such as pre-fetching npm/bun packages.
+	// Pre-scripts are used for setup tasks such as pre-fetching npm packages.
 	// Failure is non-fatal: a warning is logged and provisioning continues.
 	if settings.Startup.PreScript != "" && !settings.Restart {
 		s.setPhase("provision:pre-script")
@@ -1487,7 +1487,6 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			// directly, so a wrapper shebang can never move codex-acp (and its
 			// app-server child) into the executor sidecar. Shells spawned by the
 			// agent still resolve to the executor client as intended.
-			envMap["BUN_BE_BUN"] = "1"
 			adapterCommand = []string{containerJavaScriptRuntime, containerCodexACPEntrypoint}
 		}
 		args := []string{

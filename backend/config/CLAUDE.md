@@ -28,14 +28,14 @@ mise コマンドを利用することができます。言語のインタプリ
 
 このセッションの標準 agent image には、主に以下のソフトウェアが同梱されています。追加インストールの前に、利用可能なコマンドを確認してください。
 
-- Agent CLI: `claude`、`codex`、`agent` / `cursor-agent`、`pi`
+- Agent CLI: Claude Agent SDK の `claude`、`codex`、`agent` / `cursor-agent`、`pi`
 - Agent Client Protocol adapter: `claude-agent-acp`、`codex-acp`、`pi-acp`、Pi 用 MCP adapter
-- セッション・連携: `ccplant`、`agentapi`、`acp-posts`、`github-mcp-server`、`skills`
+- セッション・連携: `ccplant`、`acp-posts`、`github-mcp-server`、`skills`
 - 永続ターミナル: herdr-core の `hc`。バックグラウンド実行、detach/attach、画面履歴の取得、別 agent の起動や待機に利用できます。agent 向けの利用方法は `hc --skill`、コマンド一覧は `hc --help` で確認してください。
 - 開発・運用 CLI: `git`、`gh`、`docker`、`docker compose`、`mise`、`uv` / `uvx`、`otelcol`
 - 基本ツール: `bash`、`curl`、`make`、`jq`、`sudo`、`procps`、`iptables`
 
-`docker` は CLI と Compose plugin のみで、Docker daemon は同梱されていません。`npm`、`npx`、`node`、`bun`、`bunx` は同梱の Bun/Claude executable を利用する互換ラッパーです。必要な言語処理系や追加ツールが見つからない場合は `mise` または `uv` を優先して利用してください。
+`docker` は CLI と Compose plugin のみで、Docker daemon は同梱されていません。`node`、`npm`、`npx` は Node.js 22 の公式ディストリビューションです。必要な言語処理系や追加ツールが見つからない場合は `mise` または `uv` を優先して利用してください。
 
 ### test, lint
 

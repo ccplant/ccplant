@@ -607,10 +607,10 @@ func resolvePluginName(plugin string, nameMapping map[string]string) string {
 // officialMarketplace is the official Anthropic marketplace repository
 const officialMarketplace = "anthropics/claude-plugins-official"
 
-// claudeBinPath is the path to the claude CLI binary
-const claudeBinPath = "/opt/claude/bin/claude"
+// claudeBinPath is the Claude Agent SDK executable used by the ACP adapter.
+const claudeBinPath = "/home/agentapi/.npm-global/lib/node_modules/@anthropic-ai/claude-agent-sdk/claude"
 
-var skillsBinPath = "/home/agentapi/.bun/bin/skills"
+var skillsBinPath = "/home/agentapi/.npm-global/bin/skills"
 
 // runClaudeCLI executes a claude CLI command with HOME set to outputDir.
 func runClaudeCLI(outputDir string, args ...string) error {

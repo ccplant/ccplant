@@ -82,9 +82,6 @@ func TestBuildAgentCommandKeepsCodexACPInAgentContainer(t *testing.T) {
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}
-	if env["BUN_BE_BUN"] != "1" {
-		t.Fatalf("BUN_BE_BUN = %q, want 1", env["BUN_BE_BUN"])
-	}
 }
 
 func TestNormalizeNativeSettingsUsesManagedBinary(t *testing.T) {
