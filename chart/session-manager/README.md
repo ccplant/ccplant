@@ -13,6 +13,22 @@ Required values are `parent.url`, the parent connection/HMAC
 Secret references, `runner.managerId`, `runner.pool`, `internalApi.tokenSecretRef.name`, and
 `session.provisioner.tokenSecretRef.name`.
 
+The manager and session Pods are sized independently in this chart. Use top-level
+`resources.requests` / `resources.limits` for the manager container and
+`session.resources.requests` / `session.resources.limits` for session Pods.
+When the executor sidecar is enabled, configure it with
+`session.executor.resources`.
+
+```yaml
+resources:
+  requests: {cpu: "100m", memory: "256Mi"}
+  limits: {cpu: "500m", memory: "512Mi"}
+session:
+  resources:
+    requests: {cpu: "500m", memory: "512Mi"}
+    limits: {cpu: "2", memory: "4Gi"}
+```
+
 By default, the authenticated heartbeat also advertises the parent proxy's
 semantic version. When it is newer, the elected manager updates its own
 Deployment image and the CLI source for newly created session Pods. The

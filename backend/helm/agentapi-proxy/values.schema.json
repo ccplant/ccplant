@@ -58,6 +58,7 @@
           }
         },
         "image": { "$ref": "#/definitions/image" },
+        "resources": { "$ref": "#/definitions/resourceRequirements" },
         "imagePullSecrets": { "type": "array" },
         "envExclude": {
           "type": "array",
@@ -90,6 +91,7 @@
       }
     },
     "replicaCount": { "type": "integer", "minimum": 1 },
+    "resources": { "$ref": "#/definitions/resourceRequirements" },
     "scia": { "$ref": "#/definitions/sessionManagerScia" },
     "observability": {
       "type": "object",
@@ -152,6 +154,7 @@
         "enabled": { "type": "boolean" },
         "replicaCount": { "type": "integer", "minimum": 1 },
         "image": { "$ref": "#/definitions/image" },
+        "resources": { "$ref": "#/definitions/resourceRequirements" },
         "imagePullSecrets": { "type": "array" },
         "serviceAccount": {
           "allOf": [
@@ -201,6 +204,7 @@
         "metrics": { "$ref": "#/definitions/metrics" },
         "apiUrl": { "type": "string" },
         "image": { "$ref": "#/definitions/image" },
+        "resources": { "$ref": "#/definitions/resourceRequirements" },
         "imagePullSecrets": { "type": "array" },
         "serviceAccount": {
           "allOf": [
@@ -230,7 +234,7 @@
             "enabled": { "type": "boolean" },
             "serviceAccountName": { "type": "string", "minLength": 1 },
             "rbac": { "$ref": "#/definitions/rbac" },
-            "resources": { "type": "object" },
+            "resources": { "$ref": "#/definitions/resourceRequirements" },
             "pvc": { "$ref": "#/definitions/pvc" },
             "provisioner": {
               "type": "object",
@@ -337,6 +341,20 @@
     }
   ],
   "definitions": {
+    "resourceQuantity": {
+      "anyOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "number", "minimum": 0 }
+      ]
+    },
+    "resourceRequirements": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "type": "object", "additionalProperties": { "$ref": "#/definitions/resourceQuantity" } },
+        "limits": { "type": "object", "additionalProperties": { "$ref": "#/definitions/resourceQuantity" } }
+      }
+    },
     "metrics": {
       "type": "object",
       "required": ["enabled", "port"],
@@ -664,6 +682,7 @@
       "required": ["enabled", "publicBaseUrl", "oauthInternalUrl", "proxyUrl", "credential", "todoistCredential", "userNamespace", "dynamicUserSecretNamePrefix", "noProxy", "googleHosts", "googlePaths", "todoistHosts", "todoistPaths", "sessionSidecar"],
       "properties": {
         "enabled": { "type": "boolean" },
+        "resources": { "$ref": "#/definitions/resourceRequirements" },
         "publicBaseUrl": { "type": "string" },
         "oauthInternalUrl": { "type": "string" },
         "proxyUrl": { "type": "string" },

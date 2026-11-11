@@ -11,6 +11,27 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 "$HELM_BIN" template frontend "$REPO_ROOT/frontend/helm/agentapi-ui" >"$TMP_DIR/frontend-default.yaml"
 "$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" >"$TMP_DIR/ccplant-default.yaml"
 
+"$HELM_BIN" template backend-resources "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set api.resources.requests.cpu=111m \
+  --set api.resources.requests.memory=222Mi \
+  --set api.resources.limits.cpu=333m \
+  --set api.resources.limits.memory=444Mi \
+  >"$TMP_DIR/backend-resources.yaml"
+
+"$HELM_BIN" template frontend-resources "$REPO_ROOT/frontend/helm/agentapi-ui" \
+  --set resources.requests.cpu=555m \
+  --set resources.requests.memory=666Mi \
+  --set resources.limits.cpu=777m \
+  --set resources.limits.memory=888Mi \
+  >"$TMP_DIR/frontend-resources.yaml"
+
+"$HELM_BIN" template session-manager-resources "$REPO_ROOT/chart/session-manager" \
+  --set resources.requests.cpu=901m \
+  --set resources.requests.memory=902Mi \
+  --set resources.limits.cpu=903m \
+  --set resources.limits.memory=904Mi \
+  >"$TMP_DIR/session-manager-resources.yaml"
+
 "$HELM_BIN" template agentapi-proxy "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --show-only templates/internal-ingress.yaml \
   --set internalIngress.enabled=true \
@@ -50,6 +71,20 @@ assert_not_contains() {
     exit 1
   fi
 }
+
+# Each component chart exposes resource tuning directly.
+assert_contains 'cpu: 111m' "$TMP_DIR/backend-resources.yaml"
+assert_contains 'memory: 222Mi' "$TMP_DIR/backend-resources.yaml"
+assert_contains 'cpu: 333m' "$TMP_DIR/backend-resources.yaml"
+assert_contains 'memory: 444Mi' "$TMP_DIR/backend-resources.yaml"
+assert_contains 'cpu: 555m' "$TMP_DIR/frontend-resources.yaml"
+assert_contains 'memory: 666Mi' "$TMP_DIR/frontend-resources.yaml"
+assert_contains 'cpu: 777m' "$TMP_DIR/frontend-resources.yaml"
+assert_contains 'memory: 888Mi' "$TMP_DIR/frontend-resources.yaml"
+assert_contains 'cpu: 901m' "$TMP_DIR/session-manager-resources.yaml"
+assert_contains 'memory: 902Mi' "$TMP_DIR/session-manager-resources.yaml"
+assert_contains 'cpu: 903m' "$TMP_DIR/session-manager-resources.yaml"
+assert_contains 'memory: 904Mi' "$TMP_DIR/session-manager-resources.yaml"
 
 assert_no_session_env_except_mcp_backfill() {
   local file="$1"
@@ -277,7 +312,7 @@ if "$HELM_BIN" template backend-image-tag-override "$REPO_ROOT/backend/helm/agen
   echo "api.image.tag unexpectedly accepted" >&2
   exit 1
 fi
-assert_contains 'Additional property tag is not allowed' "$TMP_DIR/backend-image-tag-override.err"
+assert_contains '[Aa]dditional propert(y|ies).*tag.*not allowed' "$TMP_DIR/backend-image-tag-override.err"
 
 # Optional controllers and persistent components are disabled in the minimal defaults.
 assert_not_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
