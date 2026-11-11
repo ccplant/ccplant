@@ -42,6 +42,35 @@ type LocalUserTokenList struct {
 	Items []LocalUserToken `json:"items"`
 }
 
+type PrincipalRepairIdentity struct {
+	ConnectionID     string `json:"connection_id"`
+	GitHubUserID     int64  `json:"github_user_id"`
+	Login            string `json:"login,omitempty"`
+	AvatarURL        string `json:"avatar_url,omitempty"`
+	ReassignExisting bool   `json:"reassign_existing,omitempty"`
+}
+type RepairPrincipalRequest struct {
+	ClearApplicationUserID bool                      `json:"clear_application_user_id,omitempty"`
+	Identities             []PrincipalRepairIdentity `json:"identities,omitempty"`
+}
+type RepairedPrincipal struct {
+	ID                string `json:"id"`
+	InternalUserID    string `json:"internal_user_id"`
+	ApplicationUserID string `json:"application_user_id,omitempty"`
+}
+type RepairedPrincipalIdentity struct {
+	ID           string `json:"id"`
+	PrincipalID  string `json:"principal_id"`
+	ConnectionID string `json:"connection_id"`
+	GitHubUserID int64  `json:"github_user_id"`
+	Login        string `json:"login,omitempty"`
+	AvatarURL    string `json:"avatar_url,omitempty"`
+}
+type RepairPrincipalResponse struct {
+	Principal  RepairedPrincipal           `json:"principal"`
+	Identities []RepairedPrincipalIdentity `json:"identities"`
+}
+
 func (c *Client) localUserRequest(ctx context.Context, method, path string, input, output any, expected int) error {
 	var body io.Reader
 	if input != nil {
@@ -102,4 +131,10 @@ func (c *Client) DeleteLocalUserToken(ctx context.Context, id, tokenID string) e
 
 func (c *Client) DeletePrincipal(ctx context.Context, principalID string) error {
 	return c.localUserRequest(ctx, http.MethodDelete, "/admin/principals/"+url.PathEscape(principalID), nil, nil, http.StatusNoContent)
+}
+
+func (c *Client) RepairPrincipal(ctx context.Context, principalID string, in *RepairPrincipalRequest) (*RepairPrincipalResponse, error) {
+	var out RepairPrincipalResponse
+	err := c.localUserRequest(ctx, http.MethodPost, "/admin/principals/"+url.PathEscape(principalID)+"/repair", in, &out, http.StatusOK)
+	return &out, err
 }
