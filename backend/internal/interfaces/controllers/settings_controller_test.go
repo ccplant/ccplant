@@ -310,6 +310,37 @@ func TestUpdateSettings_DefaultSessionProfileID(t *testing.T) {
 	assert.Equal(t, "profile-1", resp.DefaultSessionProfileID)
 }
 
+func TestUpdateSettings_EnabledTeamSessionProfileIDsArePersonal(t *testing.T) {
+	repo := newMockSettingsRepository()
+	h := NewSettingsController(repo, nil)
+	ids := []string{"team-profile-1", "team-profile-2"}
+	body, err := json.Marshal(UpdateSettingsRequest{EnabledTeamProfileIDs: &ids})
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/settings/test-user", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("name")
+	c.SetParamValues("test-user")
+	c.Set("internal_user", createTestUser("test-user", false))
+
+	require.NoError(t, h.UpdateSettings(c))
+	saved, err := repo.FindByName(context.Background(), "test-user")
+	require.NoError(t, err)
+	require.Equal(t, ids, saved.EnabledTeamSessionProfileIDs())
+
+	teamReq := httptest.NewRequest(http.MethodPut, "/settings/org/team", bytes.NewReader(body))
+	teamReq.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	teamRec := httptest.NewRecorder()
+	teamCtx := e.NewContext(teamReq, teamRec)
+	teamCtx.SetParamNames("name")
+	teamCtx.SetParamValues("org/team")
+	teamCtx.Set("internal_user", createTestUser("test-user", true))
+	require.Error(t, h.UpdateSettings(teamCtx))
+}
+
 func TestUpdateSettingsAutoSuspend(t *testing.T) {
 	repo := newMockSettingsRepository()
 	h := NewSettingsController(repo, nil)

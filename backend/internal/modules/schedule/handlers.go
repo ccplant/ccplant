@@ -35,6 +35,12 @@ func NewHandlers(manager Manager, sessionManager portrepos.SessionManager, sessi
 	}
 }
 
+// WithSettingsRepository enables personal team-profile opt-in resolution.
+func (h *Handlers) WithSettingsRepository(repo portrepos.SettingsRepository) *Handlers {
+	h.launcher.WithSettingsRepository(repo)
+	return h
+}
+
 // NewHandlersWithTimezone creates a new Handlers instance with a custom default timezone
 func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionManager, sessionProfileRepo portrepos.SessionProfileRepository, defaultTimezone string) *Handlers {
 	return &Handlers{

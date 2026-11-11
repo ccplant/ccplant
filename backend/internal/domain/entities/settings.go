@@ -174,8 +174,9 @@ type Settings struct {
 	slackUserID             string            // Slack DM notification user ID
 	notificationChannels    []string          // Active notification channels (e.g. "web", "slack")
 	externalSessionManagers []ExternalSessionManagerEntry
-	defaultSessionProfileID string // ID of the default session profile for this tenant
-	defaultAgentType        string // Agent type used when a session does not specify one
+	defaultSessionProfileID string   // ID of the default session profile for this tenant
+	enabledTeamProfileIDs   []string // Team profiles opted into personal-session selection
+	defaultAgentType        string   // Agent type used when a session does not specify one
 	autoSuspend             *AutoSuspendSettings
 	secretSettings          []SecretSetting
 	createdAt               time.Time
@@ -481,6 +482,17 @@ func (s *Settings) DefaultSessionProfileID() string {
 // SetDefaultSessionProfileID sets the default session profile ID for this tenant
 func (s *Settings) SetDefaultSessionProfileID(id string) {
 	s.defaultSessionProfileID = id
+	s.updatedAt = time.Now()
+}
+
+// EnabledTeamSessionProfileIDs returns team profiles opted into personal use.
+func (s *Settings) EnabledTeamSessionProfileIDs() []string {
+	return append([]string(nil), s.enabledTeamProfileIDs...)
+}
+
+// SetEnabledTeamSessionProfileIDs replaces the team profiles opted into personal use.
+func (s *Settings) SetEnabledTeamSessionProfileIDs(ids []string) {
+	s.enabledTeamProfileIDs = append([]string(nil), ids...)
 	s.updatedAt = time.Now()
 }
 

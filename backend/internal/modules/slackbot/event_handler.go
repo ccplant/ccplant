@@ -93,6 +93,12 @@ func NewSlackBotEventHandler(
 	}
 }
 
+// WithSettingsRepository enables personal team-profile opt-in resolution.
+func (h *SlackBotEventHandler) WithSettingsRepository(repo repositories.SettingsRepository) *SlackBotEventHandler {
+	h.launcher.WithSettingsRepository(repo)
+	return h
+}
+
 // SlackEventClient is the Slack boundary used after Socket Mode has decoded an event.
 // Simulation replaces this boundary while retaining the complete production event path.
 type SlackEventClient interface {

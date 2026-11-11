@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -591,6 +592,17 @@ func TestKubernetesSettingsRepositoryAutoSuspendRoundTrip(t *testing.T) {
 	if loaded.AutoSuspend() == nil || !loaded.AutoSuspend().Enabled || loaded.AutoSuspend().IdleTimeoutMinutes != 240 {
 		t.Fatalf("auto suspend policy was not preserved: %#v", loaded.AutoSuspend())
 	}
+}
+
+func TestKubernetesSettingsRepositoryEnabledTeamProfilesRoundTrip(t *testing.T) {
+	repo := NewKubernetesSettingsRepository(fake.NewSimpleClientset(), "default")
+	settings := entities.NewSettings("alice")
+	settings.SetEnabledTeamSessionProfileIDs([]string{"profile-a", "profile-b"})
+
+	require.NoError(t, repo.Save(context.Background(), settings))
+	loaded, err := repo.FindByName(context.Background(), "alice")
+	require.NoError(t, err)
+	require.Equal(t, []string{"profile-a", "profile-b"}, loaded.EnabledTeamSessionProfileIDs())
 }
 
 func TestSanitizeLabelValue(t *testing.T) {
