@@ -15,6 +15,13 @@ import (
 var localUsername, localDisplayName, localEmail, localRole, localTokenName, localExpiresIn, localSecretFile string
 
 var userCmd = &cobra.Command{Use: "user", Short: "Manage users"}
+var userDeletePrincipalCmd = &cobra.Command{Use: "delete-principal <principal-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	c, err := resolveBaseClient()
+	if err != nil {
+		return err
+	}
+	return c.DeletePrincipal(cmd.Context(), args[0])
+}}
 var userCreateCmd = &cobra.Command{Use: "create", RunE: func(cmd *cobra.Command, _ []string) error {
 	c, err := resolveBaseClient()
 	if err != nil {
@@ -101,6 +108,6 @@ func init() {
 	userTokenCreateCmd.Flags().StringVar(&localExpiresIn, "expires-in", "720h", "Token lifetime")
 	userTokenCreateCmd.Flags().StringVar(&localSecretFile, "secret-file", "", "New file for the token secret (required)")
 	userTokenCmd.AddCommand(userTokenCreateCmd, userTokenListCmd, userTokenRevokeCmd)
-	userCmd.AddCommand(userCreateCmd, userGetCmd, userTokenCmd)
+	userCmd.AddCommand(userCreateCmd, userGetCmd, userDeletePrincipalCmd, userTokenCmd)
 	ClientCmd.AddCommand(userCmd)
 }
