@@ -62,6 +62,13 @@ func TestDirectRuntimeLocalStatusPreservesProvisionError(t *testing.T) {
 	}
 }
 
+func TestDirectRuntimeWorkerPollsProvisionerPort(t *testing.T) {
+	worker := newDirectRuntimeWorker(nil, &sessionsettings.ParentRuntimeConfig{}, "runner-a", 19001)
+	if got, want := worker.localURL, "http://127.0.0.1:19001"; got != want {
+		t.Fatalf("localURL = %q, want %q", got, want)
+	}
+}
+
 func TestDirectRuntimeLocalStatusRejectsUnstructuredServerError(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

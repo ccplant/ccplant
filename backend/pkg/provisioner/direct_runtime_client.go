@@ -37,23 +37,26 @@ var (
 	errDirectRuntimeUnauthorized = errors.New("direct runtime credential rejected")
 )
 
-func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string) {
+func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string, provisionerPort int) {
 	if cfg == nil || !cfg.Enabled || cfg.Endpoint == "" || cfg.SessionID == "" || cfg.Token == "" || cfg.Generation <= 0 {
 		return
 	}
+	w := newDirectRuntimeWorker(transport, cfg, instanceID, provisionerPort)
+	go w.reportStatus(ctx)
+	w.run(ctx)
+}
+
+func newDirectRuntimeWorker(transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string, provisionerPort int) *directRuntimeWorker {
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	port := os.Getenv("AGENTAPI_PORT")
-	if port == "" {
-		port = "9000"
+	if provisionerPort <= 0 {
+		provisionerPort = 9001
 	}
-	w := &directRuntimeWorker{
+	return &directRuntimeWorker{
 		cfg: cfg, client: &http.Client{Transport: transport},
-		localURL: "http://127.0.0.1:" + port, instanceID: instanceID,
+		localURL: fmt.Sprintf("http://127.0.0.1:%d", provisionerPort), instanceID: instanceID,
 	}
-	go w.reportStatus(ctx)
-	w.run(ctx)
 }
 
 func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
