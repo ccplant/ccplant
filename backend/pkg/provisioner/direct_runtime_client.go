@@ -89,13 +89,19 @@ func (w *directRuntimeWorker) localStatus(ctx context.Context) string {
 		return ""
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
+	// The provisioner intentionally returns HTTP 500 together with a structured
+	// StatusError response. Preserve that terminal state so the parent session
+	// does not remain "starting" (or become "active" from pod readiness alone).
+	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusInternalServerError {
 		return ""
 	}
 	var result struct {
 		Status string `json:"status"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return ""
+	}
+	if resp.StatusCode == http.StatusInternalServerError && result.Status != string(StatusError) {
 		return ""
 	}
 	return result.Status

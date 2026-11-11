@@ -48,6 +48,34 @@ func TestDirectRuntimeCompressesLargeFrameUpload(t *testing.T) {
 	}
 }
 
+func TestDirectRuntimeLocalStatusPreservesProvisionError(t *testing.T) {
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusError, Message: "setup failed"})
+	}))
+	defer local.Close()
+
+	worker := &directRuntimeWorker{client: local.Client(), localURL: local.URL}
+	if got := worker.localStatus(context.Background()); got != string(StatusError) {
+		t.Fatalf("localStatus() = %q, want %q", got, StatusError)
+	}
+}
+
+func TestDirectRuntimeLocalStatusRejectsUnstructuredServerError(t *testing.T) {
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusProvisioning})
+	}))
+	defer local.Close()
+
+	worker := &directRuntimeWorker{client: local.Client(), localURL: local.URL}
+	if got := worker.localStatus(context.Background()); got != "" {
+		t.Fatalf("localStatus() = %q, want empty status", got)
+	}
+}
+
 func TestDirectRuntimePollAndExecute(t *testing.T) {
 	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
