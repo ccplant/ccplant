@@ -7,14 +7,18 @@ interface SessionProfileCardProps {
   profile: SessionProfile
   onEdit: (profile: SessionProfile) => void
   onDelete: (profileId: string) => void
+  onTransfer?: (profile: SessionProfile) => void
   isDeleting?: boolean
+  isTransferring?: boolean
 }
 
 export default function SessionProfileCard({
   profile,
   onEdit,
   onDelete,
+  onTransfer,
   isDeleting = false,
+  isTransferring = false,
 }: SessionProfileCardProps) {
   const handleDelete = () => {
     if (confirm(`"${profile.name}" を削除してもよいですか？`)) {
@@ -137,6 +141,16 @@ export default function SessionProfileCard({
           </svg>
           編集
         </button>
+
+        {onTransfer && (
+          <button
+            onClick={() => onTransfer(profile)}
+            disabled={isTransferring}
+            className="flex-1 inline-flex items-center justify-center px-3 py-1.5 text-sm text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-md transition-colors disabled:opacity-50"
+          >
+            移管
+          </button>
+        )}
 
         {/* Delete */}
         <button
