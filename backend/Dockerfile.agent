@@ -141,6 +141,19 @@ RUN curl https://mise.run | sh && \
     /home/agentapi/.local/bin/mise --version && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
 
+# Install actual Node.js and Bun runtimes. mise's shims dispatch to these
+# installations, so node/npm/npx and bun/bunx retain their native semantics.
+ARG NODE_VERSION=24.11.1
+ARG BUN_VERSION=1.3.5
+RUN /home/agentapi/.local/bin/mise use --global \
+      "node@${NODE_VERSION}" \
+      "bun@${BUN_VERSION}" && \
+    /home/agentapi/.local/share/mise/shims/node --version && \
+    /home/agentapi/.local/share/mise/shims/npm --version && \
+    /home/agentapi/.local/share/mise/shims/npx --version && \
+    /home/agentapi/.local/share/mise/shims/bun --version && \
+    /home/agentapi/.local/share/mise/shims/bunx --version
+
 # Install claude code and move to /opt/claude for persistence across volume mounts
 # The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
 # We copy with -L to follow the symlink and get the actual binary, then clean up
@@ -159,20 +172,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
-# Create npm, npx, bun, bunx, and node wrapper scripts that use claude x with BUN_BE_BUN=1
-RUN printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
-    sudo chmod +x /usr/local/bin/npm && \
-    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
-    sudo chmod +x /usr/local/bin/npx && \
-    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
-    sudo chmod +x /usr/local/bin/bun && \
-    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
-    sudo chmod +x /usr/local/bin/bunx && \
-    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/node > /dev/null && \
-    sudo chmod +x /usr/local/bin/node
-
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI and /opt/cursor/bin for Cursor CLI)
-ENV PATH="/opt/ccplant/bin:/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
+ENV PATH="/opt/ccplant/bin:/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:$PATH"
 
 # Resolve agent CLIs and ACP adapters when the image is built. Build arguments
 # make upgrades explicit; session Pods use the resulting image contents and
@@ -190,14 +191,6 @@ RUN bun install -g \
       "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
       "skills@${SKILLS_CLI_VERSION}" && \
     test -x /home/agentapi/.bun/bin/skills
-
-# Place a codex wrapper in /opt/claude/bin (first in PATH).
-# The bun-installed codex script uses "#!/usr/bin/env node", but /usr/local/bin/node is a
-# claude wrapper. The wrapper here explicitly invokes bun so codex works reliably in the proxy.
-# Uses the absolute path to the codex script so it works even when HOME is overridden.
-RUN printf '#!/bin/sh\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
-    sudo tee /opt/claude/bin/codex > /dev/null && \
-    sudo chmod +x /opt/claude/bin/codex
 
 # Install Pi, pi-acp, and the MCP adapter. Model providers and additional Pi
 # packages are supplied by settings/session profiles at session startup.

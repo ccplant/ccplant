@@ -35,7 +35,7 @@ mise コマンドを利用することができます。言語のインタプリ
 - 開発・運用 CLI: `git`、`gh`、`docker`、`docker compose`、`mise`、`uv` / `uvx`、`otelcol`
 - 基本ツール: `bash`、`curl`、`make`、`jq`、`sudo`、`procps`、`iptables`
 
-`docker` は CLI と Compose plugin のみで、Docker daemon は同梱されていません。`npm`、`npx`、`node`、`bun`、`bunx` は同梱の Bun/Claude executable を利用する互換ラッパーです。必要な言語処理系や追加ツールが見つからない場合は `mise` または `uv` を優先して利用してください。
+`docker` は CLI と Compose plugin のみで、Docker daemon は同梱されていません。`node`、`npm`、`npx`、`bun`、`bunx` は mise で管理された実ランタイムを利用します。必要な言語処理系や追加ツールが見つからない場合は `mise` または `uv` を優先して利用してください。
 
 ### test, lint
 
