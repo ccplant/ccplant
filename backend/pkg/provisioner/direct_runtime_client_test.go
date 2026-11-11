@@ -56,16 +56,20 @@ func TestDirectRuntimeLocalStatusPreservesProvisionError(t *testing.T) {
 	}))
 	defer local.Close()
 
-	worker := &directRuntimeWorker{client: local.Client(), localURL: local.URL}
+	worker := &directRuntimeWorker{client: local.Client(), provisionerURL: local.URL}
 	if got := worker.localStatus(context.Background()); got != string(StatusError) {
 		t.Fatalf("localStatus() = %q, want %q", got, StatusError)
 	}
 }
 
-func TestDirectRuntimeWorkerPollsProvisionerPort(t *testing.T) {
+func TestDirectRuntimeWorkerSeparatesAgentAndProvisionerPorts(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "19000")
 	worker := newDirectRuntimeWorker(nil, &sessionsettings.ParentRuntimeConfig{}, "runner-a", 19001)
-	if got, want := worker.localURL, "http://127.0.0.1:19001"; got != want {
-		t.Fatalf("localURL = %q, want %q", got, want)
+	if got, want := worker.agentURL, "http://127.0.0.1:19000"; got != want {
+		t.Fatalf("agentURL = %q, want %q", got, want)
+	}
+	if got, want := worker.provisionerURL, "http://127.0.0.1:19001"; got != want {
+		t.Fatalf("provisionerURL = %q, want %q", got, want)
 	}
 }
 
@@ -77,7 +81,7 @@ func TestDirectRuntimeLocalStatusRejectsUnstructuredServerError(t *testing.T) {
 	}))
 	defer local.Close()
 
-	worker := &directRuntimeWorker{client: local.Client(), localURL: local.URL}
+	worker := &directRuntimeWorker{client: local.Client(), provisionerURL: local.URL}
 	if got := worker.localStatus(context.Background()); got != "" {
 		t.Fatalf("localStatus() = %q, want empty status", got)
 	}
@@ -133,7 +137,7 @@ func TestDirectRuntimePollAndExecute(t *testing.T) {
 
 	worker := &directRuntimeWorker{
 		cfg:    &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: parent.URL, SessionID: "public-session", Token: "runtime-secret", Generation: 4},
-		client: parent.Client(), localURL: local.URL, instanceID: "pod-a",
+		client: parent.Client(), agentURL: local.URL, instanceID: "pod-a",
 	}
 	requests, next, err := worker.poll(context.Background(), "0-0")
 	if err != nil {
@@ -193,7 +197,7 @@ func TestDirectRuntimeSessionPromptUsesACPProtocol(t *testing.T) {
 
 	worker := &directRuntimeWorker{
 		cfg:    &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "public", Token: "secret", Generation: 1},
-		client: parent.Client(), localURL: local.URL,
+		client: parent.Client(), agentURL: local.URL,
 	}
 	worker.executeRequest(context.Background(), core.Command{
 		ID: "prompt-1", StreamID: "1-0", Method: http.MethodPost, Path: "/internal/session-prompt", Body: []byte(`{"content":"continue this thread"}`),
@@ -237,7 +241,7 @@ func TestDirectRuntimeInterruptPromptCancelsBeforePrompt(t *testing.T) {
 
 	worker := &directRuntimeWorker{
 		cfg:    &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "public", Token: "secret", Generation: 1},
-		client: parent.Client(), localURL: local.URL,
+		client: parent.Client(), agentURL: local.URL,
 	}
 	worker.executeRequest(context.Background(), core.Command{
 		ID: "prompt-1", StreamID: "1-0", Method: http.MethodPost, Path: "/internal/session-interrupt-prompt", Body: []byte(`{"content":"replace current task"}`),
