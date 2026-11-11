@@ -25,11 +25,12 @@ import (
 )
 
 type directRuntimeWorker struct {
-	cfg        *sessionsettings.ParentRuntimeConfig
-	client     *http.Client
-	localURL   string
-	instanceID string
-	active     sync.Map
+	cfg            *sessionsettings.ParentRuntimeConfig
+	client         *http.Client
+	agentURL       string
+	provisionerURL string
+	instanceID     string
+	active         sync.Map
 }
 
 var (
@@ -53,9 +54,16 @@ func newDirectRuntimeWorker(transport http.RoundTripper, cfg *sessionsettings.Pa
 	if provisionerPort <= 0 {
 		provisionerPort = 9001
 	}
+	agentPort := os.Getenv("AGENTAPI_PORT")
+	if agentPort == "" {
+		agentPort = "9000"
+	}
 	return &directRuntimeWorker{
-		cfg: cfg, client: &http.Client{Transport: transport},
-		localURL: fmt.Sprintf("http://127.0.0.1:%d", provisionerPort), instanceID: instanceID,
+		cfg:            cfg,
+		client:         &http.Client{Transport: transport},
+		agentURL:       "http://127.0.0.1:" + agentPort,
+		provisionerURL: fmt.Sprintf("http://127.0.0.1:%d", provisionerPort),
+		instanceID:     instanceID,
 	}
 }
 
@@ -83,7 +91,7 @@ func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
 func (w *directRuntimeWorker) localStatus(ctx context.Context) string {
 	reqCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, w.localURL+"/status", nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, w.provisionerURL+"/status", nil)
 	if err != nil {
 		return ""
 	}
@@ -249,14 +257,14 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		// here instead of guessing an HTTP endpoint from the configured agent name.
 		if command.Path == "/internal/session-interrupt-prompt" {
 			if err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.CancelAgent", func(operationCtx context.Context) error {
-				return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.localURL)
+				return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.agentURL)
 			}, telemetry.String("session.command_id", command.ID)); err != nil {
 				w.postExecutionError(commandCtx, command, err)
 				return
 			}
 		}
 		err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.DeliverPrompt", func(operationCtx context.Context) error {
-			return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID, Type: "prompt", Payload: command.Body}, w.localURL)
+			return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID, Type: "prompt", Payload: command.Body}, w.agentURL)
 		}, telemetry.String("session.command_id", command.ID), telemetry.String("session.id", command.SessionID))
 		if err != nil {
 			w.postExecutionError(commandCtx, command, err)
@@ -280,7 +288,7 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: http.StatusNoContent, Done: true, CreatedAt: time.Now().UTC()}})
 		return
 	}
-	target := w.localURL + command.Path
+	target := w.agentURL + command.Path
 	if command.RawQuery != "" {
 		target += "?" + command.RawQuery
 	}
@@ -367,7 +375,7 @@ func (w *directRuntimeWorker) checkpointAgentType(ctx context.Context) string {
 	if agentType := strings.TrimSpace(os.Getenv("AGENTAPI_AGENT_TYPE")); agentType != "" {
 		return agentType
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.localURL+"/status", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.provisionerURL+"/status", nil)
 	if err != nil {
 		return ""
 	}
