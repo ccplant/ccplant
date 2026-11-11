@@ -148,6 +148,7 @@ type githubIdentityResponse struct {
 	githubIdentity
 	ConnectionName string `json:"connection_name"`
 	BaseURL        string `json:"base_url"`
+	Current        bool   `json:"current"`
 }
 
 type githubOAuthState struct {
@@ -722,13 +723,14 @@ func (c *GitHubConnectionsController) ListIdentities(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list GitHub identities").SetInternal(err)
 	}
 	result := make([]githubIdentityResponse, 0)
+	credential, _ := auth.GetCredentialContext(ctx)
 	for _, identity := range identities {
 		if identity.PrincipalID != principal.ID {
 			continue
 		}
 		connection, _, _, loadErr := c.loadConnection(ctx.Request().Context(), identity.ConnectionID)
 		if loadErr == nil {
-			result = append(result, githubIdentityResponse{githubIdentity: identity, ConnectionName: connection.Name, BaseURL: connection.BaseURL})
+			result = append(result, githubIdentityResponse{githubIdentity: identity, ConnectionName: connection.Name, BaseURL: connection.BaseURL, Current: credential != nil && credential.Kind == auth.CredentialKindGitHub && credential.ConnectionID == identity.ConnectionID})
 		}
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"principal_id": principal.ID, "identities": result})
@@ -848,6 +850,9 @@ func (c *GitHubConnectionsController) Unlink(ctx echo.Context) error {
 	for _, identity := range identities {
 		if identity.ID != ctx.Param("identity_id") || identity.PrincipalID != principal.ID {
 			continue
+		}
+		if credential, ok := auth.GetCredentialContext(ctx); ok && credential.Kind == auth.CredentialKindGitHub && credential.ConnectionID == identity.ConnectionID {
+			return echo.NewHTTPError(http.StatusConflict, "the connection used by the current login cannot be unlinked")
 		}
 		if err := c.client.CoreV1().Secrets(c.namespace).Delete(ctx.Request().Context(), identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.DeleteOptions{}); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to unlink identity").SetInternal(err)

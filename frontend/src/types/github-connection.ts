@@ -55,6 +55,7 @@ export interface GitHubIdentity {
   login: string
   avatar_url?: string
   created_at: string
+  current: boolean
 }
 
 export interface GitHubIdentitiesResponse {

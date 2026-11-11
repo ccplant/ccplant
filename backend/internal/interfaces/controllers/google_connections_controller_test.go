@@ -2,11 +2,15 @@ package controllers
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -79,6 +83,34 @@ func TestGoogleConnectionLoginCreatesLinkedIdentity(t *testing.T) {
 	require.Equal(t, principal.ID, identity.PrincipalID)
 	require.Equal(t, connection.ID, identity.ConnectionID)
 	require.Equal(t, claims.Email, identity.Email)
+}
+
+func TestCannotUnlinkGoogleConnectionUsedByCurrentLogin(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	principals := NewGitHubConnectionsController(client, "test", "https://service.example.com")
+	controller := NewGoogleConnectionsController(client, "test", "https://service.example.com", true, principals)
+	connection := googleConnection{ID: "workspace", Name: "Google Workspace", AllowUserCreation: true}
+	claims := &googleClaims{Subject: "subject-1", Email: "alice@example.com", EmailVerified: true}
+	principal, err := controller.resolveLoginPrincipal(context.Background(), connection, claims)
+	require.NoError(t, err)
+
+	var identity googleIdentity
+	_, err = principals.loadObject(context.Background(), googleIdentitySecretName(connection.ID, claims.Subject), &identity)
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/users/me/google-identities/"+identity.ID, nil)
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	ctx.SetParamNames("identity_id")
+	ctx.SetParamValues(identity.ID)
+	ctx.Set("internal_user", entities.NewUser(entities.UserID(principal.ID), entities.UserTypeRegular, claims.Email))
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindAPIKey, Provider: "google", ConnectionID: connection.ID})
+
+	err = controller.Unlink(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusConflict, httpErr.Code)
 }
 
 func TestApplicationUserIDFallsBackForExistingPrincipalRecords(t *testing.T) {

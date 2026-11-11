@@ -156,6 +156,7 @@ func (s *Server) handleGoogleConnectionOAuthCallback(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create application session").SetInternal(err)
 	}
+	simpleAuth.SetAPIKeyConnection(apiKey.Key, "google", result.ConnectionID)
 	userContext := &auth.UserContext{UserID: result.UserID, AuthType: "google_oidc", AccessToken: apiKey.Key}
 	sessionID := uuid.NewString()
 	expiresAt := time.Now().Add(24 * time.Hour)
