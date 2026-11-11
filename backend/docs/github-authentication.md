@@ -330,6 +330,10 @@ func main() {
 - **チームの可視性**: チームのプライバシー設定を確認
 - **トークン権限**: `read:org` と `read:team` 権限が付与されているか確認
 
+#### 5. ログイン後に意図しない Principal ID が使われる
+
+GitHub Identityが期待するPrincipalに紐づいていても、互換用の `application_user_id` が残っていると、`GET /user/info` には別のIDが返ります。Principal削除後の確認方法、組み込みGitHub/GHEC Identityの統合、管理コマンドとAPIによる修復は[Principal 認証リンク修復ランブック](principal-authentication-repair.md)を参照してください。
+
 ### ログの確認
 
 agentapi-proxyのログで認証状況を確認できます：
