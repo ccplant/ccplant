@@ -392,10 +392,25 @@ API Deployment image.
 
 ### Resource limits
 
-| Name                   | Description                                   | Value     |
-| ---------------------- | --------------------------------------------- | --------- |
-| `resources.requests`   | The requested resources for the container     | `{"memory": "512Mi", "cpu": "500m"}` |
-| `resources.limits`     | The resources limits for the container        | `{"memory": "2Gi", "cpu": "2000m"}` |
+Each workload can be sized independently in this chart:
+
+| Name                                | Description                                      |
+| ----------------------------------- | ------------------------------------------------ |
+| `api.resources`                     | Public API container requests and limits         |
+| `worker.resources`                  | Background worker container requests and limits  |
+| `sessionManager.resources`          | Bundled session-manager requests and limits      |
+| `sessionManager.kubernetesSession.resources` | Session Pod requests and limits          |
+| `scia.resources`                    | SCIA proxy container requests and limits         |
+| `resources`                         | Legacy fallback used when `api.resources` is empty |
+
+Every resource value uses the standard Kubernetes shape:
+
+```yaml
+api:
+  resources:
+    requests: {cpu: "250m", memory: "256Mi"}
+    limits: {cpu: "1", memory: "1Gi"}
+```
 
 ### Service Account parameters
 

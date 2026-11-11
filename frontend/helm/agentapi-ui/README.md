@@ -14,6 +14,16 @@ helm install agentapi-ui ./helm/agentapi-ui
 
 ## 設定
 
+### Pod のリソース設定
+
+frontend Pod の requests / limits はこの chart の `resources` で設定します。
+
+```yaml
+resources:
+  requests: {cpu: "100m", memory: "128Mi"}
+  limits: {cpu: "500m", memory: "512Mi"}
+```
+
 ### 暗号化キーの設定
 
 このアプリケーションは、Cookie内のAPIキーを暗号化するために
