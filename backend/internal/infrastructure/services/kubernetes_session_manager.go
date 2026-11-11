@@ -529,6 +529,17 @@ func (m *KubernetesSessionManager) RefreshRunnerSessionStatus(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("get runner service: %w", err)
 	}
+	// Provisioning status is persisted in a Secret, while the in-memory status
+	// update is local to the manager replica that receives the provisioner's
+	// callback. The heartbeat leader can therefore still have this runner as
+	// starting after setup failed on another replica. Reconcile the terminal
+	// status before reporting it to the parent API.
+	if provisionReq, provisionErr := m.getProvisionRequest(ctx, sessionID); provisionErr == nil && provisionReq.Status == "error" {
+		session.SetStatusMessage(provisionReq.Message)
+		session.SetErrorCode(provisionReq.ErrorCode)
+		session.SetStatus("error")
+		return nil
+	}
 	status := session.Status()
 	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
 		if status == "stopped" || !statusWatcherTerminal(status) {
