@@ -15,7 +15,8 @@ const (
 	// redisStatusKeyPrefix is the prefix for session status hash keys.
 	redisStatusKeyPrefix = "agentapi:session:status:"
 	// redisGlobalChannel is the Pub/Sub channel name for all status change events.
-	redisGlobalChannel = "agentapi:session:events:global"
+	redisGlobalChannel      = "agentapi:session:events:global"
+	redisRouteStatusChannel = "agentapi:session:events:route"
 	// redisStatusTTL is the TTL applied to session status keys.
 	// It is intentionally longer than any realistic session lifetime.
 	redisStatusTTL = 48 * time.Hour
@@ -31,6 +32,9 @@ const (
 	fieldUpdatedAt = "updated_at"
 	fieldPodID     = "pod_id"
 )
+
+var _ portrepos.StatusEventRepository = (*RedisStatusRepository)(nil)
+var _ portrepos.RouteStatusEventBus = (*RedisStatusRepository)(nil)
 
 // RedisStatusRepository implements StatusEventRepository using Redis.
 // It stores session runtime status in Redis hashes and broadcasts changes
@@ -99,12 +103,20 @@ func (r *RedisStatusRepository) GetStatus(ctx context.Context, sessionID string)
 // PublishStatusChange serialises event to JSON and publishes it to the global
 // Redis Pub/Sub channel.
 func (r *RedisStatusRepository) PublishStatusChange(ctx context.Context, event portrepos.StatusChangeEvent) error {
+	return r.publish(ctx, redisGlobalChannel, "PublishStatusChange", event)
+}
+
+func (r *RedisStatusRepository) PublishRouteStatusChange(ctx context.Context, event portrepos.StatusChangeEvent) error {
+	return r.publish(ctx, redisRouteStatusChannel, "PublishRouteStatusChange", event)
+}
+
+func (r *RedisStatusRepository) publish(ctx context.Context, channel, op string, event portrepos.StatusChangeEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("redis PublishStatusChange marshal: %w", err)
+		return fmt.Errorf("redis %s marshal: %w", op, err)
 	}
-	if err := r.client.Publish(ctx, redisGlobalChannel, payload).Err(); err != nil {
-		return fmt.Errorf("redis PublishStatusChange publish: %w", err)
+	if err := r.client.Publish(ctx, channel, payload).Err(); err != nil {
+		return fmt.Errorf("redis %s publish: %w", op, err)
 	}
 	return nil
 }
@@ -115,12 +127,20 @@ func (r *RedisStatusRepository) PublishStatusChange(ctx context.Context, event p
 // Messages that cannot be deserialized are logged and skipped.
 // Slow consumers will drop messages rather than block the publisher.
 func (r *RedisStatusRepository) SubscribeGlobal(ctx context.Context) (<-chan portrepos.StatusChangeEvent, error) {
-	pubsub := r.client.Subscribe(ctx, redisGlobalChannel)
+	return r.subscribe(ctx, redisGlobalChannel, "SubscribeGlobal")
+}
+
+func (r *RedisStatusRepository) SubscribeRouteStatus(ctx context.Context) (<-chan portrepos.StatusChangeEvent, error) {
+	return r.subscribe(ctx, redisRouteStatusChannel, "SubscribeRouteStatus")
+}
+
+func (r *RedisStatusRepository) subscribe(ctx context.Context, channel, op string) (<-chan portrepos.StatusChangeEvent, error) {
+	pubsub := r.client.Subscribe(ctx, channel)
 
 	// Perform an initial ping to verify the subscription was established.
 	if _, err := pubsub.Receive(ctx); err != nil {
 		_ = pubsub.Close()
-		return nil, fmt.Errorf("redis SubscribeGlobal subscribe: %w", err)
+		return nil, fmt.Errorf("redis %s subscribe: %w", op, err)
 	}
 
 	ch := make(chan portrepos.StatusChangeEvent, 256)

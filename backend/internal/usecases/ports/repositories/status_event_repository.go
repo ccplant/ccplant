@@ -40,3 +40,8 @@ type StatusEventRepository interface {
 	// Called during session deletion to free resources.
 	DeleteStatus(ctx context.Context, sessionID string) error
 }
+
+type RouteStatusEventBus interface {
+	PublishRouteStatusChange(ctx context.Context, event StatusChangeEvent) error
+	SubscribeRouteStatus(ctx context.Context) (<-chan StatusChangeEvent, error)
+}

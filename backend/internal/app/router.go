@@ -187,6 +187,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSessionRunnerStore(server.sessionRunnerStore),
 		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),
 		controllers.WithGitHubBrokerBaseURL(server.config.GitHubBrokerBaseURL),
+		controllers.WithRouteStatusEventBus(server.routeStatusBus),
 	}
 	if githubConnectionsController != nil {
 		sessionControllerOptions = append(sessionControllerOptions, controllers.WithGitHubTokenResolver(githubConnectionsController))
@@ -196,6 +197,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		server, // Server implements SessionCreator interface
 		sessionControllerOptions...,
 	)
+	sessionPoolController.WithRouteStatusPublisher(sessionController)
+	server.startRouteStatusRelay(sessionController)
 
 	// Create share controller if share repository is available
 	var shareController *controllers.ShareController
