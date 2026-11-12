@@ -819,10 +819,32 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	return s
 }
 
+const (
+	defaultSessionControlPoolSize         = 50
+	defaultSessionControlBlockingPoolSize = 400
+)
+
 func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
-	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
+	commandPoolSize := cfg.Redis.SessionControlPoolSize
+	if commandPoolSize <= 0 {
+		commandPoolSize = defaultSessionControlPoolSize
+	}
+	blockingPoolSize := cfg.Redis.SessionControlBlockingPoolSize
+	if blockingPoolSize <= 0 {
+		blockingPoolSize = defaultSessionControlBlockingPoolSize
+	}
+	opts := &redis.Options{
+		Addr:           cfg.Redis.Addr,
+		Password:       cfg.Redis.Password,
+		DB:             cfg.Redis.DB,
+		PoolSize:       commandPoolSize,
+		MaxActiveConns: commandPoolSize,
+	}
 	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
 		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.ReadTimeout); err == nil && d > 0 {
+		opts.ReadTimeout = d
 	}
 	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
 		opts.WriteTimeout = d
@@ -838,8 +860,14 @@ func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
 		_ = client.Close()
 		return nil
 	}
-	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled")
-	return infrasessioncontrol.NewRedisStore(client)
+	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled (command_pool_size=%d, blocking_pool_size=%d)",
+		commandPoolSize, blockingPoolSize)
+	blockingOpts := *opts
+	blockingOpts.ReadTimeout = 35 * time.Second
+	blockingOpts.PoolSize = blockingPoolSize
+	blockingOpts.MaxActiveConns = blockingPoolSize
+	blockingClient := redis.NewClient(&blockingOpts)
+	return infrasessioncontrol.NewRedisStoreWithBlockingClient(client, blockingClient)
 }
 
 func buildSessionAllocationNotifier(cfg *config.Config) (sessionrunnercore.AllocationNotifier, *redis.Client) {

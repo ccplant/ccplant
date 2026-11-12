@@ -545,6 +545,10 @@ type RedisConfig struct {
 	ReadTimeout string `json:"read_timeout" mapstructure:"read_timeout"`
 	// WriteTimeout is the timeout for socket writes (e.g. "3s").
 	WriteTimeout string `json:"write_timeout" mapstructure:"write_timeout"`
+	// SessionControlPoolSize limits concurrent short session-control commands.
+	SessionControlPoolSize int `json:"session_control_pool_size" mapstructure:"session_control_pool_size"`
+	// SessionControlBlockingPoolSize limits concurrent session-control long polls.
+	SessionControlBlockingPoolSize int `json:"session_control_blocking_pool_size" mapstructure:"session_control_blocking_pool_size"`
 }
 
 // KVStoreConfig configures persistence for application data represented as
@@ -1360,6 +1364,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("redis.dial_timeout", "AGENTAPI_REDIS_DIAL_TIMEOUT")
 	_ = v.BindEnv("redis.read_timeout", "AGENTAPI_REDIS_READ_TIMEOUT")
 	_ = v.BindEnv("redis.write_timeout", "AGENTAPI_REDIS_WRITE_TIMEOUT")
+	_ = v.BindEnv("redis.session_control_pool_size", "AGENTAPI_REDIS_SESSION_CONTROL_POOL_SIZE")
+	_ = v.BindEnv("redis.session_control_blocking_pool_size", "AGENTAPI_REDIS_SESSION_CONTROL_BLOCKING_POOL_SIZE")
 
 }
 
@@ -1542,6 +1548,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.dial_timeout", "5s")
 	v.SetDefault("redis.read_timeout", "3s")
 	v.SetDefault("redis.write_timeout", "3s")
+	v.SetDefault("redis.session_control_pool_size", 50)
+	v.SetDefault("redis.session_control_blocking_pool_size", 400)
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields

@@ -56,6 +56,22 @@ func TestLoadConfigDefaultsEmptyKubernetesSessionBasePort(t *testing.T) {
 	assert.Equal(t, 9000, loadedConfig.KubernetesSession.BasePort)
 }
 
+func TestLoadConfigSessionControlPoolSizes(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, 50, loadedConfig.Redis.SessionControlPoolSize)
+	assert.Equal(t, 400, loadedConfig.Redis.SessionControlBlockingPoolSize)
+
+	t.Setenv("AGENTAPI_REDIS_SESSION_CONTROL_POOL_SIZE", "12")
+	t.Setenv("AGENTAPI_REDIS_SESSION_CONTROL_BLOCKING_POOL_SIZE", "120")
+	loadedConfig, err = LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, 12, loadedConfig.Redis.SessionControlPoolSize)
+	assert.Equal(t, 120, loadedConfig.Redis.SessionControlBlockingPoolSize)
+}
+
 func TestLoadConfigSessionManagerLeaseNameCompatibility(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 
