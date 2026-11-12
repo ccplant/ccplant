@@ -11,6 +11,8 @@ interface UseSessionsStatusStreamOptions {
   onStatusChange: (event: ProxySessionStatusEvent) => void;
   /** Called when the SSE connection encounters an error */
   onError?: (error: Error) => void;
+  /** Called after the SSE connection opens so callers can reconcile missed events */
+  onConnected?: () => void;
   /** Set to false to disable the stream entirely (default: true) */
   enabled?: boolean;
 }
@@ -24,6 +26,7 @@ export function useSessionsStatusStream({
   client,
   onStatusChange,
   onError,
+  onConnected,
   enabled = true,
 }: UseSessionsStatusStreamOptions): void {
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -35,6 +38,8 @@ export function useSessionsStatusStream({
   onStatusChangeRef.current = onStatusChange;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const onConnectedRef = useRef(onConnected);
+  onConnectedRef.current = onConnected;
 
   const isVisible = usePageVisibility();
 
@@ -69,6 +74,7 @@ export function useSessionsStatusStream({
         }
       }
     );
+    es.onopen = () => onConnectedRef.current?.();
     eventSourceRef.current = es;
   }, [client]);
 

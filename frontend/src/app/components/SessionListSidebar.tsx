@@ -113,7 +113,7 @@ export default function SessionListSidebar({
     if (current) {
       sessionsRef.current = sessionsRef.current.map(session =>
         session.session_id === event.session_id
-          ? { ...session, status: event.status as SessionStatus }
+          ? { ...session, status: event.status as SessionStatus, updated_at: event.timestamp }
           : session
       )
     }
@@ -121,7 +121,7 @@ export default function SessionListSidebar({
       const idx = prev.findIndex(s => s.session_id === event.session_id)
       if (idx === -1) return prev
       const updated = [...prev]
-      updated[idx] = { ...updated[idx], status: event.status as SessionStatus }
+      updated[idx] = { ...updated[idx], status: event.status as SessionStatus, updated_at: event.timestamp }
       return updated
     })
     if (statusChanged && (event.status === 'active' || event.status === 'stopped' || event.status === 'error' || event.status === 'timeout')) {
@@ -132,14 +132,15 @@ export default function SessionListSidebar({
   useSessionsStatusStream({
     client,
     onStatusChange: handleProxyStatusEvent,
+    onConnected: fetchSessions,
     enabled: isVisible,
   })
 
   useEffect(() => {
     fetchSessions()
     if (!isVisible) return
-    // SSE がリアルタイム更新を担うため、ポーリングは 30 秒に延長
-    const interval = setInterval(fetchSessions, 30000)
+    // SSE で取り逃した遷移も一定時間内に一覧へ反映する。
+    const interval = setInterval(fetchSessions, 10000)
     return () => clearInterval(interval)
   }, [fetchSessions, isVisible])
 

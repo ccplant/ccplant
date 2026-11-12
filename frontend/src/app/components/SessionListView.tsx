@@ -193,7 +193,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     if (current) {
       sessionsRef.current = sessionsRef.current.map(session =>
         session.session_id === event.session_id
-          ? { ...session, status: event.status as Session['status'] }
+          ? { ...session, status: event.status as Session['status'], updated_at: event.timestamp }
           : session
       )
     }
@@ -201,7 +201,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
       const idx = prev.findIndex(s => s.session_id === event.session_id)
       if (idx === -1) return prev
       const updated = [...prev]
-      updated[idx] = { ...updated[idx], status: event.status as Session['status'] }
+      updated[idx] = { ...updated[idx], status: event.status as Session['status'], updated_at: event.timestamp }
       return updated
     })
     setSessionAgentStatus(prev => ({
@@ -222,10 +222,13 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   useSessionsStatusStream({
     client: agentAPIProxy,
     onStatusChange: handleProxyStatusEvent,
+    onConnected: () => void fetchSessions(true),
   })
 
   useEffect(() => {
     fetchSessions()
+    const interval = setInterval(() => void fetchSessions(true), 10000)
+    return () => clearInterval(interval)
   }, [fetchSessions])
 
 
