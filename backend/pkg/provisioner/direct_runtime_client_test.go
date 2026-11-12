@@ -375,11 +375,19 @@ func newPromptHoldFixture(t *testing.T, status string, statusCode int) *promptHo
 	fixture := &promptHoldFixture{frames: make(chan core.ResponseFrame, 16)}
 	fixture.status.Store(status)
 	fixture.statusCode.Store(int32(statusCode))
-	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	provisioner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(int(fixture.statusCode.Load()))
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": fixture.status.Load().(string)})
+	}))
+	t.Cleanup(provisioner.Close)
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case http.MethodGet + " /status":
-			w.WriteHeader(int(fixture.statusCode.Load()))
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": fixture.status.Load().(string)})
+			_ = json.NewEncoder(w).Encode(map[string]string{"agent_type": "claude-acp", "status": "stable"})
 		case http.MethodGet + " /session":
 			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": "acp-session"})
 		case http.MethodPost + " /rpc":
@@ -392,7 +400,7 @@ func newPromptHoldFixture(t *testing.T, status string, statusCode int) *promptHo
 			http.NotFound(w, r)
 		}
 	}))
-	t.Cleanup(local.Close)
+	t.Cleanup(agent.Close)
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Frames []core.ResponseFrame `json:"frames"`
@@ -408,7 +416,7 @@ func newPromptHoldFixture(t *testing.T, status string, statusCode int) *promptHo
 	t.Cleanup(parent.Close)
 	fixture.worker = &directRuntimeWorker{
 		cfg:    &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "public", Token: "secret", Generation: 1},
-		client: parent.Client(), agentURL: local.URL, provisionerURL: local.URL,
+		client: parent.Client(), agentURL: agent.URL, provisionerURL: provisioner.URL,
 	}
 	return fixture
 }
