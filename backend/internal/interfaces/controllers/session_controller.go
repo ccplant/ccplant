@@ -123,6 +123,9 @@ type SessionController struct {
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
 	nextStatusSubscriberID uint64
+	routeStatusBus         repositories.RouteStatusEventBus
+	routeStatusOrigin      string
+	routeStatusOutbox      chan repositories.SessionStatusEvent
 	// routeReconcile remembers, across reconciliation passes, since when a
 	// routed runtime has been observed disconnected.
 	routeReconcile      routeReconcileState
@@ -235,6 +238,8 @@ func NewSessionController(
 		sessionCreator:         sessionCreator,
 		validateTeamUC:         sessionuc.NewValidateTeamAccessUseCase(),
 		statusSubscribers:      make(map[uint64]chan repositories.SessionStatusEvent),
+		routeStatusOrigin:      uuid.NewString(),
+		routeStatusOutbox:      make(chan repositories.SessionStatusEvent, routeStatusOutboxSize),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -1481,6 +1486,11 @@ func (c *SessionController) subscribeRemoteStatusEvents() (<-chan repositories.S
 }
 
 func (c *SessionController) publishRemoteStatusEvent(evt repositories.SessionStatusEvent) {
+	c.deliverRemoteStatusEventLocal(evt)
+	c.enqueueRouteStatusEvent(evt)
+}
+
+func (c *SessionController) deliverRemoteStatusEventLocal(evt repositories.SessionStatusEvent) {
 	c.statusSubscribersMu.RLock()
 	defer c.statusSubscribersMu.RUnlock()
 	for _, ch := range c.statusSubscribers {
