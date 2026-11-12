@@ -1549,7 +1549,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.read_timeout", "3s")
 	v.SetDefault("redis.write_timeout", "3s")
 	v.SetDefault("redis.session_control_pool_size", 10)
-	v.SetDefault("redis.session_control_blocking_pool_size", 100)
+	v.SetDefault("redis.session_control_blocking_pool_size", 400)
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields

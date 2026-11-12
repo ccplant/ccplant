@@ -821,7 +821,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 const (
 	defaultSessionControlPoolSize         = 10
-	defaultSessionControlBlockingPoolSize = 100
+	defaultSessionControlBlockingPoolSize = 400
 )
 
 func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {

@@ -185,7 +185,7 @@ api:
     # Maximum concurrent short session-control Redis commands per API Pod.
     sessionControlPoolSize: 10
     # Maximum concurrent blocking XREAD calls per API Pod.
-    sessionControlBlockingPoolSize: 100
+    sessionControlBlockingPoolSize: 400
 
   encryption:
     keySecretRef:
@@ -327,7 +327,7 @@ worker:
     readTimeout: "3s"
     writeTimeout: "3s"
     sessionControlPoolSize: 10
-    sessionControlBlockingPoolSize: 100
+    sessionControlBlockingPoolSize: 400
 
   # Default Slack Socket Mode connection. Tokens are injected by kubelet from
   # this Secret; the worker does not require Kubernetes API access.
@@ -483,7 +483,7 @@ sessionManager:
     readTimeout: "3s"
     writeTimeout: "3s"
     sessionControlPoolSize: 10
-    sessionControlBlockingPoolSize: 100
+    sessionControlBlockingPoolSize: 400
   sessionPersistence:
     backend: ""
     suspendAfter: 1h

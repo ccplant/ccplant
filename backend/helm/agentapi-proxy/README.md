@@ -819,7 +819,7 @@ long polls. Configure their per-Pod hard connection limits independently:
 ```bash
 helm upgrade agentapi-proxy ./helm/agentapi-proxy \
   --set api.redis.sessionControlPoolSize=10 \
-  --set api.redis.sessionControlBlockingPoolSize=100
+  --set api.redis.sessionControlBlockingPoolSize=400
 ```
 
 Only backend pods connect to Redis. Session pods receive the backend control-plane
