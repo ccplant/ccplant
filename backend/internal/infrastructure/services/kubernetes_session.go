@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -33,6 +34,9 @@ type KubernetesSession struct {
 	webhookPayload    []byte                           // Webhook payload JSON
 	provisionSettings *sessionsettings.SessionSettings // Settings used for provisioning (stored after successful provisioning)
 	isStock           bool                             // Whether this is a pre-warmed stock session
+
+	deploymentWatcherActive  atomic.Bool
+	agentStatusWatcherActive atomic.Bool
 
 	// statusChangeCallback is called by SetStatus when the status changes.
 	// Set by KubernetesSessionManager at session creation to enable proxy-wide pub/sub.
