@@ -89,9 +89,23 @@ func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
 }
 
 func (w *directRuntimeWorker) localStatus(ctx context.Context) string {
+	provisionerStatus := w.readLocalStatus(ctx, w.provisionerURL+"/status", true)
+	if provisionerStatus != string(StatusReady) {
+		return provisionerStatus
+	}
+
+	// Once provisioning has completed, the provisioner remains "ready" for the
+	// lifetime of the process. The user-visible session status must instead come
+	// from agentapi, which changes between "running" and "stable" for each turn.
+	// If agentapi is briefly unavailable, do not replace the last known runtime
+	// status with the coarser provisioner state; the next one-second poll retries.
+	return w.readLocalStatus(ctx, w.agentURL+"/status", false)
+}
+
+func (w *directRuntimeWorker) readLocalStatus(ctx context.Context, endpoint string, allowStructuredError bool) string {
 	reqCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, w.provisionerURL+"/status", nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return ""
 	}
@@ -99,11 +113,11 @@ func (w *directRuntimeWorker) localStatus(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// The provisioner intentionally returns HTTP 500 together with a structured
 	// StatusError response. Preserve that terminal state so the parent session
 	// does not remain "starting" (or become "active" from pod readiness alone).
-	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusInternalServerError {
+	if resp.StatusCode/100 != 2 && (!allowStructuredError || resp.StatusCode != http.StatusInternalServerError) {
 		return ""
 	}
 	var result struct {
