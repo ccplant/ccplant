@@ -176,6 +176,17 @@ type runnerClaimResponse struct {
 	Settings     *sessionsettings.SessionSettings `json:"settings"`
 }
 
+func applyRunnerClaimParent(claim *runnerClaimResponse, parentURL string) {
+	claim.Settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: parentURL, SessionID: claim.Allocation.SessionID,
+		ManagerID: claim.Allocation.ManagerID, Token: claim.RuntimeToken, Generation: claim.Allocation.Generation,
+	}
+	if claim.Settings.Env == nil {
+		claim.Settings.Env = make(map[string]string)
+	}
+	sessionsettings.RouteEnvToParent(claim.Settings.Env, parentURL)
+}
+
 func runRunnerClaimClient(ctx context.Context, srv *Server, client *http.Client, cfg PullClientConfig) error {
 	if cfg.RunnerID == "" || cfg.RunnerToken == "" {
 		return fmt.Errorf("runner claim requires runner ID and token")
@@ -194,10 +205,7 @@ func runRunnerClaimClient(ctx context.Context, srv *Server, client *http.Client,
 			_ = failRunnerClaim(ctx, client, cfg, claim.Allocation.SessionID, claim.LeaseID)
 			continue
 		}
-		claim.Settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{
-			Enabled: true, Endpoint: cfg.ProxyURL, SessionID: claim.Allocation.SessionID,
-			ManagerID: claim.Allocation.ManagerID, Token: claim.RuntimeToken, Generation: claim.Allocation.Generation,
-		}
+		applyRunnerClaimParent(claim, cfg.ProxyURL)
 		go runDirectRuntimeClient(ctx, client.Transport, claim.Settings.ParentRuntime, cfg.RunnerID, srv.port)
 		if err := ackRunnerClaim(ctx, client, cfg, claim.Allocation.SessionID, claim.LeaseID); err != nil {
 			return fmt.Errorf("ack runner claim: %w", err)
