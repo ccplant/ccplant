@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -65,13 +66,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 	if cfg.RunnerPool != "" {
 		return runRunnerClaimClient(ctx, srv, client, cfg)
 	}
-	if err := postJSON(ctx, client, cfg, "/internal/session-provisioners/connect", map[string]interface{}{
-		"session_id": cfg.SessionID,
-		"pod_name":   cfg.PodName,
-		"namespace":  cfg.Namespace,
-	}); err != nil {
-		log.Printf("[PROVISIONER] Initial connect failed: %v", err)
-	}
+	connectProvisioner(ctx, srv, client, cfg)
 	if cfg.SessionControlToken != "" {
 		go runSessionControlClient(ctx, client, cfg, os.Getenv("AGENTAPI_AGENT_TYPE"))
 	}
@@ -115,6 +110,23 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 		srv.runProvision(ctx, provisionReq.Settings)
 		<-ctx.Done()
 		return ctx.Err()
+	}
+}
+
+func connectProvisioner(ctx context.Context, srv *Server, client *http.Client, cfg PullClientConfig) {
+	err := postJSON(ctx, client, cfg, "/internal/session-provisioners/connect", map[string]interface{}{
+		"session_id": cfg.SessionID,
+		"pod_name":   cfg.PodName,
+		"namespace":  cfg.Namespace,
+	})
+	if err == nil {
+		return
+	}
+	log.Printf("[PROVISIONER] Initial connect failed: %v", err)
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) && statusErr.status == http.StatusNotFound {
+		log.Printf("[PROVISIONER] No provision request exists for session %s; starting restart auto-provisioning without delay", cfg.SessionID)
+		srv.StartRestartAutoProvisionNow()
 	}
 }
 
@@ -402,9 +414,19 @@ func postJSON(ctx context.Context, client *http.Client, cfg PullClientConfig, pa
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s returned HTTP %d", path, resp.StatusCode)
+		return &httpStatusError{method: http.MethodPost, path: path, status: resp.StatusCode}
 	}
 	return nil
+}
+
+type httpStatusError struct {
+	method string
+	path   string
+	status int
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("%s %s returned HTTP %d", e.method, e.path, e.status)
 }
 
 func authorizePullRequest(req *http.Request, cfg PullClientConfig) {
