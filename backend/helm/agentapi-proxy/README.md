@@ -813,6 +813,15 @@ helm upgrade agentapi-proxy ./helm/agentapi-proxy \
   --set sessionManager.redis.addr=redis.example:6379
 ```
 
+Session-control Redis concurrency is split between short commands and blocking
+long polls. Configure their per-Pod hard connection limits independently:
+
+```bash
+helm upgrade agentapi-proxy ./helm/agentapi-proxy \
+  --set api.redis.sessionControlPoolSize=10 \
+  --set api.redis.sessionControlBlockingPoolSize=100
+```
+
 Only backend pods connect to Redis. Session pods receive the backend control-plane
 URL and provisioner token, but no Redis address or credentials. See
 [`docs/session-control-long-poll.md`](../../docs/session-control-long-poll.md) for

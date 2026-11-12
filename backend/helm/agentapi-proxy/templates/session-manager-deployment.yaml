@@ -260,6 +260,8 @@ spec:
             - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
             - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
             - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_REDIS_SESSION_CONTROL_POOL_SIZE, value: {{ $redisClient.sessionControlPoolSize | default 10 | quote }}}
+            - {name: AGENTAPI_REDIS_SESSION_CONTROL_BLOCKING_POOL_SIZE, value: {{ $redisClient.sessionControlBlockingPoolSize | default 100 | quote }}}
             {{- end }}
             - {name: LOG_DIR, value: "/var/log/agentapi/sessions"}
             - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
