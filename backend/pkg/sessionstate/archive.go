@@ -19,6 +19,14 @@ const maxRestoredFileBytes = 1 << 30
 
 // Pack writes the ACP state and workspace files required to resume a session.
 func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
+	return pack(w, agentType, sessionID, home, cwd, true)
+}
+
+func PackConversation(w io.Writer, agentType, sessionID, home, cwd string) error {
+	return pack(w, agentType, sessionID, home, cwd, false)
+}
+
+func pack(w io.Writer, agentType, sessionID, home, cwd string, includeWorkspace bool) error {
 	if sessionID == "" {
 		return fmt.Errorf("ACP session id is empty")
 	}
@@ -76,12 +84,15 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 	if err := add(filepath.Join(cwd, ".acp-session-id"), "cwd/.acp-session-id"); err != nil {
 		return err
 	}
-	gitSnapshot, err := packGitWorkspace(tw, cwd, add)
-	if err != nil {
-		return err
+	gitSnapshot := false
+	if includeWorkspace {
+		gitSnapshot, err = packGitWorkspace(tw, cwd, add)
+		if err != nil {
+			return err
+		}
 	}
 	// Non-Git workspaces have no reproducible base, so preserve them in full.
-	if !gitSnapshot {
+	if includeWorkspace && !gitSnapshot {
 		if err := filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
 			if os.IsNotExist(err) {
 				return nil

@@ -163,7 +163,11 @@ func writeSessionStateVolume(path, agentType, acpSessionID, home, cwd string) er
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
-	if err := sessionstate.Pack(tmp, agentType, acpSessionID, home, cwd); err != nil {
+	pack := sessionstate.Pack
+	if volumeHoldsWorkspace(path, cwd) && strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_TEMPLATE_SNAPSHOT_ID")) == "" {
+		pack = sessionstate.PackConversation
+	}
+	if err := pack(tmp, agentType, acpSessionID, home, cwd); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -178,6 +182,15 @@ func writeSessionStateVolume(path, agentType, acpSessionID, home, cwd string) er
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+func volumeHoldsWorkspace(archivePath, cwd string) bool {
+	dir := filepath.Dir(archivePath)
+	if filepath.Base(dir) != ".agentapi" {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Dir(dir), cwd)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // sessionStateCWD prefers the provisioner's canonical clone path over the
