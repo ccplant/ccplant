@@ -427,6 +427,10 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	if !ok {
 		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
 	}
+	svc, getErr := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if getErr == nil && isStockService(svc) {
+		return nil
+	}
 	after, enabled, err := m.resolveAutoSuspendPolicy(ctx, ks)
 	if err != nil {
 		return err
@@ -435,7 +439,7 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	// may still have the pre-allocation request cached in memory; do not let it
 	// overwrite a newer policy applied by the elected control loop.
 	hasCachedPolicy := ks.Request() != nil && ks.Request().ProvisionSettings != nil && ks.Request().ProvisionSettings.Session.AutoSuspendEnabled != nil
-	if svc, getErr := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); hasCachedPolicy && getErr == nil {
+	if hasCachedPolicy && getErr == nil {
 		if rawEnabled, ok := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; ok {
 			if parsedEnabled, parseErr := strconv.ParseBool(rawEnabled); parseErr == nil {
 				enabled = parsedEnabled
@@ -1005,6 +1009,10 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 			// heartbeats can propagate the suspended lifecycle state upstream.
 			_ = m.GetSession(sessionID)
 		}
+		if isStockService(svc) {
+			m.clearStockSuspendTimer(ctx, svc)
+			continue
+		}
 		if svc.Annotations[sessionSuspendAtAnnotation] == "" && svc.Annotations[sessionSuspendedAtAnnotation] == "" {
 			if _, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; !policyKnown {
 				if sessionID != "" {
@@ -1053,6 +1061,32 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 		default:
 			log.Printf("[K8S_SESSION] Failed to suspend session %s: %v", sessionID, err)
 		}
+	}
+}
+
+func isStockService(svc *corev1.Service) bool {
+	_, ok := svc.Labels["agentapi.proxy/stock"]
+	return ok
+}
+
+func (m *KubernetesSessionManager) clearStockSuspendTimer(ctx context.Context, svc *corev1.Service) {
+	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
+		return
+	}
+	keys := []string{sessionSuspendAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation}
+	updated := svc.DeepCopy()
+	changed := false
+	for _, key := range keys {
+		if _, ok := updated.Annotations[key]; ok {
+			delete(updated.Annotations, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); err != nil && !errors.IsConflict(err) {
+		log.Printf("[K8S_SESSION] Failed to clear suspend timer on stock session %s: %v", svc.Labels["agentapi.proxy/session-id"], err)
 	}
 }
 
