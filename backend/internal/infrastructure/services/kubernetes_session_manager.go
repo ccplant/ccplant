@@ -83,6 +83,18 @@ const (
 // so another replica cannot start a duplicate while the first is still waiting.
 const sessionSuspendOwnershipTTL = 35 * time.Minute
 
+const (
+	podRuntimeStatusTimeout      = 3 * time.Second
+	podRuntimeStatusUnknownGrace = 2 * time.Minute
+)
+
+var defaultPodStatusHTTPClient = &http.Client{
+	Timeout: podRuntimeStatusTimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
 var ErrInvalidRunnerToken = stderrors.New("invalid runner token")
 
 // ProvisionerPort is the exported version of provisionerPort for use by other packages
@@ -124,11 +136,12 @@ type SessionMessageEvent = portrepos.SessionMessageEvent
 type SessionDeletedHandler func(ctx context.Context, session entities.Session)
 
 type KubernetesSessionManager struct {
-	restartHTTPClient  *http.Client
-	sessionProfileRepo portrepos.SessionProfileRepository
-	config             *config.Config
-	k8sConfig          *config.KubernetesSessionConfig
-	configProvider     interface {
+	restartHTTPClient   *http.Client
+	podStatusHTTPClient *http.Client
+	sessionProfileRepo  portrepos.SessionProfileRepository
+	config              *config.Config
+	k8sConfig           *config.KubernetesSessionConfig
+	configProvider      interface {
 		Current() *config.Config
 		AgentDefaults() settingspatch.SettingsPatch
 	}
@@ -636,8 +649,41 @@ func (m *KubernetesSessionManager) suspendIdleSession(ctx context.Context, sessi
 	return m.suspendSessionIf(ctx, sessionID, nil, true)
 }
 
-func idleSuspendStillDue(session *KubernetesSession, svc *corev1.Service, requireExpiredDeadline bool) error {
-	if session.Status() == "running" {
+func (m *KubernetesSessionManager) podReportsRunning(ctx context.Context, session *KubernetesSession) (running bool, confirmed bool) {
+	remembered := session.Status() == "running"
+	ready, err := m.isSessionWorkloadReady(ctx, session)
+	if err != nil || !ready {
+		return remembered, true
+	}
+	statusCtx, cancel := context.WithTimeout(ctx, podRuntimeStatusTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(statusCtx, http.MethodGet, fmt.Sprintf("http://%s/status", session.Addr()), nil)
+	if err != nil {
+		return remembered, false
+	}
+	client := m.podStatusHTTPClient
+	if client == nil {
+		client = defaultPodStatusHTTPClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return remembered, false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return remembered, false
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body); err != nil || body.Status == "" {
+		return remembered, false
+	}
+	return body.Status == "running", true
+}
+
+func idleSuspendStillDue(running bool, svc *corev1.Service, requireExpiredDeadline bool) error {
+	if running {
 		return errSessionSuspendNoLongerDue
 	}
 	if !requireExpiredDeadline {
@@ -659,11 +705,11 @@ func (m *KubernetesSessionManager) suspendSessionIf(ctx context.Context, session
 	if !ok {
 		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
 	}
-	if session.Status() == "running" {
-		return fmt.Errorf("session is busy")
-	}
 	if session.Status() == "suspended" {
 		return nil
+	}
+	if running, _ := m.podReportsRunning(ctx, ks); running {
+		return fmt.Errorf("session is busy")
 	}
 	svc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, ks.ServiceName())
 	if err != nil {
@@ -672,7 +718,8 @@ func (m *KubernetesSessionManager) suspendSessionIf(ctx context.Context, session
 	if !acquired {
 		return nil
 	}
-	if err := idleSuspendStillDue(ks, svc, requireExpiredDeadline); err != nil {
+	running, _ := m.podReportsRunning(ctx, ks)
+	if err := idleSuspendStillDue(running, svc, requireExpiredDeadline); err != nil {
 		_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
 		return err
 	}
@@ -688,7 +735,8 @@ func (m *KubernetesSessionManager) suspendSessionIf(ctx context.Context, session
 			_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
 			return fmt.Errorf("recheck session suspend: %w", err)
 		}
-		if err := idleSuspendStillDue(ks, current, requireExpiredDeadline); err != nil {
+		running, _ := m.podReportsRunning(ctx, ks)
+		if err := idleSuspendStillDue(running, current, requireExpiredDeadline); err != nil {
 			_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
 			return err
 		}
@@ -926,6 +974,9 @@ func (m *KubernetesSessionManager) runSessionSuspendReconciler(ctx context.Conte
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		m.reconcileSessionSuspends(ctx)
 		select {
 		case <-ctx.Done():
@@ -971,11 +1022,18 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 		if sessionID == "" {
 			continue
 		}
-		if session := m.GetSession(sessionID); session != nil && session.Status() == "running" {
-			// A newer turn started before the old deadline. Move the deadline out;
-			// its Stop hook will replace this with the exact turn-end deadline.
-			_ = m.ScheduleSessionSuspend(ctx, sessionID)
-			continue
+		if ks, ok := m.GetSession(sessionID).(*KubernetesSession); ok && ks != nil && ks.Status() != "suspended" {
+			running, confirmed := m.podReportsRunning(ctx, ks)
+			if running {
+				// A newer turn started before the old deadline. Move the deadline out;
+				// its Stop hook will replace this with the exact turn-end deadline.
+				_ = m.ScheduleSessionSuspend(ctx, sessionID)
+				continue
+			}
+			if !confirmed && now.Sub(deadline) < podRuntimeStatusUnknownGrace {
+				log.Printf("[K8S_SESSION] Idle suspend of session %s postponed: pod did not report its runtime status", sessionID)
+				continue
+			}
 		}
 		err = m.suspendIdleSession(ctx, sessionID)
 		switch {
