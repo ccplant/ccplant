@@ -40,6 +40,23 @@ type SessionPoolController struct {
 	now           func() time.Time
 	managerTunnel ESMControlTunnel
 	managedFiles  managedFileSnapshotStore
+	statusEvents  routeStatusPublisher
+}
+
+type routeStatusPublisher interface {
+	NotifyRouteStatus(portrepos.SessionStatusEvent)
+}
+
+func (c *SessionPoolController) WithRouteStatusPublisher(publisher routeStatusPublisher) *SessionPoolController {
+	c.statusEvents = publisher
+	return c
+}
+
+func (c *SessionPoolController) notifyRouteStatus(route *portrepos.SessionRoute) {
+	if c.statusEvents == nil || route == nil {
+		return
+	}
+	c.statusEvents.NotifyRouteStatus(portrepos.SessionStatusEvent{SessionID: route.SessionID, Status: route.Status, Timestamp: route.StatusUpdatedAt})
 }
 
 func (c *SessionPoolController) WithManagedFileStore(store managedFileSnapshotStore) *SessionPoolController {
@@ -1506,6 +1523,7 @@ func (c *SessionPoolController) reconcileManagerSessionStatusesInner(ctx context
 		if err := c.routes.Save(ctx, route); err != nil {
 			return err
 		}
+		c.notifyRouteStatus(route)
 	}
 	return nil
 }
@@ -1567,6 +1585,7 @@ func (c *SessionPoolController) reconcileMissingManagerRunnersInner(ctx context.
 				if e = c.routes.Save(ctx, route); e != nil {
 					return e
 				}
+				c.notifyRouteStatus(route)
 			}
 			continue
 		}

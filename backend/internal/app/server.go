@@ -95,6 +95,8 @@ type Server struct {
 	sessionRunnerStore          sessionrunnercore.Store                         // Cluster-wide managers, pools, bindings, runners and pool allocations
 	sessionAllocationNotifier   sessionrunnercore.AllocationNotifier            // Wakes long-polling runners when durable allocations are created
 	sessionAllocationRedis      *redis.Client
+	routeStatusBus              portrepos.RouteStatusEventBus
+	routeStatusCancel           context.CancelFunc
 	userFileRepo                portrepos.UserFileRepository       // User-managed files repository
 	sessionProfileRepo          portrepos.SessionProfileRepository // Session profile repository
 	contextTemplateRepo         portrepos.SessionContextTemplateRepository
@@ -367,8 +369,9 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Initialize cross-pod status synchronisation via Redis (optional).
 	// When Redis is not configured a no-op fallback is used transparently.
+	statusEventRepo := buildStatusEventRepository(cfg)
+	routeStatusBus, _ := statusEventRepo.(portrepos.RouteStatusEventBus)
 	if k8sSessionManager != nil {
-		statusEventRepo := buildStatusEventRepository(cfg)
 		k8sSessionManager.SetStatusEventRepository(statusEventRepo)
 		if listCacheRepo, ok := statusEventRepo.(portrepos.SessionListCacheRepository); ok {
 			k8sSessionManager.SetSessionListCacheRepository(listCacheRepo)
@@ -618,6 +621,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionRunnerStore:          sessionRunnerStore,
 		sessionAllocationNotifier:   sessionAllocationNotifier,
 		sessionAllocationRedis:      sessionAllocationRedis,
+		routeStatusBus:              routeStatusBus,
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
 		contextTemplateRepo:         contextTemplateRepo,
@@ -1889,10 +1893,25 @@ func (s *Server) DeleteSessionPoolAllocation(ctx context.Context, sessionID stri
 	return s.sessionRunnerStore.DeleteAllocation(ctx, sessionID)
 }
 
+func (s *Server) startRouteStatusRelay(controller interface{ StartRouteStatusRelay(context.Context) }) {
+	if s.routeStatusBus == nil {
+		return
+	}
+	if s.routeStatusCancel != nil {
+		s.routeStatusCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.routeStatusCancel = cancel
+	controller.StartRouteStatusRelay(ctx)
+}
+
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (s *Server) Shutdown(timeout time.Duration) error {
 	if s.runtimeConfigCancel != nil {
 		s.runtimeConfigCancel()
+	}
+	if s.routeStatusCancel != nil {
+		s.routeStatusCancel()
 	}
 	var managerErr error
 	if s.sessionManager != nil {
