@@ -56,6 +56,30 @@ func sessionProvisionAbortedMarkerPath(sessionID string) string {
 	return filepath.Join(os.TempDir(), sessionProvisionAbortedMarkerPrefix+sessionID)
 }
 
+func workspaceRestoredMarkerPath() string {
+	return filepath.Join(filepath.Dir(workdirRepoPath), ".agentapi", "workspace-restored")
+}
+
+func workspaceAlreadyRestored(sourceID string) bool {
+	if data, err := os.ReadFile(workspaceRestoredMarkerPath()); err == nil && strings.TrimSpace(string(data)) == sourceID {
+		return true
+	}
+	volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH"))
+	if volumePath == "" {
+		return false
+	}
+	info, err := os.Stat(volumePath)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func recordWorkspaceRestored(sourceID string) error {
+	path := workspaceRestoredMarkerPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(sourceID), 0o600)
+}
+
 func scheduleSessionSuspendFromReady(ctx context.Context) error {
 	proxy := sessionControlProxyURL()
 	token := os.Getenv("SESSION_CONTROL_TOKEN")
@@ -265,6 +289,17 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		return
 	}
 
+	restoreSource := settings.Session.ResumeFrom
+	restoreRequired := restoreSource != "" || settings.Restart
+	restoredConnectionState := false
+	restoreCompleted := true
+	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
+		// Pod replacement keeps the proxy session ID. Use that stable ID as the
+		// implicit snapshot key so restart recovery needs no API parameter.
+		restoreSource = settings.Session.ID
+	}
+	settings.WorkspaceKept = restoreSource != "" && workspaceAlreadyRestored(restoreSource)
+
 	opts := sessionsettings.SetupOptions{
 		CompileOptions:            compileOpts,
 		NotificationSubscriptions: nativeRuntimePath("notification-subscriptions-source", "/notification-subscriptions-source"),
@@ -279,15 +314,6 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		return
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
-	restoreSource := settings.Session.ResumeFrom
-	restoreRequired := restoreSource != "" || settings.Restart
-	restoredConnectionState := false
-	restoreCompleted := true
-	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
-		// Pod replacement keeps the proxy session ID. Use that stable ID as the
-		// implicit snapshot key so restart recovery needs no API parameter.
-		restoreSource = settings.Session.ID
-	}
 	if restoreSource != "" && !settings.RestartInPlace {
 		s.setPhase("provision:restore-session-state")
 		// A missing marker in the archive must not reuse one left on disk.
@@ -299,7 +325,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		if settings.Repository != nil && strings.TrimSpace(settings.Repository.FullName) != "" {
 			restoreCWD = workdirRepoPath
 		}
-		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
+		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD, settings.WorkspaceKept)
 		if errors.Is(err, errSessionStateBackendUnavailable) && !settings.Restart {
 			restoreCompleted = false
 			log.Printf("[PROVISIONER] Session state restore skipped; continuing without persisted state: %v", err)
@@ -312,6 +338,12 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		} else if found {
 			restoredConnectionState = true
 			log.Printf("[PROVISIONER] Restored persisted ACP state for proxy session %s from %s", settings.Session.ID, restoreSource)
+		}
+		if restoreCompleted {
+			if err := recordWorkspaceRestored(restoreSource); err != nil {
+				s.setStatus(StatusError, fmt.Sprintf("failed to record workspace restore: %v", err))
+				return
+			}
 		}
 	}
 	if restoreCompleted {
@@ -672,7 +704,11 @@ func sessionStateVolumeRootOf(volumePath string) string {
 	return filepath.Dir(dir)
 }
 
-func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
+func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string, keepWorkspace bool) (bool, error) {
+	unpack := sessionstate.Unpack
+	if keepWorkspace {
+		unpack = sessionstate.UnpackMissing
+	}
 	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
 		if _, err := sessionstate.TryRemoveStaleVolumeTemps(filepath.Dir(volumePath)); err != nil {
 			log.Printf("[PROVISIONER] Failed to remove stale session state temporary archives: %v", err)
@@ -689,7 +725,6 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			return false, err
 		} else {
 			defer func() { _ = archive.Close() }()
-			unpack := sessionstate.Unpack
 			if sessionsettings.PathWithin(sessionStateVolumeRootOf(volumePath), cwd) {
 				log.Printf("[PROVISIONER] Workspace volume already holds the workspace; restoring conversation state only")
 				unpack = sessionstate.UnpackKeepingWorkspace
@@ -741,7 +776,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			if objectResp.StatusCode != http.StatusOK {
 				return false, errSessionStateBackendUnavailable
 			}
-			if err := sessionstate.Unpack(objectResp.Body, runtimeHome, cwd); err != nil {
+			if err := unpack(objectResp.Body, runtimeHome, cwd); err != nil {
 				return false, err
 			}
 			return true, nil
@@ -777,7 +812,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return false, fmt.Errorf("backend returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
-	if err := sessionstate.Unpack(resp.Body, runtimeHome, cwd); err != nil {
+	if err := unpack(resp.Body, runtimeHome, cwd); err != nil {
 		return false, err
 	}
 	return true, nil

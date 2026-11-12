@@ -211,3 +211,90 @@ func TestPackUnpackInitialMessageMarkers(t *testing.T) {
 		t.Fatalf("unrelated session file restored: %v", err)
 	}
 }
+
+func TestUnpackMissingKeepsNewerGitWorkspaceAndConversation(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	runTestGit(t, cwd, "init")
+	runTestGit(t, cwd, "config", "user.email", "test@example.com")
+	runTestGit(t, cwd, "config", "user.name", "Test")
+	mustWrite(t, filepath.Join(cwd, "work.txt"), "base\n")
+	runTestGit(t, cwd, "add", ".")
+	runTestGit(t, cwd, "commit", "-m", "base")
+	runTestGit(t, cwd, "checkout", "-b", "feature/work")
+	id := "55555555-5555-5555-5555-555555555555"
+	transcript := filepath.Join(home, ".claude", "projects", "p", id+".jsonl")
+	mustWrite(t, filepath.Join(cwd, ".acp-session-id"), id)
+	mustWrite(t, filepath.Join(cwd, "work.txt"), "base\nv1\n")
+	mustWrite(t, transcript, "turn1\n")
+	mustWrite(t, filepath.Join(home, ".session", "acp-history.jsonl"), "turn1\n")
+	var archive bytes.Buffer
+	if err := Pack(&archive, "claude-acp", id, home, cwd); err != nil {
+		t.Fatal(err)
+	}
+
+	mustWrite(t, filepath.Join(cwd, "work.txt"), "base\nv1\nv2\n")
+	mustWrite(t, filepath.Join(cwd, "new.txt"), "new\n")
+	runTestGit(t, cwd, "commit", "-am", "local")
+	head := runTestGit(t, cwd, "rev-parse", "HEAD")
+	mustWrite(t, transcript, "turn1\nturn2\n")
+	if err := os.Remove(filepath.Join(home, ".session", "acp-history.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UnpackMissing(&archive, home, cwd); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(cwd, "work.txt"), "base\nv1\nv2\n")
+	assertFile(t, filepath.Join(cwd, "new.txt"), "new\n")
+	if got := runTestGit(t, cwd, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("HEAD = %q, want %q", got, head)
+	}
+	if branch := strings.TrimSpace(runTestGit(t, cwd, "branch", "--show-current")); branch != "feature/work" {
+		t.Fatalf("branch = %q, want feature/work", branch)
+	}
+	assertFile(t, transcript, "turn1\nturn2\n")
+	assertFile(t, filepath.Join(home, ".session", "acp-history.jsonl"), "turn1\n")
+}
+
+func TestUnpackMissingRestoresConversationIntoEmptyHome(t *testing.T) {
+	srcHome, cwd := t.TempDir(), t.TempDir()
+	id := "66666666-6666-6666-6666-666666666666"
+	mustWrite(t, filepath.Join(cwd, ".acp-session-id"), id)
+	mustWrite(t, filepath.Join(cwd, "notes.txt"), "v1\n")
+	mustWrite(t, filepath.Join(srcHome, ".claude", "projects", "p", id+".jsonl"), "turn1\n")
+	mustWrite(t, filepath.Join(srcHome, ".session", "initial-message-sent-session-a"), "sent\n")
+	var archive bytes.Buffer
+	if err := Pack(&archive, "claude-acp", id, srcHome, cwd); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(cwd, "notes.txt"), "v1\nv2\n")
+	if err := os.Remove(filepath.Join(cwd, ".acp-session-id")); err != nil {
+		t.Fatal(err)
+	}
+
+	dstHome := t.TempDir()
+	if err := UnpackMissing(&archive, dstHome, cwd); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(cwd, "notes.txt"), "v1\nv2\n")
+	assertFile(t, filepath.Join(cwd, ".acp-session-id"), id)
+	assertFile(t, filepath.Join(dstHome, ".claude", "projects", "p", id+".jsonl"), "turn1\n")
+	assertFile(t, filepath.Join(dstHome, ".session", "initial-message-sent-session-a"), "sent\n")
+}
+
+func TestPackExcludesWorkspaceRestoredMarker(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	id := "77777777-7777-7777-7777-777777777777"
+	mustWrite(t, filepath.Join(cwd, ".agentapi", "workspace-restored"), "session-1")
+	var archive bytes.Buffer
+	if err := Pack(&archive, "claude-acp", id, home, cwd); err != nil {
+		t.Fatal(err)
+	}
+	dstCwd := t.TempDir()
+	if err := Unpack(&archive, t.TempDir(), dstCwd); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dstCwd, ".agentapi", "workspace-restored")); !os.IsNotExist(err) {
+		t.Fatalf("workspace marker was archived: %v", err)
+	}
+}
