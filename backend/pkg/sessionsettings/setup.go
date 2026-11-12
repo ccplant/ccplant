@@ -141,9 +141,13 @@ func configureGitHubTokenBroker(settings *SessionSettings) error {
 	if brokerURL == "" || brokerToken == "" {
 		return fmt.Errorf("broker URL and token must both be configured")
 	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
+	homeDir := strings.TrimSpace(settings.Env["HOME"])
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return err
+		}
 	}
 	binDir := filepath.Join(homeDir, ".local", "bin")
 	if err := os.MkdirAll(binDir, 0700); err != nil {
@@ -170,12 +174,12 @@ printf 'username=x-access-token\npassword=%s\n\n' "$token"
 		return err
 	}
 	cmd := exec.Command("git", "config", "--global", "credential.helper", helperPath)
-	cmd.Env = githubCommandEnv()
+	cmd.Env = append(githubCommandEnv(), "HOME="+homeDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git credential helper: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	cmd = exec.Command("git", "config", "--global", "credential.useHttpPath", "true")
-	cmd.Env = githubCommandEnv()
+	cmd.Env = append(githubCommandEnv(), "HOME="+homeDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git credential useHttpPath: %w: %s", err, strings.TrimSpace(string(output)))
 	}
