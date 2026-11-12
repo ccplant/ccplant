@@ -123,6 +123,9 @@ type SessionController struct {
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
 	nextStatusSubscriberID uint64
+	routeStatusBus         repositories.RouteStatusEventBus
+	routeStatusOrigin      string
+	routeStatusOutbox      chan repositories.SessionStatusEvent
 	// routeReconcile remembers, across reconciliation passes, since when a
 	// routed runtime has been observed disconnected.
 	routeReconcile      routeReconcileState
@@ -235,6 +238,8 @@ func NewSessionController(
 		sessionCreator:         sessionCreator,
 		validateTeamUC:         sessionuc.NewValidateTeamAccessUseCase(),
 		statusSubscribers:      make(map[uint64]chan repositories.SessionStatusEvent),
+		routeStatusOrigin:      uuid.NewString(),
+		routeStatusOutbox:      make(chan repositories.SessionStatusEvent, routeStatusOutboxSize),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -1481,6 +1486,11 @@ func (c *SessionController) subscribeRemoteStatusEvents() (<-chan repositories.S
 }
 
 func (c *SessionController) publishRemoteStatusEvent(evt repositories.SessionStatusEvent) {
+	c.deliverRemoteStatusEventLocal(evt)
+	c.enqueueRouteStatusEvent(evt)
+}
+
+func (c *SessionController) deliverRemoteStatusEventLocal(evt repositories.SessionStatusEvent) {
 	c.statusSubscribersMu.RLock()
 	defer c.statusSubscribersMu.RUnlock()
 	for _, ch := range c.statusSubscribers {
@@ -2978,6 +2988,19 @@ func (c *SessionController) resolveSessionProfile(
 				entities.ErrSessionProfileAccessDenied{ID: profile.ID()}.Error(),
 			)
 		}
+		if profile.Scope() == entities.ScopeTeam && scope == entities.ScopeUser {
+			enabledProfiles, enabledErr := listEnabledTeamSessionProfiles(ctx, c.sessionProfileRepo, c.settingsRepo, userID, authzCtx.TeamScope.Teams)
+			if enabledErr != nil {
+				return nil, "", echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve enabled team profiles")
+			}
+			enabled := false
+			for _, candidate := range enabledProfiles {
+				enabled = enabled || candidate.ID() == profile.ID()
+			}
+			if !enabled {
+				return nil, "", echo.NewHTTPError(http.StatusForbidden, entities.ErrSessionProfileAccessDenied{ID: profile.ID()}.Error())
+			}
+		}
 		return profile, "explicit_profile_selected", nil
 	}
 
@@ -2992,6 +3015,18 @@ func (c *SessionController) resolveSessionProfile(
 	if err != nil {
 		log.Printf("[SESSION] Warning: could not list session profiles for default lookup: %v", err)
 		return nil, "profile_list_unavailable", nil
+	}
+	if scope == entities.ScopeUser {
+		var userTeamIDs []string
+		if authzCtx != nil {
+			userTeamIDs = authzCtx.TeamScope.Teams
+		}
+		teamProfiles, teamErr := listEnabledTeamSessionProfiles(ctx, c.sessionProfileRepo, c.settingsRepo, userID, userTeamIDs)
+		if teamErr != nil {
+			log.Printf("[SESSION] Warning: could not list enabled team profiles: %v", teamErr)
+			return nil, "profile_list_unavailable", nil
+		}
+		profiles = append(profiles, teamProfiles...)
 	}
 	if profile := selectSessionProfileByTags(profiles, tags); profile != nil {
 		log.Printf("[SESSION] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)
@@ -3023,7 +3058,10 @@ func (c *SessionController) canUseSessionProfile(
 	case entities.ScopeUser:
 		return requestedScope == entities.ScopeUser && profile.UserID() == authzCtx.PersonalScope.UserID
 	case entities.ScopeTeam:
-		return requestedScope == entities.ScopeTeam && profile.TeamID() == requestedTeamID
+		if requestedScope == entities.ScopeTeam {
+			return profile.TeamID() == requestedTeamID && authzCtx.CanAccessTeam(profile.TeamID())
+		}
+		return requestedScope == entities.ScopeUser && authzCtx.CanAccessTeam(profile.TeamID())
 	default:
 		return false
 	}

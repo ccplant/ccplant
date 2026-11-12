@@ -15,11 +15,12 @@ export default function SessionProfileListView({
   onProfileEdit,
   onProfilesUpdate,
 }: SessionProfileListViewProps) {
-  const { getScopeParams } = useTeamScope()
+  const { getScopeParams, isTeamScope } = useTeamScope()
   const [profiles, setProfiles] = useState<SessionProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
+  const [savingTeamProfileIds, setSavingTeamProfileIds] = useState<Set<string>>(new Set())
   const fetchIdRef = useRef(0)
 
   const fetchProfiles = useCallback(async () => {
@@ -33,6 +34,7 @@ export default function SessionProfileListView({
       const client = createAgentAPIProxyClientFromStorage()
       const response = await client.getSessionProfiles({
         ...scopeParams,
+        include_available_team_profiles: !isTeamScope,
       })
 
       if (fetchId !== fetchIdRef.current) return
@@ -46,7 +48,7 @@ export default function SessionProfileListView({
         setLoading(false)
       }
     }
-  }, [getScopeParams])
+  }, [getScopeParams, isTeamScope])
 
   // Refetch profiles when team scope changes
   useEffect(() => {
@@ -67,6 +69,34 @@ export default function SessionProfileListView({
       setDeletingIds((prev) => {
         const next = new Set(prev)
         next.delete(profileId)
+        return next
+      })
+    }
+  }
+
+  const handleTeamProfileToggle = async (profile: SessionProfile) => {
+    setSavingTeamProfileIds((prev) => new Set(prev).add(profile.id))
+    try {
+      const client = createAgentAPIProxyClientFromStorage()
+      const user = await client.getUserInfo()
+      const settings = await client.getSettings(user.principal_id)
+      const current = new Set(settings.enabled_team_session_profile_ids || [])
+      if (profile.personal_enabled) current.delete(profile.id)
+      else current.add(profile.id)
+      await client.saveSettings(user.principal_id, {
+        enabled_team_session_profile_ids: Array.from(current),
+      })
+      setProfiles((prev) => prev.map((item) => item.id === profile.id
+        ? { ...item, personal_enabled: !profile.personal_enabled }
+        : item))
+      onProfilesUpdate?.()
+    } catch (err) {
+      console.error('Failed to update personal team profile selection:', err)
+      alert(err instanceof Error ? err.message : 'チームプロファイルの個人利用設定に失敗しました')
+    } finally {
+      setSavingTeamProfileIds((prev) => {
+        const next = new Set(prev)
+        next.delete(profile.id)
         return next
       })
     }
@@ -126,17 +156,49 @@ export default function SessionProfileListView({
     )
   }
 
+  const personalProfiles = isTeamScope ? profiles : profiles.filter((profile) => profile.scope !== 'team')
+  const teamProfiles = isTeamScope ? [] : profiles.filter((profile) => profile.scope === 'team')
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {profiles.map((profile) => (
-        <SessionProfileCard
-          key={profile.id}
-          profile={profile}
-          onEdit={onProfileEdit}
-          onDelete={handleDelete}
-          isDeleting={deletingIds.has(profile.id)}
-        />
-      ))}
+    <div className="space-y-8">
+      {personalProfiles.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {personalProfiles.map((profile) => (
+            <SessionProfileCard
+              key={profile.id}
+              profile={profile}
+              onEdit={onProfileEdit}
+              onDelete={handleDelete}
+              isDeleting={deletingIds.has(profile.id)}
+            />
+          ))}
+        </div>
+      )}
+      {teamProfiles.length > 0 && (
+        <section>
+          <div className="mb-3">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-white">個人スコープで使うチームプロファイル</h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">有効にすると、個人セッションの選択肢と自動選択の候補に追加されます。</p>
+          </div>
+          <div className="divide-y divide-gray-200 overflow-hidden rounded-lg border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
+            {teamProfiles.map((profile) => (
+              <label key={profile.id} className="flex cursor-pointer items-center justify-between gap-4 px-4 py-3">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-gray-900 dark:text-white">{profile.name}</span>
+                  <span className="block truncate text-xs text-gray-500 dark:text-gray-400">{profile.team_id}{profile.description ? ` · ${profile.description}` : ''}</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(profile.personal_enabled)}
+                  disabled={savingTeamProfileIds.has(profile.id)}
+                  onChange={() => handleTeamProfileToggle(profile)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

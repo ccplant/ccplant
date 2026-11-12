@@ -4,6 +4,7 @@
   "required": ["replicaCount", "image", "parent", "runner", "internalApi", "sessionPersistence", "session", "metrics"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 1},
+    "resources": {"$ref": "#/$defs/resourceRequirements"},
     "metrics": {
       "type": "object",
       "required": ["enabled", "port"],
@@ -80,7 +81,13 @@
         "image": {"type": "string"},
         "cliImage": {"type": "string", "description": "Source image for the ccplant binary injected into session Pods; empty follows the session-manager image."},
         "serviceAccountName": {"type": "string"},
-        "executor": {"type": "object"},
+        "resources": {"$ref": "#/$defs/resourceRequirements"},
+        "executor": {
+          "type": "object",
+          "properties": {
+            "resources": {"$ref": "#/$defs/resourceRequirements"}
+          }
+        },
         "nodeSelector": {"type": "object", "additionalProperties": {"type": "string"}},
         "affinity": {"type": "object"},
         "tolerations": {"type": "array", "items": {"type": "object"}},
@@ -104,6 +111,20 @@
     }
   },
   "$defs": {
+    "resourceQuantity": {
+      "anyOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "number", "minimum": 0}
+      ]
+    },
+    "resourceRequirements": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"type": "object", "additionalProperties": {"$ref": "#/$defs/resourceQuantity"}},
+        "limits": {"type": "object", "additionalProperties": {"$ref": "#/$defs/resourceQuantity"}}
+      }
+    },
     "namedSecretRef": {
       "type": "object",
       "required": ["name", "key"],

@@ -62,6 +62,9 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		}
 		profileConfig = profile.Config()
 		team := profileConfig.SettingsTeamID()
+		if team == "" && profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam {
+			team = profile.TeamID()
+		}
 		if team != "" {
 			allowed := false
 			if req.Scope == entities.ScopeTeam {

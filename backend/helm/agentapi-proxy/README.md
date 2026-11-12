@@ -392,10 +392,25 @@ API Deployment image.
 
 ### Resource limits
 
-| Name                   | Description                                   | Value     |
-| ---------------------- | --------------------------------------------- | --------- |
-| `resources.requests`   | The requested resources for the container     | `{"memory": "512Mi", "cpu": "500m"}` |
-| `resources.limits`     | The resources limits for the container        | `{"memory": "2Gi", "cpu": "2000m"}` |
+Each workload can be sized independently in this chart:
+
+| Name                                | Description                                      |
+| ----------------------------------- | ------------------------------------------------ |
+| `api.resources`                     | Public API container requests and limits         |
+| `worker.resources`                  | Background worker container requests and limits  |
+| `sessionManager.resources`          | Bundled session-manager requests and limits      |
+| `sessionManager.kubernetesSession.resources` | Session Pod requests and limits          |
+| `scia.resources`                    | SCIA proxy container requests and limits         |
+| `resources`                         | Legacy fallback used when `api.resources` is empty |
+
+Every resource value uses the standard Kubernetes shape:
+
+```yaml
+api:
+  resources:
+    requests: {cpu: "250m", memory: "256Mi"}
+    limits: {cpu: "1", memory: "1Gi"}
+```
 
 ### Service Account parameters
 
@@ -796,6 +811,15 @@ session HTTPS long polling when Redis is configured:
 helm upgrade agentapi-proxy ./helm/agentapi-proxy \
   --set redis.enabled=true \
   --set sessionManager.redis.addr=redis.example:6379
+```
+
+Session-control Redis concurrency is split between short commands and blocking
+long polls. Configure their per-Pod hard connection limits independently:
+
+```bash
+helm upgrade agentapi-proxy ./helm/agentapi-proxy \
+  --set api.redis.sessionControlPoolSize=50 \
+  --set api.redis.sessionControlBlockingPoolSize=400
 ```
 
 Only backend pods connect to Redis. Session pods receive the backend control-plane

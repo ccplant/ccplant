@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -13,8 +14,42 @@ import (
 )
 
 var localUsername, localDisplayName, localEmail, localRole, localTokenName, localExpiresIn, localSecretFile string
+var principalRepairConnectionID, principalRepairGitHubUserID, principalRepairLogin, principalRepairAvatarURL string
+var principalRepairClearApplicationUserID, principalRepairReassignIdentity bool
 
 var userCmd = &cobra.Command{Use: "user", Short: "Manage users"}
+var userDeletePrincipalCmd = &cobra.Command{Use: "delete-principal <principal-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	c, err := resolveBaseClient()
+	if err != nil {
+		return err
+	}
+	return c.DeletePrincipal(cmd.Context(), args[0])
+}}
+var userRepairPrincipalCmd = &cobra.Command{Use: "repair-principal <principal-id>", Short: "Repair a principal's application user and GitHub identity links", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	if !principalRepairClearApplicationUserID && principalRepairConnectionID == "" && principalRepairGitHubUserID == "" {
+		return errors.New("at least one repair operation is required")
+	}
+	request := &client.RepairPrincipalRequest{ClearApplicationUserID: principalRepairClearApplicationUserID}
+	if principalRepairConnectionID != "" || principalRepairGitHubUserID != "" {
+		if principalRepairConnectionID == "" || principalRepairGitHubUserID == "" {
+			return errors.New("--identity-connection-id and --identity-github-user-id must be specified together")
+		}
+		githubUserID, err := strconv.ParseInt(principalRepairGitHubUserID, 10, 64)
+		if err != nil || githubUserID <= 0 {
+			return errors.New("--identity-github-user-id must be a positive integer")
+		}
+		request.Identities = []client.PrincipalRepairIdentity{{ConnectionID: principalRepairConnectionID, GitHubUserID: githubUserID, Login: principalRepairLogin, AvatarURL: principalRepairAvatarURL, ReassignExisting: principalRepairReassignIdentity}}
+	}
+	c, err := resolveBaseClient()
+	if err != nil {
+		return err
+	}
+	out, err := c.RepairPrincipal(cmd.Context(), args[0], request)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+}}
 var userCreateCmd = &cobra.Command{Use: "create", RunE: func(cmd *cobra.Command, _ []string) error {
 	c, err := resolveBaseClient()
 	if err != nil {
@@ -91,6 +126,12 @@ var userTokenRevokeCmd = &cobra.Command{Use: "revoke <user-id> <token-id>", Args
 }}
 
 func init() {
+	userRepairPrincipalCmd.Flags().BoolVar(&principalRepairClearApplicationUserID, "clear-application-user-id", false, "clear the compatibility application user ID")
+	userRepairPrincipalCmd.Flags().StringVar(&principalRepairConnectionID, "identity-connection-id", "", "GitHub connection ID for an identity to attach")
+	userRepairPrincipalCmd.Flags().StringVar(&principalRepairGitHubUserID, "identity-github-user-id", "", "numeric GitHub user ID for an identity to attach")
+	userRepairPrincipalCmd.Flags().StringVar(&principalRepairLogin, "identity-login", "", "GitHub login recorded on a newly attached identity")
+	userRepairPrincipalCmd.Flags().StringVar(&principalRepairAvatarURL, "identity-avatar-url", "", "GitHub avatar URL recorded on a newly attached identity")
+	userRepairPrincipalCmd.Flags().BoolVar(&principalRepairReassignIdentity, "reassign-identity", false, "move an existing identity from another principal")
 	userCreateCmd.Flags().StringVar(&localUsername, "username", "", "Username (required)")
 	_ = userCreateCmd.MarkFlagRequired("username")
 	userCreateCmd.Flags().StringVar(&localDisplayName, "display-name", "", "Display name")
@@ -101,6 +142,6 @@ func init() {
 	userTokenCreateCmd.Flags().StringVar(&localExpiresIn, "expires-in", "720h", "Token lifetime")
 	userTokenCreateCmd.Flags().StringVar(&localSecretFile, "secret-file", "", "New file for the token secret (required)")
 	userTokenCmd.AddCommand(userTokenCreateCmd, userTokenListCmd, userTokenRevokeCmd)
-	userCmd.AddCommand(userCreateCmd, userGetCmd, userTokenCmd)
+	userCmd.AddCommand(userCreateCmd, userGetCmd, userDeletePrincipalCmd, userRepairPrincipalCmd, userTokenCmd)
 	ClientCmd.AddCommand(userCmd)
 }

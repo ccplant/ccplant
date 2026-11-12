@@ -322,6 +322,34 @@ func TestProfileTeamSettingsInheritance(t *testing.T) {
 	require.Error(t, manager.prepareModelConnections(context.Background(), req))
 }
 
+func TestTeamProfileUsesOwningTeamSettingsInPersonalSession(t *testing.T) {
+	team := entities.NewSettings("org/team")
+	team.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://team.example/v1", Model: "team-model", Authentication: "api_key", APIKey: "team-key"})
+	profile := entities.NewSessionProfile("profile", "Team Profile", "owner")
+	profile.SetScope(entities.ScopeTeam)
+	profile.SetTeamID("org/team")
+	profile.SetConfig(entities.NewSessionProfileConfig())
+	manager := &KubernetesSessionManager{
+		client:             fake.NewSimpleClientset(),
+		settingsRepo:       &fakeSettingsRepository{settings: map[string]*entities.Settings{"org/team": team}},
+		sessionProfileRepo: profileConnectionRepository{profile: profile},
+	}
+
+	req := &entities.RunServerRequest{
+		UserID: "user", Scope: entities.ScopeUser, Teams: []string{"org/team"},
+		ResolvedSessionProfileID: "profile", CredentialSource: "session_user",
+	}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "org/team", req.SettingsTeamID)
+	require.Equal(t, "team-key", req.CodexConnection.APIKey)
+
+	req = &entities.RunServerRequest{
+		UserID: "user", Scope: entities.ScopeUser, Teams: []string{"other/team"},
+		ResolvedSessionProfileID: "profile",
+	}
+	require.Error(t, manager.prepareModelConnections(context.Background(), req))
+}
+
 func TestCodexModelOptionsEnv(t *testing.T) {
 	req := &entities.RunServerRequest{AgentType: "codex-acp", ModelOptions: []string{"glm-5.2", "glm-5.3"}}
 	settings := &sessionsettings.SessionSettings{}

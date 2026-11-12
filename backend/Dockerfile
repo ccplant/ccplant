@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # Build stage
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 ARG RELEASE_VERSION=dev
 
@@ -72,5 +72,5 @@ CMD ["server"]
 
 # Compatibility runtime for Docker Compose and local process sessions.
 # Kubernetes managers use the api target and inject its CLI into ccplant-agent.
-FROM ghcr.io/ccplant/ccplant-agent:assets-a35d56e71b4c2a73035704d53ed8996b AS runtime
+FROM ghcr.io/ccplant/ccplant-agent:assets-8f5c4685e7ee739e600356c3e7b37900 AS runtime
 COPY --from=builder /app/bin/ccplant /opt/ccplant/bin/ccplant

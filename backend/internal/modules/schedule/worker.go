@@ -58,6 +58,12 @@ func NewWorker(manager Manager, sessionManager portrepos.SessionManager, config 
 	}
 }
 
+// WithSettingsRepository enables personal team-profile opt-in resolution.
+func (w *Worker) WithSettingsRepository(repo portrepos.SettingsRepository) *Worker {
+	w.launcher.WithSettingsRepository(repo)
+	return w
+}
+
 // WithRuntime replaces nondeterministic runtime dependencies. It lets tests
 // execute a worker tick synchronously with fixed time and identifiers.
 func (w *Worker) WithRuntime(clock Clock, ids IDGenerator) *Worker {

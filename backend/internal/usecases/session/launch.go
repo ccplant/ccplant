@@ -136,6 +136,13 @@ func ResolveTeams(scope entities.ResourceScope, teamID string, userTeams []strin
 type LaunchUseCase struct {
 	sessionManager     repositories.SessionManager
 	sessionProfileRepo repositories.SessionProfileRepository // optional; if set, resolves profile configs
+	settingsRepo       repositories.SettingsRepository
+}
+
+// WithSettingsRepository enables personal opt-in checks for team profiles.
+func (uc *LaunchUseCase) WithSettingsRepository(repo repositories.SettingsRepository) *LaunchUseCase {
+	uc.settingsRepo = repo
+	return uc
 }
 
 // NewLaunchUseCase creates a new LaunchUseCase.
@@ -183,6 +190,9 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 				return LaunchResult{}, err
 			}
 			applyProfileToLaunchRequest(cfg, &req)
+			if profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam && req.SettingsTeamID == "" {
+				req.SettingsTeamID = profile.TeamID()
+			}
 			req.ResolvedSessionProfileID = profile.ID()
 			if req.Tags == nil {
 				req.Tags = make(map[string]string)
@@ -295,6 +305,15 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 		if !profileMatchesLaunchTenant(profile, req) {
 			return nil, entities.ErrSessionProfileAccessDenied{ID: profile.ID()}
 		}
+		if profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam && uc.settingsRepo != nil {
+			enabled, enabledErr := uc.enabledTeamProfiles(ctx, req)
+			if enabledErr != nil {
+				return nil, enabledErr
+			}
+			if !profileInList(profile.ID(), enabled) {
+				return nil, entities.ErrSessionProfileAccessDenied{ID: profile.ID()}
+			}
+		}
 		return profile, nil
 	}
 
@@ -314,6 +333,13 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 		log.Printf("[LAUNCH] Warning: could not list session profiles for default lookup: %v", err)
 		return nil, nil
 	}
+	if scope == entities.ScopeUser && uc.settingsRepo != nil {
+		teamProfiles, teamErr := uc.enabledTeamProfiles(ctx, req)
+		if teamErr != nil {
+			return nil, teamErr
+		}
+		profiles = append(profiles, teamProfiles...)
+	}
 	if profile := selectProfileByTags(profiles, profileSelectionTags(req)); profile != nil {
 		log.Printf("[LAUNCH] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), req.UserID)
 		return profile, nil
@@ -325,6 +351,44 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 		}
 	}
 	return nil, nil
+}
+
+func (uc *LaunchUseCase) enabledTeamProfiles(ctx context.Context, req LaunchRequest) ([]*entities.SessionProfile, error) {
+	if uc.settingsRepo == nil || len(req.Teams) == 0 {
+		return nil, nil
+	}
+	exists, err := uc.settingsRepo.Exists(ctx, req.UserID)
+	if err != nil || !exists {
+		return nil, err
+	}
+	settings, err := uc.settingsRepo.FindByName(ctx, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+	enabled := make(map[string]struct{})
+	for _, id := range settings.EnabledTeamSessionProfileIDs() {
+		enabled[id] = struct{}{}
+	}
+	profiles, err := uc.sessionProfileRepo.List(ctx, repositories.SessionProfileFilter{Scope: entities.ScopeTeam, TeamIDs: req.Teams})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*entities.SessionProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		if _, ok := enabled[profile.ID()]; ok {
+			result = append(result, profile)
+		}
+	}
+	return result, nil
+}
+
+func profileInList(id string, profiles []*entities.SessionProfile) bool {
+	for _, profile := range profiles {
+		if profile.ID() == id {
+			return true
+		}
+	}
+	return false
 }
 
 func profileSelectionTags(req LaunchRequest) map[string]string {
@@ -339,6 +403,14 @@ func profileSelectionTags(req LaunchRequest) map[string]string {
 }
 
 func profileMatchesLaunchTenant(profile *entities.SessionProfile, req LaunchRequest) bool {
+	if profile != nil && profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam {
+		for _, teamID := range req.Teams {
+			if profile.TeamID() == teamID {
+				return true
+			}
+		}
+		return false
+	}
 	return profileMatchesTenant(profile, req.Scope, req.UserID, req.TeamID)
 }
 
@@ -382,7 +454,11 @@ func resolveEffectiveSessionProfileConfig(
 	if err != nil {
 		return entities.SessionProfileConfig{}, err
 	}
-	if !profileMatchesTenant(source, scope, userID, teamID) {
+	// The selected profile has already been authorized by the caller. Inherited
+	// profiles must stay within that profile's ownership tenant; this also lets a
+	// team profile retain its team-local inheritance when used by a personal
+	// session.
+	if !profilesShareTenant(source, profile) {
 		return entities.SessionProfileConfig{}, entities.ErrSessionProfileAccessDenied{ID: source.ID()}
 	}
 	visited[source.ID()] = struct{}{}
@@ -391,6 +467,16 @@ func resolveEffectiveSessionProfileConfig(
 		return entities.SessionProfileConfig{}, err
 	}
 	return mergeProfileConfigSources(sourceCfg, cfg), nil
+}
+
+func profilesShareTenant(left, right *entities.SessionProfile) bool {
+	if left == nil || right == nil || left.Scope() != right.Scope() {
+		return false
+	}
+	if left.Scope() == entities.ScopeTeam {
+		return left.TeamID() != "" && left.TeamID() == right.TeamID()
+	}
+	return left.UserID() != "" && left.UserID() == right.UserID()
 }
 
 func profileMatchesTenant(profile *entities.SessionProfile, scope entities.ResourceScope, userID, teamID string) bool {

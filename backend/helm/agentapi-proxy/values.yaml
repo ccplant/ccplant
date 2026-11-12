@@ -55,6 +55,9 @@ api:
   imagePullSecrets: []
   serviceAccount:
     create: true
+    # Enable this when the API must access Kubernetes directly while the
+    # application KV backend is libSQL (for example, when running
+    # `kv-store backfill-secret` inside the API Pod).
     automount: false
     annotations: {}
     name: ""
@@ -182,6 +185,10 @@ api:
     dialTimeout: "5s"
     readTimeout: "3s"
     writeTimeout: "3s"
+    # Maximum concurrent short session-control Redis commands per API Pod.
+    sessionControlPoolSize: 50
+    # Maximum concurrent blocking XREAD calls per API Pod.
+    sessionControlBlockingPoolSize: 400
 
   encryption:
     keySecretRef:
@@ -322,6 +329,8 @@ worker:
     dialTimeout: "5s"
     readTimeout: "3s"
     writeTimeout: "3s"
+    sessionControlPoolSize: 50
+    sessionControlBlockingPoolSize: 400
 
   # Default Slack Socket Mode connection. Tokens are injected by kubelet from
   # this Secret; the worker does not require Kubernetes API access.
@@ -476,6 +485,8 @@ sessionManager:
     dialTimeout: "5s"
     readTimeout: "3s"
     writeTimeout: "3s"
+    sessionControlPoolSize: 50
+    sessionControlBlockingPoolSize: 400
   sessionPersistence:
     backend: ""
     suspendAfter: 1h
@@ -518,7 +529,7 @@ sessionManager:
     serviceAccountName: agentapi-proxy-session
     rbac:
       create: true
-    image: "ghcr.io/ccplant/ccplant-agent:assets-a35d56e71b4c2a73035704d53ed8996b"
+    image: "ghcr.io/ccplant/ccplant-agent:assets-8f5c4685e7ee739e600356c3e7b37900"
     # Source image for the ccplant binary injected into session Pods.
     # Empty follows the session-manager image.
     cliImage: ""
@@ -1145,7 +1156,7 @@ kubernetesSession:
   # Container image for session pods
   # Independent asset image; use an immutable tag or digest.
   # Outside Helm the equivalent runtime override is AGENTAPI_K8S_SESSION_IMAGE.
-  image: "ghcr.io/ccplant/ccplant-agent:assets-a35d56e71b4c2a73035704d53ed8996b"
+  image: "ghcr.io/ccplant/ccplant-agent:assets-8f5c4685e7ee739e600356c3e7b37900"
   # CLI source follows the manager release; override for a custom registry.
   cliImage: ""
 

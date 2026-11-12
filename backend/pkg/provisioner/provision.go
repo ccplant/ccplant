@@ -46,14 +46,68 @@ var piAgentInstructionsPath = filepath.Join(runtimeHome, ".pi", "agent", "AGENTS
 var piSettingsPath = filepath.Join(runtimeHome, ".pi", "agent", "settings.json")
 
 const sessionRestoreMarkerPrefix = "agentapi-session-restore-complete-"
+const sessionProvisionAbortedMarkerPrefix = "agentapi-session-provision-aborted-"
 
 func sessionRestoreMarkerPath(sessionID string) string {
 	return filepath.Join(os.TempDir(), sessionRestoreMarkerPrefix+sessionID)
 }
 
+func sessionProvisionAbortedMarkerPath(sessionID string) string {
+	return filepath.Join(os.TempDir(), sessionProvisionAbortedMarkerPrefix+sessionID)
+}
+
+func workspaceRestoredMarkerPath() string {
+	return filepath.Join(filepath.Dir(workdirRepoPath), ".agentapi", "workspace-restored")
+}
+
+func workspaceAlreadyRestored(sourceID string) bool {
+	if data, err := os.ReadFile(workspaceRestoredMarkerPath()); err == nil && strings.TrimSpace(string(data)) == sourceID {
+		return true
+	}
+	volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH"))
+	if volumePath == "" {
+		return false
+	}
+	info, err := os.Stat(volumePath)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func recordWorkspaceRestored(sourceID string) error {
+	path := workspaceRestoredMarkerPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(sourceID), 0o600)
+}
+
+func scheduleSessionSuspendFromReady(ctx context.Context) error {
+	proxy := sessionControlProxyURL()
+	token := os.Getenv("SESSION_CONTROL_TOKEN")
+	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
+	if proxy == "" || token == "" || sessionID == "" {
+		return nil
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, proxy+"/internal/session-state/"+url.PathEscape(sessionID)+"/suspend", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("schedule session suspend returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 const (
-	containerJavaScriptRuntime  = "/opt/claude/bin/claude"
-	containerCodexACPEntrypoint = "/home/agentapi/.bun/bin/codex-acp"
+	containerJavaScriptRuntime  = "/usr/local/bin/node"
+	containerCodexACPEntrypoint = "/home/agentapi/.npm-global/bin/codex-acp"
 )
 
 func envPath(name, fallback string) string {
@@ -163,9 +217,12 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(parent context.Context, settings *sessionsettings.SessionSettings) {
 	markerPath := sessionRestoreMarkerPath(settings.Session.ID)
-	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
-		s.setStatus(StatusError, fmt.Sprintf("failed to reset session restore marker: %v", err))
-		return
+	abortedMarkerPath := sessionProvisionAbortedMarkerPath(settings.Session.ID)
+	for _, path := range []string{markerPath, abortedMarkerPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			s.setStatus(StatusError, fmt.Sprintf("failed to reset session restore marker: %v", err))
+			return
+		}
 	}
 	ctx, cancel := context.WithCancel(parent)
 	s.mu.Lock()
@@ -179,10 +236,16 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	s.mu.Unlock()
 	defer close(provisionDone)
 	processStarted := false
+	restoreMarked := false
 	defer func() {
 		if !processStarted {
 			cancel()
 			close(exited)
+		}
+		if !processStarted && !restoreMarked && !settings.RestartInPlace && !settings.Paused {
+			if err := os.WriteFile(abortedMarkerPath, []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o600); err != nil {
+				log.Printf("[PROVISIONER] Failed to record aborted provisioning for session %s: %v", settings.Session.ID, err)
+			}
 		}
 	}()
 
@@ -226,6 +289,17 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		return
 	}
 
+	restoreSource := settings.Session.ResumeFrom
+	restoreRequired := restoreSource != "" || settings.Restart
+	restoredConnectionState := false
+	restoreCompleted := true
+	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
+		// Pod replacement keeps the proxy session ID. Use that stable ID as the
+		// implicit snapshot key so restart recovery needs no API parameter.
+		restoreSource = settings.Session.ID
+	}
+	settings.WorkspaceKept = restoreSource != "" && workspaceAlreadyRestored(restoreSource)
+
 	opts := sessionsettings.SetupOptions{
 		CompileOptions:            compileOpts,
 		NotificationSubscriptions: nativeRuntimePath("notification-subscriptions-source", "/notification-subscriptions-source"),
@@ -239,15 +313,6 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		return
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
-	restoreSource := settings.Session.ResumeFrom
-	restoreRequired := restoreSource != "" || settings.Restart
-	restoredConnectionState := false
-	restoreCompleted := true
-	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
-		// Pod replacement keeps the proxy session ID. Use that stable ID as the
-		// implicit snapshot key so restart recovery needs no API parameter.
-		restoreSource = settings.Session.ID
-	}
 	if restoreSource != "" && !settings.RestartInPlace {
 		s.setPhase("provision:restore-session-state")
 		// A missing marker in the archive must not reuse one left on disk.
@@ -259,7 +324,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		if settings.Repository != nil && strings.TrimSpace(settings.Repository.FullName) != "" {
 			restoreCWD = workdirRepoPath
 		}
-		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
+		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD, settings.WorkspaceKept)
 		if errors.Is(err, errSessionStateBackendUnavailable) && !settings.Restart {
 			restoreCompleted = false
 			log.Printf("[PROVISIONER] Session state restore skipped; continuing without persisted state: %v", err)
@@ -273,12 +338,19 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			restoredConnectionState = true
 			log.Printf("[PROVISIONER] Restored persisted ACP state for proxy session %s from %s", settings.Session.ID, restoreSource)
 		}
+		if restoreCompleted {
+			if err := recordWorkspaceRestored(restoreSource); err != nil {
+				s.setStatus(StatusError, fmt.Sprintf("failed to record workspace restore: %v", err))
+				return
+			}
+		}
 	}
 	if restoreCompleted {
 		if err := os.WriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o600); err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("failed to record session restore completion: %v", err))
 			return
 		}
+		restoreMarked = true
 	}
 
 	if settings.Restart {
@@ -391,8 +463,8 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	if err := writePiAgentInstructions(claudeMDPath, piAgentInstructionsPath); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to write Pi AGENTS.md: %v", err)
 	}
-	if err := writePiMCPServers(piSettingsPath, piMCPServers(settings)); err != nil {
-		log.Printf("[PROVISIONER] Warning: failed to write Pi MCP settings: %v", err)
+	if err := writePiSettings(piSettingsPath, piMCPServers(settings)); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write Pi settings: %v", err)
 	}
 
 	// ── Step 5: cd into cloned repo ───────────────────────────────────────────
@@ -413,7 +485,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 
 	// ── Step 5.5: run pre-script ─────────────────────────────────────────────
 	// Executes the optional shell pre-script before starting the agent.
-	// Pre-scripts are used for setup tasks such as pre-fetching npm/bun packages.
+	// Pre-scripts are used for setup tasks such as pre-fetching npm packages.
 	// Failure is non-fatal: a warning is logged and provisioning continues.
 	if settings.Startup.PreScript != "" && !settings.Restart {
 		s.setPhase("provision:pre-script")
@@ -537,6 +609,9 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// ── Step 10: mark ready and supervise ────────────────────────────────────
 	s.setPhase("provision:ready")
 	s.setStatus(StatusReady, "")
+	if err := scheduleSessionSuspendFromReady(ctx); err != nil {
+		log.Printf("[PROVISIONER] Failed to schedule idle suspend after setup for session %s: %v", settings.Session.ID, err)
+	}
 
 	// ── Step 11: launch acp-posts subprocess if SlackParams provided ─────────
 	if settings.SlackParams != nil && settings.SlackParams.Channel != "" {
@@ -608,8 +683,15 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
+func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string, keepWorkspace bool) (bool, error) {
+	unpack := sessionstate.Unpack
+	if keepWorkspace {
+		unpack = sessionstate.UnpackMissing
+	}
 	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
+		if _, err := sessionstate.TryRemoveStaleVolumeTemps(filepath.Dir(volumePath)); err != nil {
+			log.Printf("[PROVISIONER] Failed to remove stale session state temporary archives: %v", err)
+		}
 		archive, err := os.Open(volumePath)
 		if os.IsNotExist(err) {
 			// A template starts with a fresh PVC, so its portable snapshot must
@@ -622,7 +704,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			return false, err
 		} else {
 			defer func() { _ = archive.Close() }()
-			if err := sessionstate.Unpack(archive, runtimeHome, cwd); err != nil {
+			if err := unpack(archive, runtimeHome, cwd); err != nil {
 				return false, err
 			}
 			return true, nil
@@ -669,7 +751,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			if objectResp.StatusCode != http.StatusOK {
 				return false, errSessionStateBackendUnavailable
 			}
-			if err := sessionstate.Unpack(objectResp.Body, runtimeHome, cwd); err != nil {
+			if err := unpack(objectResp.Body, runtimeHome, cwd); err != nil {
 				return false, err
 			}
 			return true, nil
@@ -705,7 +787,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return false, fmt.Errorf("backend returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
-	if err := sessionstate.Unpack(resp.Body, runtimeHome, cwd); err != nil {
+	if err := unpack(resp.Body, runtimeHome, cwd); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1444,7 +1526,6 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			// directly, so a wrapper shebang can never move codex-acp (and its
 			// app-server child) into the executor sidecar. Shells spawned by the
 			// agent still resolve to the executor client as intended.
-			envMap["BUN_BE_BUN"] = "1"
 			adapterCommand = []string{containerJavaScriptRuntime, containerCodexACPEntrypoint}
 		}
 		args := []string{
@@ -1543,10 +1624,7 @@ func piMCPServers(settings *sessionsettings.SessionSettings) map[string]interfac
 	return nil
 }
 
-func writePiMCPServers(settingsPath string, mcpServers map[string]interface{}) error {
-	if len(mcpServers) == 0 {
-		return nil
-	}
+func writePiSettings(settingsPath string, mcpServers map[string]interface{}) error {
 	if strings.TrimSpace(settingsPath) == "" {
 		return fmt.Errorf("settings path must be set")
 	}
@@ -1560,7 +1638,13 @@ func writePiMCPServers(settingsPath string, mcpServers map[string]interface{}) e
 		return fmt.Errorf("read existing Pi settings: %w", err)
 	}
 
-	settingsJSON["mcpServers"] = mcpServers
+	// Session containers are already isolated by agentapi-proxy. Trust project
+	// resources automatically so pi-acp's non-interactive RPC process can load
+	// repository-local settings, skills, and extensions without a prompt.
+	settingsJSON["defaultProjectTrust"] = "always"
+	if len(mcpServers) > 0 {
+		settingsJSON["mcpServers"] = mcpServers
+	}
 
 	data, err := json.MarshalIndent(settingsJSON, "", "  ")
 	if err != nil {
@@ -1574,7 +1658,7 @@ func writePiMCPServers(settingsPath string, mcpServers map[string]interface{}) e
 	if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
 		return fmt.Errorf("write Pi settings: %w", err)
 	}
-	log.Printf("[PROVISIONER] Wrote Pi MCP settings to %s", settingsPath)
+	log.Printf("[PROVISIONER] Wrote Pi settings to %s", settingsPath)
 	return nil
 }
 

@@ -17,6 +17,7 @@
 {{- $apiSecurityContext := $api.securityContext | default .Values.securityContext }}
 {{- $apiImagePullSecrets := $api.imagePullSecrets | default .Values.imagePullSecrets }}
 {{- $apiResources := $api.resources | default .Values.resources }}
+{{- $apiSA := $api.serviceAccount | default .Values.serviceAccount }}
 {{- /* Deduplicate shared and API-specific env entries with API values winning. */}}
 {{- $apiEnvByName := dict }}
 {{- $apiEnvNames := list }}
@@ -99,7 +100,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "agentapi-proxy.apiServiceAccountName" . }}
-      automountServiceAccountToken: {{ or (eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes") (eq (dig "primary" "backend" "" ($api.kvStore | default dict)) "kubernetes") }}
+      automountServiceAccountToken: {{ or ($apiSA.automount | default false) (eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes") (eq (dig "primary" "backend" "" ($api.kvStore | default dict)) "kubernetes") (eq (dig "secondary" "backend" "" ($api.kvStore | default dict)) "kubernetes") }}
       securityContext:
         {{- if $apiPodSecurityContext }}
         {{- toYaml $apiPodSecurityContext | nindent 8 }}
@@ -741,6 +742,8 @@ spec:
             - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $apiRedis.dialTimeout | default "5s" | quote }}}
             - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $apiRedis.readTimeout | default "3s" | quote }}}
             - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $apiRedis.writeTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_REDIS_SESSION_CONTROL_POOL_SIZE, value: {{ $apiRedis.sessionControlPoolSize | default 50 | quote }}}
+            - {name: AGENTAPI_REDIS_SESSION_CONTROL_BLOCKING_POOL_SIZE, value: {{ $apiRedis.sessionControlBlockingPoolSize | default 400 | quote }}}
             {{- end }}
             {{- $workerTokenRef := dig "workerControl" "tokenSecretRef" (dict) $api }}
             {{- with (dig "name" "" $workerTokenRef) }}

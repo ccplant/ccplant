@@ -42,6 +42,14 @@ func (h *Handlers) WithGitHubApplicationUserResolver(resolver GitHubApplicationU
 	return h
 }
 
+// WithSettingsRepository enables personal team-profile opt-in resolution.
+func (h *Handlers) WithSettingsRepository(repo repositories.SettingsRepository) *Handlers {
+	h.githubController.sessionService.WithSettingsRepository(repo)
+	h.customController.sessionService.WithSettingsRepository(repo)
+	h.customController.launcher.WithSettingsRepository(repo)
+	return h
+}
+
 // GetName returns the name of this handler for logging
 func (h *Handlers) GetName() string {
 	return "WebhookHandlers"

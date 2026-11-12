@@ -93,6 +93,7 @@ export interface SessionProfile {
   selector_tags?: Record<string, string>;
   selector_repositories?: string[];
   config?: SessionProfileConfig;
+  personal_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -123,6 +124,7 @@ export interface UpdateSessionProfileRequest {
 export interface SessionProfileListParams {
   scope?: ResourceScope;
   team_id?: string;
+  include_available_team_profiles?: boolean;
 }
 
 // SessionProfile list response

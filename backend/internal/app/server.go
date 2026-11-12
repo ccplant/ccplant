@@ -95,6 +95,8 @@ type Server struct {
 	sessionRunnerStore          sessionrunnercore.Store                         // Cluster-wide managers, pools, bindings, runners and pool allocations
 	sessionAllocationNotifier   sessionrunnercore.AllocationNotifier            // Wakes long-polling runners when durable allocations are created
 	sessionAllocationRedis      *redis.Client
+	routeStatusBus              portrepos.RouteStatusEventBus
+	routeStatusCancel           context.CancelFunc
 	userFileRepo                portrepos.UserFileRepository       // User-managed files repository
 	sessionProfileRepo          portrepos.SessionProfileRepository // Session profile repository
 	contextTemplateRepo         portrepos.SessionContextTemplateRepository
@@ -367,8 +369,9 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Initialize cross-pod status synchronisation via Redis (optional).
 	// When Redis is not configured a no-op fallback is used transparently.
+	statusEventRepo := buildStatusEventRepository(cfg)
+	routeStatusBus, _ := statusEventRepo.(portrepos.RouteStatusEventBus)
 	if k8sSessionManager != nil {
-		statusEventRepo := buildStatusEventRepository(cfg)
 		k8sSessionManager.SetStatusEventRepository(statusEventRepo)
 		if listCacheRepo, ok := statusEventRepo.(portrepos.SessionListCacheRepository); ok {
 			k8sSessionManager.SetSessionListCacheRepository(listCacheRepo)
@@ -618,6 +621,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionRunnerStore:          sessionRunnerStore,
 		sessionAllocationNotifier:   sessionAllocationNotifier,
 		sessionAllocationRedis:      sessionAllocationRedis,
+		routeStatusBus:              routeStatusBus,
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
 		contextTemplateRepo:         contextTemplateRepo,
@@ -819,10 +823,32 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	return s
 }
 
+const (
+	defaultSessionControlPoolSize         = 50
+	defaultSessionControlBlockingPoolSize = 400
+)
+
 func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
-	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
+	commandPoolSize := cfg.Redis.SessionControlPoolSize
+	if commandPoolSize <= 0 {
+		commandPoolSize = defaultSessionControlPoolSize
+	}
+	blockingPoolSize := cfg.Redis.SessionControlBlockingPoolSize
+	if blockingPoolSize <= 0 {
+		blockingPoolSize = defaultSessionControlBlockingPoolSize
+	}
+	opts := &redis.Options{
+		Addr:           cfg.Redis.Addr,
+		Password:       cfg.Redis.Password,
+		DB:             cfg.Redis.DB,
+		PoolSize:       commandPoolSize,
+		MaxActiveConns: commandPoolSize,
+	}
 	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
 		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.ReadTimeout); err == nil && d > 0 {
+		opts.ReadTimeout = d
 	}
 	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
 		opts.WriteTimeout = d
@@ -838,8 +864,14 @@ func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
 		_ = client.Close()
 		return nil
 	}
-	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled")
-	return infrasessioncontrol.NewRedisStore(client)
+	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled (command_pool_size=%d, blocking_pool_size=%d)",
+		commandPoolSize, blockingPoolSize)
+	blockingOpts := *opts
+	blockingOpts.ReadTimeout = 35 * time.Second
+	blockingOpts.PoolSize = blockingPoolSize
+	blockingOpts.MaxActiveConns = blockingPoolSize
+	blockingClient := redis.NewClient(&blockingOpts)
+	return infrasessioncontrol.NewRedisStoreWithBlockingClient(client, blockingClient)
 }
 
 func buildSessionAllocationNotifier(cfg *config.Config) (sessionrunnercore.AllocationNotifier, *redis.Client) {
@@ -1861,10 +1893,25 @@ func (s *Server) DeleteSessionPoolAllocation(ctx context.Context, sessionID stri
 	return s.sessionRunnerStore.DeleteAllocation(ctx, sessionID)
 }
 
+func (s *Server) startRouteStatusRelay(controller interface{ StartRouteStatusRelay(context.Context) }) {
+	if s.routeStatusBus == nil {
+		return
+	}
+	if s.routeStatusCancel != nil {
+		s.routeStatusCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.routeStatusCancel = cancel
+	controller.StartRouteStatusRelay(ctx)
+}
+
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (s *Server) Shutdown(timeout time.Duration) error {
 	if s.runtimeConfigCancel != nil {
 		s.runtimeConfigCancel()
+	}
+	if s.routeStatusCancel != nil {
+		s.routeStatusCancel()
 	}
 	var managerErr error
 	if s.sessionManager != nil {

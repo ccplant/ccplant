@@ -187,6 +187,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSessionRunnerStore(server.sessionRunnerStore),
 		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),
 		controllers.WithGitHubBrokerBaseURL(server.config.GitHubBrokerBaseURL),
+		controllers.WithRouteStatusEventBus(server.routeStatusBus),
 	}
 	if githubConnectionsController != nil {
 		sessionControllerOptions = append(sessionControllerOptions, controllers.WithGitHubTokenResolver(githubConnectionsController))
@@ -196,6 +197,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		server, // Server implements SessionCreator interface
 		sessionControllerOptions...,
 	)
+	sessionPoolController.WithRouteStatusPublisher(sessionController)
+	server.startRouteStatusRelay(sessionController)
 
 	// Create share controller if share repository is available
 	var shareController *controllers.ShareController
@@ -735,6 +738,8 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.PUT("/admin/github-connections/:id/github-app/private-key", controller.UpdateGitHubAppPrivateKey, admin)
 		r.echo.DELETE("/admin/github-connections/:id/github-app/private-key", controller.DeleteGitHubAppPrivateKey, admin)
 		r.echo.POST("/admin/github-connections/:id/github-app/test", controller.TestGitHubApp, admin)
+		r.echo.DELETE("/admin/principals/:principalId", controller.DeletePrincipal, admin)
+		r.echo.POST("/admin/principals/:principalId/repair", controller.RepairPrincipal, admin)
 		r.echo.GET("/internal/sessions/:sessionId/github-credentials", controller.BrokerCredentials)
 		r.echo.GET("/github-connections", controller.ListAvailable, read)
 		r.echo.GET("/users/me/github-identities", controller.ListIdentities, read)

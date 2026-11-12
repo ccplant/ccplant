@@ -40,6 +40,12 @@ func NewWebhookSessionService(repo repositories.WebhookRepository, sessionManage
 	}
 }
 
+// WithSettingsRepository enables personal team-profile opt-in resolution.
+func (s *WebhookSessionService) WithSettingsRepository(repo repositories.SettingsRepository) *WebhookSessionService {
+	s.launcher.WithSettingsRepository(repo)
+	return s
+}
+
 // WithGitHubApplicationUserResolver enables stable credential-owner resolution
 // for GitHub webhook senders. Without a resolver the legacy login-name behavior
 // is retained for compatibility with no-auth deployments.

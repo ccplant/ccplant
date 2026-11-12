@@ -6,10 +6,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +19,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -267,6 +271,134 @@ func TestPrincipalIsStableAndRandom(t *testing.T) {
 	require.NotEqual(t, "alice", first.ID)
 }
 
+func TestDeletePrincipalDeletesLinkedIdentities(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	controller := NewGitHubConnectionsController(client, "test", "https://service.example.com")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:public:42")
+	require.NoError(t, err)
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{
+		ID: "identity-1", PrincipalID: principal.ID, ConnectionID: "public", GitHubUserID: 42, Login: "alice",
+	}, "token", nil)
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/admin/principals/"+principal.ID, nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.SetPath("/admin/principals/:principalId")
+	ctx.SetParamNames("principalId")
+	ctx.SetParamValues(principal.ID)
+	ctx.Set("internal_user", entities.NewUser(entities.UserID(principal.ID), entities.UserTypeGitHub, "alice"))
+	require.NoError(t, controller.DeletePrincipal(ctx))
+	require.Equal(t, http.StatusNoContent, rec.Code)
+
+	_, err = controller.loadPrincipal(context.Background(), principal.InternalUserID)
+	require.True(t, apierrors.IsNotFound(err))
+	var identity githubIdentity
+	_, err = controller.loadObject(context.Background(), identitySecretName("public", 42), &identity)
+	require.True(t, apierrors.IsNotFound(err))
+}
+
+func TestDeletePrincipalReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	e := echo.New()
+	ctx := e.NewContext(httptest.NewRequest(http.MethodDelete, "/admin/principals/missing", nil), httptest.NewRecorder())
+	ctx.SetParamNames("principalId")
+	ctx.SetParamValues("missing")
+	err := controller.DeletePrincipal(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusNotFound, httpErr.Code)
+}
+
+func TestDeletePrincipalWithEncryptedLibSQL(t *testing.T) {
+	t.Parallel()
+	backend, err := kvstore.NewLibSQLStore(context.Background(), "file://"+filepath.Join(t.TempDir(), "principals.db"), "")
+	require.NoError(t, err)
+	key := make([]byte, 32)
+	_, err = rand.Read(key)
+	require.NoError(t, err)
+	keyring, err := kvstore.NewLocalKeyring("current", map[string]string{"current": base64.StdEncoding.EncodeToString(key)})
+	require.NoError(t, err)
+	store, err := kvstore.NewEncryptedStore(backend, keyring)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	client := kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), store)
+	controller := NewGitHubConnectionsController(client, "test", "https://service.example.com", true)
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:public:42")
+	require.NoError(t, err)
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{
+		ID: "identity-1", PrincipalID: principal.ID, ConnectionID: "public", GitHubUserID: 42, Login: "alice",
+	}, "token", nil)
+	require.NoError(t, err)
+
+	e := echo.New()
+	ctx := e.NewContext(httptest.NewRequest(http.MethodDelete, "/admin/principals/"+principal.ID, nil), httptest.NewRecorder())
+	ctx.SetParamNames("principalId")
+	ctx.SetParamValues(principal.ID)
+	require.NoError(t, controller.DeletePrincipal(ctx))
+	_, err = controller.loadPrincipal(context.Background(), principal.InternalUserID)
+	require.True(t, apierrors.IsNotFound(err))
+}
+
+func TestRepairPrincipalClearsApplicationUserIDAndAttachesIdentity(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{ID: "public", Name: "GitHub", BaseURL: "https://github.com", APIURL: "https://api.github.com"}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "secret", ""))
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:public:1")
+	require.NoError(t, err)
+	principal, err = controller.bindPrincipalToApplicationUser(context.Background(), principal.InternalUserID, principal, "obsolete-user")
+	require.NoError(t, err)
+
+	body := `{"clear_application_user_id":true,"identities":[{"connection_id":"public","github_user_id":42,"login":"alice"}]}`
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/admin/principals/"+principal.ID+"/repair", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.SetParamNames("principalId")
+	ctx.SetParamValues(principal.ID)
+	require.NoError(t, controller.RepairPrincipal(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	repaired, err := controller.loadPrincipal(context.Background(), principal.InternalUserID)
+	require.NoError(t, err)
+	require.Empty(t, repaired.ApplicationUserID)
+	var identity githubIdentity
+	_, err = controller.loadObject(context.Background(), identitySecretName("public", 42), &identity)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, identity.PrincipalID)
+	require.Equal(t, "alice", identity.Login)
+}
+
+func TestRepairPrincipalRequiresExplicitIdentityReassignment(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{ID: "public", Name: "GitHub", BaseURL: "https://github.com", APIURL: "https://api.github.com"}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "secret", ""))
+	target, err := controller.getOrCreatePrincipal(context.Background(), "github:1")
+	require.NoError(t, err)
+	source, err := controller.getOrCreatePrincipal(context.Background(), "github:2")
+	require.NoError(t, err)
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity", PrincipalID: source.ID, ConnectionID: "public", GitHubUserID: 42, Login: "alice"}, "token", nil)
+	require.NoError(t, err)
+
+	body := `{"identities":[{"connection_id":"public","github_user_id":42}]}`
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/admin/principals/"+target.ID+"/repair", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	ctx.SetParamNames("principalId")
+	ctx.SetParamValues(target.ID)
+	err = controller.RepairPrincipal(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusConflict, httpErr.Code)
+}
+
 func TestLegacyGitHubLoginResolvesStablePrincipalID(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
@@ -382,6 +514,60 @@ func TestResolveLoginPrincipalUsesLinkedPrincipalID(t *testing.T) {
 	resolved, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice-enterprise"}, "token", nil)
 	require.NoError(t, err)
 	require.Equal(t, principal.ID, resolved.ID)
+}
+
+func TestResolveLoginPrincipalLinksExistingBuiltInGHESPrincipal(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	controller.SetBuiltInAPIURL("https://github.example.com/api/v3")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "github:42")
+	require.NoError(t, err)
+	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+
+	resolved, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "token", nil)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, resolved.ID)
+
+	var identity githubIdentity
+	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, identity.PrincipalID)
+}
+
+func TestBuiltInGHESLoginUsesMatchingConnectionPrincipal(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	controller.SetBuiltInAPIURL("https://github.example.com/api/v3/")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:enterprise:42")
+	require.NoError(t, err)
+	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "token", nil)
+	require.NoError(t, err)
+
+	resolved, err := controller.ResolvePrincipalIDForGitHubUser(context.Background(), 42)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, resolved)
+}
+
+func TestBuiltInGHESDoesNotUseSameUserIDFromDifferentHost(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	controller.SetBuiltInAPIURL("https://first.example.com/api/v3")
+	connectionPrincipal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:enterprise:42")
+	require.NoError(t, err)
+	connection := githubConnection{ID: "enterprise", BaseURL: "https://second.example.com", APIURL: "https://second.example.com/api/v3"}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: connectionPrincipal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "token", nil)
+	require.NoError(t, err)
+
+	resolved, err := controller.ResolvePrincipalIDForGitHubUser(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotEqual(t, connectionPrincipal.ID, resolved)
+	builtInPrincipal, err := controller.loadPrincipal(context.Background(), "github:42")
+	require.NoError(t, err)
+	require.Equal(t, builtInPrincipal.ID, resolved)
 }
 
 func TestResolveLoginPrincipalRejectsUnlinkedUserWhenCreationDisabled(t *testing.T) {

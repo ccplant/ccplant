@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +21,34 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
+
+var (
+	errSessionSetupInProgress = errors.New("session state checkpoint rejected: session setup has not completed")
+	errSessionSetupFailed     = errors.New("session state checkpoint rejected: session setup failed before session state was restored")
+)
+
+func sessionSetupCheckpointError(sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	if _, err := os.Stat(sessionRestoreMarkerPath(sessionID)); !os.IsNotExist(err) {
+		return nil
+	}
+	if _, err := os.Stat(sessionProvisionAbortedMarkerPath(sessionID)); err == nil {
+		return errSessionSetupFailed
+	}
+	return errSessionSetupInProgress
+}
+
+func sessionSetupCheckpointReason(err error) string {
+	switch {
+	case errors.Is(err, errSessionSetupInProgress):
+		return "setup_in_progress"
+	case errors.Is(err, errSessionSetupFailed):
+		return "setup_failed"
+	}
+	return ""
+}
 
 type controlCommand struct {
 	ID       string          `json:"id"`
@@ -68,6 +97,9 @@ func runSessionControlClient(ctx context.Context, client *http.Client, cfg PullC
 			if err != nil {
 				eventType = "command_failed"
 				payload["error"] = err.Error()
+				if reason := sessionSetupCheckpointReason(err); reason != "" {
+					payload["reason"] = reason
+				}
 			}
 			cursor = command.StreamID
 			if err := persistControlCursor(cursorPath, cursor); err != nil {
@@ -163,6 +195,9 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 			SnapshotID string `json:"snapshot_id"`
 		}
 		_ = json.Unmarshal(command.Payload, &checkpoint)
+		if err := sessionSetupCheckpointError(os.Getenv("AGENTAPI_SESSION_ID")); err != nil {
+			return err
+		}
 		if checkpoint.SnapshotID != "" {
 			cmd.Env = append(cmd.Env, "AGENTAPI_SESSION_TEMPLATE_SNAPSHOT_ID="+checkpoint.SnapshotID)
 		}

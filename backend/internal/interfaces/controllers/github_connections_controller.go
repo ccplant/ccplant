@@ -130,6 +130,24 @@ type githubPrincipal struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+type principalRepairIdentityRequest struct {
+	ConnectionID     string `json:"connection_id"`
+	GitHubUserID     int64  `json:"github_user_id"`
+	Login            string `json:"login,omitempty"`
+	AvatarURL        string `json:"avatar_url,omitempty"`
+	ReassignExisting bool   `json:"reassign_existing,omitempty"`
+}
+
+type principalRepairRequest struct {
+	ClearApplicationUserID bool                             `json:"clear_application_user_id,omitempty"`
+	Identities             []principalRepairIdentityRequest `json:"identities,omitempty"`
+}
+
+type principalRepairResponse struct {
+	Principal  githubPrincipal  `json:"principal"`
+	Identities []githubIdentity `json:"identities"`
+}
+
 type githubIdentity struct {
 	ID           string    `json:"id"`
 	PrincipalID  string    `json:"principal_id"`
@@ -219,6 +237,17 @@ func (c *GitHubConnectionsController) SetBuiltInAPIURL(apiURL string) {
 
 func (c *GitHubConnectionsController) builtInConnection() githubConnection {
 	return githubConnection{ID: "github", APIURL: c.builtInAPIURL, Enabled: true}
+}
+
+func (c *GitHubConnectionsController) isBuiltInConnection(connection githubConnection) bool {
+	builtInAPIURL := strings.TrimSuffix(strings.TrimSpace(c.builtInAPIURL), "/")
+	connectionAPIURL := strings.TrimSuffix(strings.TrimSpace(connection.APIURL), "/")
+	if builtInAPIURL != "" && connectionAPIURL != "" {
+		return strings.EqualFold(builtInAPIURL, connectionAPIURL)
+	}
+	// Keep compatibility with principals created by the default GitHub.com
+	// provider before the built-in API URL was recorded by this controller.
+	return strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(connection.BaseURL), "/"), "https://github.com")
 }
 
 func (c *GitHubConnectionsController) SetMembershipRepository(repo ports.TeamMembershipRepository) {
@@ -631,7 +660,7 @@ func (c *GitHubConnectionsController) ResolvePrincipalIDForGitHubUser(ctx contex
 			continue
 		}
 		connection, _, _, err := c.loadConnection(ctx, identity.ConnectionID)
-		if err == nil && connection.BaseURL == "https://github.com" {
+		if err == nil && c.isBuiltInConnection(connection) {
 			return identity.PrincipalID, nil
 		}
 	}
@@ -661,7 +690,7 @@ func (c *GitHubConnectionsController) ResolveApplicationUserIDForGitHubUser(ctx 
 			continue
 		}
 		connection, _, _, loadErr := c.loadConnection(ctx, identity.ConnectionID)
-		if loadErr != nil || connection.BaseURL != "https://github.com" {
+		if loadErr != nil || !c.isBuiltInConnection(connection) {
 			continue
 		}
 		for _, principal := range principals {
@@ -844,6 +873,174 @@ func (c *GitHubConnectionsController) Unlink(ctx echo.Context) error {
 		return ctx.NoContent(http.StatusNoContent)
 	}
 	return echo.NewHTTPError(http.StatusNotFound, "GitHub identity not found")
+}
+
+// DeletePrincipal removes an accidentally created GitHub principal and all of
+// its linked identities. Team membership snapshots are derived from external
+// GitHub state and may temporarily retain the deleted principal until the next
+// synchronization.
+func (c *GitHubConnectionsController) DeletePrincipal(ctx echo.Context) error {
+	principalID := strings.TrimSpace(ctx.Param("principalId"))
+	if principalID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "principal_id is required")
+	}
+
+	principals, err := c.listPrincipals(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list principals").SetInternal(err)
+	}
+	var target *githubPrincipal
+	for i := range principals {
+		if principals[i].ID == principalID {
+			target = &principals[i]
+			break
+		}
+	}
+	if target == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "principal not found")
+	}
+
+	identities, err := c.listIdentities(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list identities").SetInternal(err)
+	}
+	for _, identity := range identities {
+		if identity.PrincipalID != principalID {
+			continue
+		}
+		if err := c.client.CoreV1().Secrets(c.namespace).Delete(ctx.Request().Context(), identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete principal identity").SetInternal(err)
+		}
+	}
+	if err := c.client.CoreV1().Secrets(c.namespace).Delete(ctx.Request().Context(), principalSecretName(target.InternalUserID), metav1.DeleteOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			return echo.NewHTTPError(http.StatusNotFound, "principal not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete principal").SetInternal(err)
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
+// RepairPrincipal repairs authentication links without changing resource ownership.
+// It is intentionally admin-only (enforced by the router) because an identity
+// reassignment changes which external account can authenticate as a principal.
+func (c *GitHubConnectionsController) RepairPrincipal(ctx echo.Context) error {
+	principalID := strings.TrimSpace(ctx.Param("principalId"))
+	if principalID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "principal_id is required")
+	}
+	var request principalRepairRequest
+	if err := ctx.Bind(&request); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request").SetInternal(err)
+	}
+	if !request.ClearApplicationUserID && len(request.Identities) == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "at least one repair operation is required")
+	}
+
+	principals, err := c.listPrincipals(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list principals").SetInternal(err)
+	}
+	var principal *githubPrincipal
+	for i := range principals {
+		if principals[i].ID == principalID {
+			value := principals[i]
+			principal = &value
+			break
+		}
+	}
+	if principal == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "principal not found")
+	}
+
+	seen := map[string]struct{}{}
+	for _, identity := range request.Identities {
+		identity.ConnectionID = strings.TrimSpace(identity.ConnectionID)
+		if identity.ConnectionID == "" || identity.GitHubUserID <= 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "connection_id and a positive github_user_id are required")
+		}
+		key := fmt.Sprintf("%s:%d", identity.ConnectionID, identity.GitHubUserID)
+		if _, exists := seen[key]; exists {
+			return echo.NewHTTPError(http.StatusBadRequest, "duplicate identity in request")
+		}
+		seen[key] = struct{}{}
+		if _, _, _, err := c.loadConnection(ctx.Request().Context(), identity.ConnectionID); err != nil {
+			if apierrors.IsNotFound(err) {
+				return echo.NewHTTPError(http.StatusBadRequest, "GitHub connection not found")
+			}
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to load GitHub connection").SetInternal(err)
+		}
+		var existing githubIdentity
+		_, err := c.loadObject(ctx.Request().Context(), identitySecretName(identity.ConnectionID, identity.GitHubUserID), &existing)
+		if err == nil && existing.PrincipalID != principalID && !identity.ReassignExisting {
+			return echo.NewHTTPError(http.StatusConflict, "GitHub identity belongs to another principal; set reassign_existing to move it")
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to inspect GitHub identity").SetInternal(err)
+		}
+	}
+
+	if request.ClearApplicationUserID && principal.ApplicationUserID != "" {
+		secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx.Request().Context(), principalSecretName(principal.InternalUserID), metav1.GetOptions{})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to load principal").SetInternal(err)
+		}
+		principal.ApplicationUserID = ""
+		record, err := json.Marshal(principal)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode principal").SetInternal(err)
+		}
+		secret.Data["record.json"] = record
+		if _, err := c.client.CoreV1().Secrets(c.namespace).Update(ctx.Request().Context(), secret, metav1.UpdateOptions{}); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to update principal").SetInternal(err)
+		}
+	}
+
+	for _, requested := range request.Identities {
+		requested.ConnectionID = strings.TrimSpace(requested.ConnectionID)
+		name := identitySecretName(requested.ConnectionID, requested.GitHubUserID)
+		var identity githubIdentity
+		secret, err := c.loadObject(ctx.Request().Context(), name, &identity)
+		now := time.Now().UTC()
+		if apierrors.IsNotFound(err) {
+			identity = githubIdentity{ID: uuid.NewString(), PrincipalID: principalID, ConnectionID: requested.ConnectionID, GitHubUserID: requested.GitHubUserID, Login: strings.TrimSpace(requested.Login), AvatarURL: strings.TrimSpace(requested.AvatarURL), CreatedAt: now, UpdatedAt: now}
+			if err := c.createObject(ctx.Request().Context(), name, githubIdentityLabel, identity, nil); err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to create GitHub identity").SetInternal(err)
+			}
+			continue
+		}
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to load GitHub identity").SetInternal(err)
+		}
+		identity.PrincipalID = principalID
+		if login := strings.TrimSpace(requested.Login); login != "" {
+			identity.Login = login
+		}
+		if avatarURL := strings.TrimSpace(requested.AvatarURL); avatarURL != "" {
+			identity.AvatarURL = avatarURL
+		}
+		identity.UpdatedAt = now
+		record, err := json.Marshal(identity)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode GitHub identity").SetInternal(err)
+		}
+		secret.Data["record.json"] = record
+		if _, err := c.client.CoreV1().Secrets(c.namespace).Update(ctx.Request().Context(), secret, metav1.UpdateOptions{}); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to update GitHub identity").SetInternal(err)
+		}
+	}
+
+	identities, err := c.listIdentities(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list identities").SetInternal(err)
+	}
+	linked := make([]githubIdentity, 0)
+	for _, identity := range identities {
+		if identity.PrincipalID == principalID {
+			linked = append(linked, identity)
+		}
+	}
+	return ctx.JSON(http.StatusOK, principalRepairResponse{Principal: *principal, Identities: linked})
 }
 
 var errIdentityConflict = errors.New("GitHub identity belongs to another principal")
@@ -1429,6 +1626,17 @@ func (c *GitHubConnectionsController) resolveLoginPrincipalWithCreated(ctx conte
 	var identity githubIdentity
 	_, err := c.loadObject(ctx, identitySecretName(connection.ID, user.ID), &identity)
 	if apierrors.IsNotFound(err) {
+		if c.isBuiltInConnection(connection) {
+			principal, principalErr := c.loadPrincipal(ctx, fmt.Sprintf("github:%d", user.ID))
+			if principalErr == nil {
+				identity = githubIdentity{ID: uuid.NewString(), PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: user.ID, Login: user.Login, AvatarURL: user.AvatarURL, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+				_, linkErr := c.linkIdentity(ctx, identity, token, expiresAt)
+				return principal, linkErr == nil, linkErr
+			}
+			if !apierrors.IsNotFound(principalErr) {
+				return githubPrincipal{}, false, principalErr
+			}
+		}
 		if !connection.AllowUserCreation {
 			return githubPrincipal{}, false, errors.New("user creation is disabled for this GitHub connection")
 		}

@@ -166,6 +166,12 @@ func NewLeaderWorker(manager Manager, sessionManager portrepos.SessionManager, c
 	return &LeaderWorker{worker: NewWorker(manager, sessionManager, workerConfig, sessionProfileRepo), elector: NewLeaderElector(client, electionConfig)}
 }
 
+// WithSettingsRepository enables personal team-profile opt-in resolution.
+func (lw *LeaderWorker) WithSettingsRepository(repo portrepos.SettingsRepository) *LeaderWorker {
+	lw.worker.WithSettingsRepository(repo)
+	return lw
+}
+
 var ErrRedisRequired = errors.New("worker leader election requires Redis")
 
 func (lw *LeaderWorker) Run(ctx context.Context) {

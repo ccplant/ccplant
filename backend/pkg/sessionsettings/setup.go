@@ -258,7 +258,7 @@ func cloneRepository(settings *SessionSettings, repo *RepositoryConfig) error {
 
 	// Skip clone if already present
 	if _, err := os.Stat(filepath.Join(cloneDir, ".git")); err == nil {
-		if settings.Restart {
+		if settings.Restart || settings.WorkspaceKept {
 			return nil
 		}
 		log.Printf("[SETUP] Repository already cloned at %s, skipping", cloneDir)

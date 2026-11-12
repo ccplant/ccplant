@@ -25,11 +25,12 @@ import (
 )
 
 type directRuntimeWorker struct {
-	cfg        *sessionsettings.ParentRuntimeConfig
-	client     *http.Client
-	localURL   string
-	instanceID string
-	active     sync.Map
+	cfg            *sessionsettings.ParentRuntimeConfig
+	client         *http.Client
+	agentURL       string
+	provisionerURL string
+	instanceID     string
+	active         sync.Map
 }
 
 var (
@@ -37,23 +38,35 @@ var (
 	errDirectRuntimeUnauthorized = errors.New("direct runtime credential rejected")
 )
 
-func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string) {
+var directRuntimeReadyPollInterval = time.Second
+
+func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string, provisionerPort int) {
 	if cfg == nil || !cfg.Enabled || cfg.Endpoint == "" || cfg.SessionID == "" || cfg.Token == "" || cfg.Generation <= 0 {
 		return
 	}
+	w := newDirectRuntimeWorker(transport, cfg, instanceID, provisionerPort)
+	go w.reportStatus(ctx)
+	w.run(ctx)
+}
+
+func newDirectRuntimeWorker(transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string, provisionerPort int) *directRuntimeWorker {
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	port := os.Getenv("AGENTAPI_PORT")
-	if port == "" {
-		port = "9000"
+	if provisionerPort <= 0 {
+		provisionerPort = 9001
 	}
-	w := &directRuntimeWorker{
-		cfg: cfg, client: &http.Client{Transport: transport},
-		localURL: "http://127.0.0.1:" + port, instanceID: instanceID,
+	agentPort := os.Getenv("AGENTAPI_PORT")
+	if agentPort == "" {
+		agentPort = "9000"
 	}
-	go w.reportStatus(ctx)
-	w.run(ctx)
+	return &directRuntimeWorker{
+		cfg:            cfg,
+		client:         &http.Client{Transport: transport},
+		agentURL:       "http://127.0.0.1:" + agentPort,
+		provisionerURL: fmt.Sprintf("http://127.0.0.1:%d", provisionerPort),
+		instanceID:     instanceID,
+	}
 }
 
 func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
@@ -80,7 +93,7 @@ func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
 func (w *directRuntimeWorker) localStatus(ctx context.Context) string {
 	reqCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, w.localURL+"/status", nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, w.provisionerURL+"/status", nil)
 	if err != nil {
 		return ""
 	}
@@ -89,13 +102,19 @@ func (w *directRuntimeWorker) localStatus(ctx context.Context) string {
 		return ""
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
+	// The provisioner intentionally returns HTTP 500 together with a structured
+	// StatusError response. Preserve that terminal state so the parent session
+	// does not remain "starting" (or become "active" from pod readiness alone).
+	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusInternalServerError {
 		return ""
 	}
 	var result struct {
 		Status string `json:"status"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return ""
+	}
+	if resp.StatusCode == http.StatusInternalServerError && result.Status != string(StatusError) {
 		return ""
 	}
 	return result.Status
@@ -238,16 +257,20 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 	if command.Method == http.MethodPost && (command.Path == "/internal/session-prompt" || command.Path == "/internal/session-interrupt-prompt") {
 		// Direct runtime sessions expose an ACP bridge. Force the ACP prompt path
 		// here instead of guessing an HTTP endpoint from the configured agent name.
+		if err := w.waitUntilAgentReady(commandCtx, command.ID); err != nil {
+			log.Printf("[DIRECT_RUNTIME] prompt %s was not delivered because the agent did not become ready: %v", command.ID, err)
+			return
+		}
 		if command.Path == "/internal/session-interrupt-prompt" {
 			if err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.CancelAgent", func(operationCtx context.Context) error {
-				return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.localURL)
+				return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.agentURL)
 			}, telemetry.String("session.command_id", command.ID)); err != nil {
 				w.postExecutionError(commandCtx, command, err)
 				return
 			}
 		}
 		err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.DeliverPrompt", func(operationCtx context.Context) error {
-			return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID, Type: "prompt", Payload: command.Body}, w.localURL)
+			return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID, Type: "prompt", Payload: command.Body}, w.agentURL)
 		}, telemetry.String("session.command_id", command.ID), telemetry.String("session.id", command.SessionID))
 		if err != nil {
 			w.postExecutionError(commandCtx, command, err)
@@ -260,6 +283,10 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		query, _ := url.ParseQuery(command.RawQuery)
 		payload, _ := json.Marshal(map[string]string{"snapshot_id": query.Get("snapshot_id")})
 		err := executeControlCommand(commandCtx, w.client, w.checkpointAgentType(commandCtx), controlCommand{Type: "checkpoint_session_state", Payload: payload})
+		if status := sessionSetupCheckpointStatus(err); status != 0 {
+			_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: status, Done: true, CreatedAt: time.Now().UTC()}})
+			return
+		}
 		if err != nil {
 			w.postExecutionError(commandCtx, command, err)
 			return
@@ -267,7 +294,7 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: http.StatusNoContent, Done: true, CreatedAt: time.Now().UTC()}})
 		return
 	}
-	target := w.localURL + command.Path
+	target := w.agentURL + command.Path
 	if command.RawQuery != "" {
 		target += "?" + command.RawQuery
 	}
@@ -350,11 +377,31 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 	}
 }
 
+func (w *directRuntimeWorker) waitUntilAgentReady(ctx context.Context, commandID string) error {
+	ticker := time.NewTicker(directRuntimeReadyPollInterval)
+	defer ticker.Stop()
+	held := false
+	for {
+		if w.localStatus(ctx) == string(StatusReady) {
+			return nil
+		}
+		if !held {
+			held = true
+			log.Printf("[DIRECT_RUNTIME] holding prompt %s until the agent is ready", commandID)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (w *directRuntimeWorker) checkpointAgentType(ctx context.Context) string {
 	if agentType := strings.TrimSpace(os.Getenv("AGENTAPI_AGENT_TYPE")); agentType != "" {
 		return agentType
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.localURL+"/status", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.provisionerURL+"/status", nil)
 	if err != nil {
 		return ""
 	}
@@ -370,6 +417,16 @@ func (w *directRuntimeWorker) checkpointAgentType(ctx context.Context) string {
 		return ""
 	}
 	return status.AgentType
+}
+
+func sessionSetupCheckpointStatus(err error) int {
+	switch sessionSetupCheckpointReason(err) {
+	case "setup_in_progress":
+		return http.StatusTooEarly
+	case "setup_failed":
+		return http.StatusFailedDependency
+	}
+	return 0
 }
 
 func (w *directRuntimeWorker) postExecutionError(ctx context.Context, command core.Command, err error) {

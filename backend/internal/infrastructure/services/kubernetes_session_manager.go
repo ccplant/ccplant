@@ -67,6 +67,8 @@ const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
 
 var instrumentedHTTPClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
+const sessionControlConnectionTimeout = time.Second
+
 const (
 	sessionSuspendAtAnnotation               = "agentapi.proxy/suspend-at"
 	sessionSuspendedAtAnnotation             = "agentapi.proxy/suspended-at"
@@ -80,6 +82,18 @@ const (
 // Ownership must outlive the longest queued checkpoint command (30 minutes)
 // so another replica cannot start a duplicate while the first is still waiting.
 const sessionSuspendOwnershipTTL = 35 * time.Minute
+
+const (
+	podRuntimeStatusTimeout      = 3 * time.Second
+	podRuntimeStatusUnknownGrace = 2 * time.Minute
+)
+
+var defaultPodStatusHTTPClient = &http.Client{
+	Timeout: podRuntimeStatusTimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 var ErrInvalidRunnerToken = stderrors.New("invalid runner token")
 
@@ -122,11 +136,12 @@ type SessionMessageEvent = portrepos.SessionMessageEvent
 type SessionDeletedHandler func(ctx context.Context, session entities.Session)
 
 type KubernetesSessionManager struct {
-	restartHTTPClient  *http.Client
-	sessionProfileRepo portrepos.SessionProfileRepository
-	config             *config.Config
-	k8sConfig          *config.KubernetesSessionConfig
-	configProvider     interface {
+	restartHTTPClient   *http.Client
+	podStatusHTTPClient *http.Client
+	sessionProfileRepo  portrepos.SessionProfileRepository
+	config              *config.Config
+	k8sConfig           *config.KubernetesSessionConfig
+	configProvider      interface {
 		Current() *config.Config
 		AgentDefaults() settingspatch.SettingsPatch
 	}
@@ -412,6 +427,10 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	if !ok {
 		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
 	}
+	svc, getErr := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if getErr == nil && isStockService(svc) {
+		return nil
+	}
 	after, enabled, err := m.resolveAutoSuspendPolicy(ctx, ks)
 	if err != nil {
 		return err
@@ -420,7 +439,7 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	// may still have the pre-allocation request cached in memory; do not let it
 	// overwrite a newer policy applied by the elected control loop.
 	hasCachedPolicy := ks.Request() != nil && ks.Request().ProvisionSettings != nil && ks.Request().ProvisionSettings.Session.AutoSuspendEnabled != nil
-	if svc, getErr := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); hasCachedPolicy && getErr == nil {
+	if hasCachedPolicy && getErr == nil {
 		if rawEnabled, ok := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; ok {
 			if parsedEnabled, parseErr := strconv.ParseBool(rawEnabled); parseErr == nil {
 				enabled = parsedEnabled
@@ -529,6 +548,17 @@ func (m *KubernetesSessionManager) RefreshRunnerSessionStatus(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("get runner service: %w", err)
 	}
+	// Provisioning status is persisted in a Secret, while the in-memory status
+	// update is local to the manager replica that receives the provisioner's
+	// callback. The heartbeat leader can therefore still have this runner as
+	// starting after setup failed on another replica. Reconcile the terminal
+	// status before reporting it to the parent API.
+	if provisionReq, provisionErr := m.getProvisionRequest(ctx, sessionID); provisionErr == nil && provisionReq.Status == "error" {
+		session.SetStatusMessage(provisionReq.Message)
+		session.SetErrorCode(provisionReq.ErrorCode)
+		session.SetStatus("error")
+		return nil
+	}
 	status := session.Status()
 	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
 		if status == "stopped" || !statusWatcherTerminal(status) {
@@ -609,7 +639,68 @@ func (m *KubernetesSessionManager) SuspendSessionWithSettings(ctx context.Contex
 	return m.suspendSession(ctx, sessionID, settings)
 }
 
+var (
+	errSessionSetupInProgress    = stderrors.New("session setup has not completed")
+	errSessionSetupFailed        = stderrors.New("session setup failed")
+	errSessionSuspendNoLongerDue = stderrors.New("session is no longer due for idle suspend")
+)
+
 func (m *KubernetesSessionManager) suspendSession(ctx context.Context, sessionID string, settings *sessionsettings.SessionSettings) error {
+	return m.suspendSessionIf(ctx, sessionID, settings, false)
+}
+
+func (m *KubernetesSessionManager) suspendIdleSession(ctx context.Context, sessionID string) error {
+	return m.suspendSessionIf(ctx, sessionID, nil, true)
+}
+
+func (m *KubernetesSessionManager) podReportsRunning(ctx context.Context, session *KubernetesSession) (running bool, confirmed bool) {
+	remembered := session.Status() == "running"
+	ready, err := m.isSessionWorkloadReady(ctx, session)
+	if err != nil || !ready {
+		return remembered, true
+	}
+	statusCtx, cancel := context.WithTimeout(ctx, podRuntimeStatusTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(statusCtx, http.MethodGet, fmt.Sprintf("http://%s/status", session.Addr()), nil)
+	if err != nil {
+		return remembered, false
+	}
+	client := m.podStatusHTTPClient
+	if client == nil {
+		client = defaultPodStatusHTTPClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return remembered, false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return remembered, false
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body); err != nil || body.Status == "" {
+		return remembered, false
+	}
+	return body.Status == "running", true
+}
+
+func idleSuspendStillDue(running bool, svc *corev1.Service, requireExpiredDeadline bool) error {
+	if running {
+		return errSessionSuspendNoLongerDue
+	}
+	if !requireExpiredDeadline {
+		return nil
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, svc.Annotations[sessionSuspendAtAnnotation])
+	if err != nil || deadline.After(time.Now()) {
+		return errSessionSuspendNoLongerDue
+	}
+	return nil
+}
+
+func (m *KubernetesSessionManager) suspendSessionIf(ctx context.Context, sessionID string, settings *sessionsettings.SessionSettings, requireExpiredDeadline bool) error {
 	session := m.GetSession(sessionID)
 	if session == nil {
 		return fmt.Errorf("session not found: %s", sessionID)
@@ -618,11 +709,11 @@ func (m *KubernetesSessionManager) suspendSession(ctx context.Context, sessionID
 	if !ok {
 		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
 	}
-	if session.Status() == "running" {
-		return fmt.Errorf("session is busy")
-	}
 	if session.Status() == "suspended" {
 		return nil
+	}
+	if running, _ := m.podReportsRunning(ctx, ks); running {
+		return fmt.Errorf("session is busy")
 	}
 	svc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, ks.ServiceName())
 	if err != nil {
@@ -631,6 +722,11 @@ func (m *KubernetesSessionManager) suspendSession(ctx context.Context, sessionID
 	if !acquired {
 		return nil
 	}
+	running, _ := m.podReportsRunning(ctx, ks)
+	if err := idleSuspendStillDue(running, svc, requireExpiredDeadline); err != nil {
+		_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
+		return err
+	}
 	saved := false
 	if m.requiresSessionCheckpoint(ks) {
 		if err := m.checkpointSessionStateWithSettings(ctx, sessionID, "", settings); err != nil {
@@ -638,6 +734,16 @@ func (m *KubernetesSessionManager) suspendSession(ctx context.Context, sessionID
 			return fmt.Errorf("checkpoint session state: %w", err)
 		}
 		saved = true
+		current, err := m.client.CoreV1().Services(m.namespace).Get(ctx, svc.Name, metav1.GetOptions{})
+		if err != nil {
+			_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
+			return fmt.Errorf("recheck session suspend: %w", err)
+		}
+		running, _ := m.podReportsRunning(ctx, ks)
+		if err := idleSuspendStillDue(running, current, requireExpiredDeadline); err != nil {
+			_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
+			return err
+		}
 	}
 	if err := m.persistSuspendSettings(ctx, sessionID, settings, saved); err != nil {
 		_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
@@ -789,9 +895,16 @@ func (m *KubernetesSessionManager) checkpointSessionStateWithSettings(ctx contex
 			}
 			if event.Type == "command_failed" {
 				var payload struct {
-					Error string `json:"error"`
+					Error  string `json:"error"`
+					Reason string `json:"reason"`
 				}
 				_ = json.Unmarshal(event.Payload, &payload)
+				switch payload.Reason {
+				case "setup_in_progress":
+					return errSessionSetupInProgress
+				case "setup_failed":
+					return errSessionSetupFailed
+				}
 				if payload.Error == "" {
 					payload.Error = "checkpoint command failed"
 				}
@@ -848,6 +961,12 @@ func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsetting
 		return err
 	}
 	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusTooEarly:
+		return errSessionSetupInProgress
+	case http.StatusFailedDependency:
+		return errSessionSetupFailed
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("parent checkpoint returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -859,6 +978,9 @@ func (m *KubernetesSessionManager) runSessionSuspendReconciler(ctx context.Conte
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		m.reconcileSessionSuspends(ctx)
 		select {
 		case <-ctx.Done():
@@ -887,6 +1009,10 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 			// heartbeats can propagate the suspended lifecycle state upstream.
 			_ = m.GetSession(sessionID)
 		}
+		if isStockService(svc) {
+			m.clearStockSuspendTimer(ctx, svc)
+			continue
+		}
 		if svc.Annotations[sessionSuspendAtAnnotation] == "" && svc.Annotations[sessionSuspendedAtAnnotation] == "" {
 			if _, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; !policyKnown {
 				if sessionID != "" {
@@ -904,15 +1030,63 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 		if sessionID == "" {
 			continue
 		}
-		if session := m.GetSession(sessionID); session != nil && session.Status() == "running" {
-			// A newer turn started before the old deadline. Move the deadline out;
-			// its Stop hook will replace this with the exact turn-end deadline.
-			_ = m.ScheduleSessionSuspend(ctx, sessionID)
-			continue
+		if ks, ok := m.GetSession(sessionID).(*KubernetesSession); ok && ks != nil && ks.Status() != "suspended" {
+			running, confirmed := m.podReportsRunning(ctx, ks)
+			if running {
+				// A newer turn started before the old deadline. Move the deadline out;
+				// its Stop hook will replace this with the exact turn-end deadline.
+				_ = m.ScheduleSessionSuspend(ctx, sessionID)
+				continue
+			}
+			if !confirmed && now.Sub(deadline) < podRuntimeStatusUnknownGrace {
+				log.Printf("[K8S_SESSION] Idle suspend of session %s postponed: pod did not report its runtime status", sessionID)
+				continue
+			}
 		}
-		if err := m.SuspendSession(ctx, sessionID); err != nil {
+		err = m.suspendIdleSession(ctx, sessionID)
+		switch {
+		case err == nil:
+		case stderrors.Is(err, errSessionSuspendNoLongerDue):
+			log.Printf("[K8S_SESSION] Idle suspend of session %s cancelled: %v", sessionID, err)
+		case stderrors.Is(err, errSessionSetupInProgress):
+			log.Printf("[K8S_SESSION] Idle suspend of session %s postponed: %v", sessionID, err)
+			_ = m.ScheduleSessionSuspend(ctx, sessionID)
+		case stderrors.Is(err, errSessionSetupFailed):
+			log.Printf("[K8S_SESSION] Idle suspend of session %s skipped: %v", sessionID, err)
+			if ks, ok := m.GetSession(sessionID).(*KubernetesSession); ok && ks != nil && ks.Status() != "error" {
+				ks.SetStatusMessage(err.Error())
+				ks.SetStatus("error")
+			}
+			_ = m.ScheduleSessionSuspend(ctx, sessionID)
+		default:
 			log.Printf("[K8S_SESSION] Failed to suspend session %s: %v", sessionID, err)
 		}
+	}
+}
+
+func isStockService(svc *corev1.Service) bool {
+	_, ok := svc.Labels["agentapi.proxy/stock"]
+	return ok
+}
+
+func (m *KubernetesSessionManager) clearStockSuspendTimer(ctx context.Context, svc *corev1.Service) {
+	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
+		return
+	}
+	keys := []string{sessionSuspendAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation}
+	updated := svc.DeepCopy()
+	changed := false
+	for _, key := range keys {
+		if _, ok := updated.Annotations[key]; ok {
+			delete(updated.Annotations, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); err != nil && !errors.IsConflict(err) {
+		log.Printf("[K8S_SESSION] Failed to clear suspend timer on stock session %s: %v", svc.Labels["agentapi.proxy/session-id"], err)
 	}
 }
 
@@ -3744,7 +3918,9 @@ func (m *KubernetesSessionManager) connectedSessionControlStore(ctx context.Cont
 	if store == nil {
 		return nil
 	}
-	connected, err := telemetry.Operation(ctx, "sessionmanager.CheckControlConnection", func(operationCtx context.Context) (bool, error) {
+	connectionCtx, cancel := context.WithTimeout(ctx, sessionControlConnectionTimeout)
+	defer cancel()
+	connected, err := telemetry.Operation(connectionCtx, "sessionmanager.CheckControlConnection", func(operationCtx context.Context) (bool, error) {
 		connected, err := store.IsConnected(operationCtx, sessionID)
 		telemetry.SetAttributes(operationCtx, telemetry.Bool("session.control_connected", connected))
 		return connected, err
