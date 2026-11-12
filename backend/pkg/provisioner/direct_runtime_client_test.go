@@ -62,6 +62,40 @@ func TestDirectRuntimeLocalStatusPreservesProvisionError(t *testing.T) {
 	}
 }
 
+func TestDirectRuntimeLocalStatusUsesAgentStatusAfterProvisioning(t *testing.T) {
+	provisioner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusReady})
+	}))
+	defer provisioner.Close()
+
+	agentStatus := "running"
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": agentStatus})
+	}))
+	defer agent.Close()
+
+	worker := &directRuntimeWorker{client: provisioner.Client(), provisionerURL: provisioner.URL, agentURL: agent.URL}
+	if got := worker.localStatus(context.Background()); got != "running" {
+		t.Fatalf("localStatus() = %q, want running", got)
+	}
+	agentStatus = "stable"
+	if got := worker.localStatus(context.Background()); got != "stable" {
+		t.Fatalf("localStatus() = %q, want stable", got)
+	}
+}
+
+func TestDirectRuntimeLocalStatusDoesNotDowngradeToReadyWhenAgentUnavailable(t *testing.T) {
+	provisioner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusReady})
+	}))
+	defer provisioner.Close()
+
+	worker := &directRuntimeWorker{client: provisioner.Client(), provisionerURL: provisioner.URL, agentURL: "http://127.0.0.1:1"}
+	if got := worker.localStatus(context.Background()); got != "" {
+		t.Fatalf("localStatus() = %q, want empty status", got)
+	}
+}
+
 func TestDirectRuntimeWorkerSeparatesAgentAndProvisionerPorts(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "19000")
 	worker := newDirectRuntimeWorker(nil, &sessionsettings.ParentRuntimeConfig{}, "runner-a", 19001)
