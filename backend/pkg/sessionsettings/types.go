@@ -195,6 +195,7 @@ type SessionSettings struct {
 	Paused           bool   `json:"paused,omitempty" yaml:"paused,omitempty"`
 	RestartID        string `json:"restart_id,omitempty" yaml:"restart_id,omitempty"`
 	RestartInPlace   bool   `json:"-" yaml:"-"`
+	WorkspaceKept    bool   `json:"-" yaml:"-"`
 	CredentialOwner  string `json:"credential_owner,omitempty" yaml:"credential_owner,omitempty"`
 	CredentialSyncID string `json:"credential_sync_id,omitempty" yaml:"credential_sync_id,omitempty"`
 	// Restart requires restoration of the same conversation and suppresses first-launch actions.
