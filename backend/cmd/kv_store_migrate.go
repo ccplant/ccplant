@@ -220,11 +220,15 @@ func buildMigrationStore(ctx context.Context, config migrationStoreConfig, clien
 }
 
 func migrateKVStores(ctx context.Context, source, destination kvstore.Store, options kvStoreMigrateOptions) (kvStoreMigrationResult, error) {
-	result := kvStoreMigrationResult{DryRun: options.dryRun, Entries: []kvStoreMigrationEntry{}}
 	records, err := collectApplicationKVStoreRecords(ctx, source, options.namespace)
 	if err != nil {
-		return result, err
+		return kvStoreMigrationResult{DryRun: options.dryRun, Entries: []kvStoreMigrationEntry{}}, err
 	}
+	return migrateSelectedKVStoreRecords(ctx, source, destination, records, options)
+}
+
+func migrateSelectedKVStoreRecords(ctx context.Context, source, destination kvstore.Store, records []kvstore.Record, options kvStoreMigrateOptions) (kvStoreMigrationResult, error) {
+	result := kvStoreMigrationResult{DryRun: options.dryRun, Entries: []kvStoreMigrationEntry{}}
 	result.Selected = len(records)
 
 	for _, selected := range records {

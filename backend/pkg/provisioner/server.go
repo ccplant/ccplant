@@ -70,6 +70,9 @@ type Server struct {
 	reporter               func(Status, string, string)
 	restartSettingsHandler func(*sessionsettings.SessionSettings)
 	startupDone            chan struct{}
+
+	restartProvisionNow     chan struct{}
+	restartProvisionNowOnce sync.Once
 }
 
 // New creates a new Server.
@@ -87,7 +90,28 @@ func New(port int, settingsFile string) *Server {
 		phase:        "starting",
 		phaseTime:    time.Now(),
 		startupDone:  make(chan struct{}),
+
+		restartProvisionNow: make(chan struct{}),
 	}
+}
+
+func (s *Server) StartRestartAutoProvisionNow() {
+	if s.restartProvisionNow == nil {
+		return
+	}
+	s.restartProvisionNowOnce.Do(func() { close(s.restartProvisionNow) })
+}
+
+func (s *Server) waitForRestartAutoProvision(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+	case <-s.restartProvisionNow:
+	}
+	return true
 }
 
 // Start starts the HTTP server and blocks until ctx is cancelled or a fatal
@@ -118,12 +142,8 @@ func (s *Server) Start(ctx context.Context) error {
 				log.Printf("[PROVISIONER] Failed to load settings for auto-provisioning: %v", err)
 			} else {
 				go func() {
-					timer := time.NewTimer(restartAutoProvisionDelay)
-					defer timer.Stop()
-					select {
-					case <-ctx.Done():
+					if !s.waitForRestartAutoProvision(ctx, restartAutoProvisionDelay) {
 						return
-					case <-timer.C:
 					}
 					if !s.claimProvisioning() {
 						status := s.GetStatus()

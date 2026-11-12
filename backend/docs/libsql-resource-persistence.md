@@ -106,3 +106,29 @@ Kubernetes source through an encrypted libSQL destination. It asserts that
 each raw SQL value is an `agentapi-kv-envelope/v1` envelope, decrypts to the
 original Kubernetes document, lands in its dedicated table, and leaves no
 classified row in the fallback table.
+
+### Backfilling explicitly named Secrets
+
+Operational Secrets that are intentionally read through the application KV
+client but do not carry an application-resource label can be copied explicitly.
+The destination is always treated as `libsql-encrypted`; the command refuses to
+run without complete encryption configuration and never falls back to
+plaintext storage.
+
+Run a dry run first:
+
+```sh
+agentapi-proxy kv-store backfill-secret agentapi-worker-slack-default \
+  --namespace agentapi-ui-dev \
+  --database-url "$DESTINATION_DATABASE_URL" \
+  --auth-token "$DESTINATION_AUTH_TOKEN" \
+  --encryption-provider cloud-kms-branch-scoped \
+  --encryption-active-key-id production \
+  --encryption-keys-json "$DESTINATION_KMS_KEYS" \
+  --dry-run
+```
+
+Remove `--dry-run` to copy the Secret. Identical destination values are
+skipped. A different existing value is reported as a conflict unless
+`--overwrite` is supplied. The source Kubernetes Secret is never modified or
+deleted.

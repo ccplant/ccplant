@@ -157,7 +157,15 @@ func writeSessionStateVolume(path, agentType, acpSessionID, home, cwd string) er
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".session-state-*.tmp")
+	release, err := sessionstate.LockVolume(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := sessionstate.RemoveStaleVolumeTemps(filepath.Dir(path)); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "remove stale session state temporary archives: %v\n", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), sessionstate.VolumeTempPattern)
 	if err != nil {
 		return err
 	}

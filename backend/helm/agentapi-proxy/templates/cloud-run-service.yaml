@@ -67,6 +67,8 @@ spec:
             - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redis.dialTimeout | default "5s" | quote }}}
             - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redis.readTimeout | default "3s" | quote }}}
             - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redis.writeTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_REDIS_SESSION_CONTROL_POOL_SIZE, value: {{ $redis.sessionControlPoolSize | default 50 | quote }}}
+            - {name: AGENTAPI_REDIS_SESSION_CONTROL_BLOCKING_POOL_SIZE, value: {{ $redis.sessionControlBlockingPoolSize | default 400 | quote }}}
             {{- end }}
             - {name: AGENTAPI_USAGE_ENABLED, value: {{ .Values.config.usage.enabled | quote }}}
             - {name: AGENTAPI_SESSION_COUNT_ENABLED, value: {{ dig "sessionCount" "enabled" false .Values.config | quote }}}

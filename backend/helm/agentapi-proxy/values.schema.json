@@ -66,12 +66,7 @@
           "uniqueItems": true
         },
         "awsCredentials": { "$ref": "#/definitions/awsCredentials" },
-        "serviceAccount": {
-          "allOf": [
-            { "$ref": "#/definitions/serviceAccount" },
-            { "properties": { "automount": { "const": false } } }
-          ]
-        },
+        "serviceAccount": { "$ref": "#/definitions/serviceAccount" },
         "kvStore": { "$ref": "#/definitions/enabledAPIKVStore" },
         "redis": { "$ref": "#/definitions/redisClient" },
         "encryption": { "$ref": "#/definitions/encryption" },

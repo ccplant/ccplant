@@ -689,6 +689,9 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string, 
 		unpack = sessionstate.UnpackMissing
 	}
 	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
+		if _, err := sessionstate.TryRemoveStaleVolumeTemps(filepath.Dir(volumePath)); err != nil {
+			log.Printf("[PROVISIONER] Failed to remove stale session state temporary archives: %v", err)
+		}
 		archive, err := os.Open(volumePath)
 		if os.IsNotExist(err) {
 			// A template starts with a fresh PVC, so its portable snapshot must
