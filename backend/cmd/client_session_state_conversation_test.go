@@ -17,7 +17,7 @@ func volumeArchiveHas(t *testing.T, path, name string) bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zr, err := zstd.NewReader(f)
 	if err != nil {
 		t.Fatal(err)
