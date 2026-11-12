@@ -118,6 +118,7 @@ func TestScheduleSessionSuspendFromReadyUsesSessionControlToken(t *testing.T) {
 	t.Setenv("PROVISIONER_TOKEN", "provisioner-token")
 	t.Setenv("SESSION_CONTROL_TOKEN", "control-token")
 	t.Setenv("AGENTAPI_SESSION_ID", "runner-1")
+	t.Setenv("AGENTAPI_ALLOCATED_SESSION_ID", "")
 	if err := scheduleSessionSuspendFromReady(context.Background()); err != nil {
 		t.Fatal(err)
 	}
