@@ -36,6 +36,10 @@ func TestRestoreSessionStateFromWorkdirVolume(t *testing.T) {
 	if err := archive.Close(); err != nil {
 		t.Fatal(err)
 	}
+	staleTemp := filepath.Join(filepath.Dir(archivePath), ".session-state-123.tmp")
+	if err := os.WriteFile(staleTemp, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	oldRuntimeHome := runtimeHome
 	runtimeHome = t.TempDir()
@@ -54,6 +58,9 @@ func TestRestoreSessionStateFromWorkdirVolume(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(runtimeHome, ".session", "acp-history.jsonl"))
 	if err != nil || string(got) != "history\n" {
 		t.Fatalf("restored history = %q, err=%v", got, err)
+	}
+	if _, err := os.Stat(staleTemp); !os.IsNotExist(err) {
+		t.Fatalf("stale temporary archive still present after restore: err=%v", err)
 	}
 }
 
