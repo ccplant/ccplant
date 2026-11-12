@@ -40,6 +40,19 @@ type SetupOptions struct {
 	// PEMOutputPath is where GITHUB_APP_PEM content is written.
 	// Defaults to /tmp/github-app/app.pem.
 	PEMOutputPath string
+
+	PreservedWorkspaceRoot string
+}
+
+func PathWithin(root, path string) bool {
+	if root == "" || path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // DefaultSetupOptions returns the default Setup options.
@@ -95,12 +108,12 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 	// Clone repository if configured.
 	if (settings.Repository != nil && settings.Repository.FullName != "") || len(settings.Repositories) > 0 {
 		if settings.Repository != nil && settings.Repository.FullName != "" {
-			if err := cloneRepository(settings, settings.Repository); err != nil {
+			if err := cloneRepository(settings, settings.Repository, opts.PreservedWorkspaceRoot); err != nil {
 				return fmt.Errorf("clone-repo failed: %w", err)
 			}
 		}
 		for i := range settings.Repositories {
-			if err := cloneRepository(settings, &settings.Repositories[i]); err != nil {
+			if err := cloneRepository(settings, &settings.Repositories[i], opts.PreservedWorkspaceRoot); err != nil {
 				return fmt.Errorf("clone preloaded repository %s: %w", settings.Repositories[i].FullName, err)
 			}
 		}
@@ -236,7 +249,7 @@ func writePEM(settings *SessionSettings, pemOutputPath string) error {
 // cloneRepo sets up GitHub auth and clones the repository using gh repo clone
 // so that GITHUB_TOKEN / GitHub App auth and GitHub Enterprise Server host
 // routing work correctly.
-func cloneRepository(settings *SessionSettings, repo *RepositoryConfig) error {
+func cloneRepository(settings *SessionSettings, repo *RepositoryConfig, preservedWorkspaceRoot string) error {
 
 	// Set environment variables from session env so git/gh tools pick them up.
 	for k, v := range setupProcessEnv(settings.Env) {
@@ -258,7 +271,7 @@ func cloneRepository(settings *SessionSettings, repo *RepositoryConfig) error {
 
 	// Skip clone if already present
 	if _, err := os.Stat(filepath.Join(cloneDir, ".git")); err == nil {
-		if settings.Restart {
+		if keepsExistingClone(settings, cloneDir, preservedWorkspaceRoot) {
 			return nil
 		}
 		log.Printf("[SETUP] Repository already cloned at %s, skipping", cloneDir)
@@ -294,6 +307,10 @@ func cloneRepository(settings *SessionSettings, repo *RepositoryConfig) error {
 	}
 
 	return nil
+}
+
+func keepsExistingClone(settings *SessionSettings, cloneDir, preservedWorkspaceRoot string) bool {
+	return settings.Restart || PathWithin(preservedWorkspaceRoot, cloneDir)
 }
 
 func githubCommandEnv() []string {

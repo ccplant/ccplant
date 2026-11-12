@@ -255,6 +255,14 @@ func excludedUntrackedPath(path string) bool {
 
 // Unpack restores a trusted backend snapshot without permitting path traversal.
 func Unpack(r io.Reader, home, cwd string) error {
+	return unpack(r, home, cwd, false)
+}
+
+func UnpackKeepingWorkspace(r io.Reader, home, cwd string) error {
+	return unpack(r, home, cwd, true)
+}
+
+func unpack(r io.Reader, home, cwd string, keepWorkspace bool) error {
 	buffered := newMagicReader(r)
 	var archiveReader io.Reader
 	var closeReader io.Closer
@@ -278,7 +286,7 @@ func Unpack(r io.Reader, home, cwd string) error {
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
-			if manifest != nil {
+			if manifest != nil && !keepWorkspace {
 				return restoreGitWorkspace(cwd, *manifest, stagedPatch, worktreePatch)
 			}
 			return nil
@@ -292,6 +300,9 @@ func Unpack(r io.Reader, home, cwd string) error {
 		clean := filepath.Clean(filepath.FromSlash(h.Name))
 		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("unsafe archive entry %q", h.Name)
+		}
+		if keepWorkspace && (strings.HasPrefix(clean, "git"+string(filepath.Separator)) || strings.HasPrefix(clean, "cwd"+string(filepath.Separator))) {
+			continue
 		}
 		if clean == filepath.FromSlash("git/manifest.json") || clean == filepath.FromSlash("git/staged.patch") || clean == filepath.FromSlash("git/worktree.patch") {
 			data, readErr := io.ReadAll(io.LimitReader(tr, maxRestoredFileBytes+1))

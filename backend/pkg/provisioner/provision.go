@@ -270,6 +270,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		NotificationSubscriptions: nativeRuntimePath("notification-subscriptions-source", "/notification-subscriptions-source"),
 		NotificationsDir:          filepath.Join(runtimeHome, "notifications"),
 		RegisterMarketplaces:      true,
+		PreservedWorkspaceRoot:    sessionStateVolumeRoot(),
 	}
 	s.setPhase("provision:session-setup")
 	log.Printf("[PROVISIONER] Running session setup")
@@ -651,6 +652,26 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
+func sessionStateVolumeRoot() string {
+	volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH"))
+	if volumePath == "" {
+		return ""
+	}
+	info, err := os.Stat(volumePath)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return sessionStateVolumeRootOf(volumePath)
+}
+
+func sessionStateVolumeRootOf(volumePath string) string {
+	dir := filepath.Dir(volumePath)
+	if filepath.Base(dir) != ".agentapi" {
+		return ""
+	}
+	return filepath.Dir(dir)
+}
+
 func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
 	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
 		archive, err := os.Open(volumePath)
@@ -665,7 +686,12 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			return false, err
 		} else {
 			defer func() { _ = archive.Close() }()
-			if err := sessionstate.Unpack(archive, runtimeHome, cwd); err != nil {
+			unpack := sessionstate.Unpack
+			if sessionsettings.PathWithin(sessionStateVolumeRootOf(volumePath), cwd) {
+				log.Printf("[PROVISIONER] Workspace volume already holds the workspace; restoring conversation state only")
+				unpack = sessionstate.UnpackKeepingWorkspace
+			}
+			if err := unpack(archive, runtimeHome, cwd); err != nil {
 				return false, err
 			}
 			return true, nil
