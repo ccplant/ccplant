@@ -28,6 +28,51 @@ func TestCollectNamedSecretRecordsSelectsOnlyExplicitNames(t *testing.T) {
 	}
 }
 
+func TestBackfillSecretFlagDefaultsUsePrimaryStoreEnvironment(t *testing.T) {
+	values := map[string]string{
+		"AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL":             "libsql://primary.example",
+		"AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN":               "primary-auth",
+		"AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_ACTIVE_KEY_ID": "primary-key",
+		"AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_KEYS":          `{"primary-key":"key-ref"}`,
+		"AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_PROVIDER":      "cloud-kms-branch-scoped",
+		"AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_KMS_REGION":    "ap-northeast-1",
+	}
+	for name, value := range values {
+		t.Setenv(name, value)
+	}
+	command := newKVStoreBackfillSecretCommand()
+	want := map[string]string{
+		"database-url":             "libsql://primary.example",
+		"auth-token":               "primary-auth",
+		"encryption-active-key-id": "primary-key",
+		"encryption-keys-json":     `{"primary-key":"key-ref"}`,
+		"encryption-provider":      "cloud-kms-branch-scoped",
+		"encryption-kms-region":    "ap-northeast-1",
+	}
+	for name, expected := range want {
+		actual, err := command.Flags().GetString(name)
+		if err != nil {
+			t.Fatalf("get %s: %v", name, err)
+		}
+		if actual != expected {
+			t.Errorf("%s = %q, want %q", name, actual, expected)
+		}
+	}
+}
+
+func TestBackfillSecretFlagDefaultsPreferSecondaryOverPrimary(t *testing.T) {
+	t.Setenv("AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL", "libsql://secondary.example")
+	t.Setenv("AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL", "libsql://primary.example")
+	command := newKVStoreBackfillSecretCommand()
+	actual, err := command.Flags().GetString("database-url")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != "libsql://secondary.example" {
+		t.Fatalf("database-url = %q", actual)
+	}
+}
+
 func TestCollectNamedSecretRecordsRejectsMissingSecret(t *testing.T) {
 	_, err := collectNamedSecretRecords(context.Background(), kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "application", []string{"missing"})
 	if err == nil || !strings.Contains(err.Error(), "source Secret application/missing not found") {

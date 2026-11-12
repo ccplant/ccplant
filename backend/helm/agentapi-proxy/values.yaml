@@ -55,6 +55,9 @@ api:
   imagePullSecrets: []
   serviceAccount:
     create: true
+    # Enable this when the API must access Kubernetes directly while the
+    # application KV backend is libSQL (for example, when running
+    # `kv-store backfill-secret` inside the API Pod).
     automount: false
     annotations: {}
     name: ""
