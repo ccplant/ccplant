@@ -1551,17 +1551,8 @@ func (m *KubernetesSessionManager) publishStockSession(session *KubernetesSessio
 		return
 	}
 
-	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(context.Background(), session.ServiceName(), metav1.GetOptions{})
+	published, err := m.markStockServiceReady(context.Background(), session.ServiceName())
 	if err != nil {
-		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
-			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service lookup failure: %v", delErr)
-		}
-		cancel()
-		log.Printf("[K8S_SESSION] Failed to get stock service for session %s: %v", session.ID(), err)
-		return
-	}
-	stockSvc.Labels["agentapi.proxy/stock"] = "true"
-	if _, err := m.client.CoreV1().Services(m.namespace).Update(context.Background(), stockSvc, metav1.UpdateOptions{}); err != nil {
 		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service update failure: %v", delErr)
 		}
@@ -1569,8 +1560,33 @@ func (m *KubernetesSessionManager) publishStockSession(session *KubernetesSessio
 		log.Printf("[K8S_SESSION] Failed to mark stock session %s ready: %v", session.ID(), err)
 		return
 	}
+	if !published {
+		log.Printf("[K8S_SESSION] Stock session %s was allocated before it became ready; leaving its labels unchanged", session.ID())
+		return
+	}
 	log.Printf("[K8S_SESSION] Stock session %s created successfully (dind=%t)",
 		session.ID(), dind)
+}
+
+func (m *KubernetesSessionManager) markStockServiceReady(ctx context.Context, serviceName string) (bool, error) {
+	published := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		published = false
+		svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if svc.Labels["agentapi.proxy/stock"] != "creating" {
+			return nil
+		}
+		svc.Labels["agentapi.proxy/stock"] = "true"
+		if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		published = true
+		return nil
+	})
+	return published, err
 }
 
 func (m *KubernetesSessionManager) registerSessionRunner(ctx context.Context, runnerID, pool string, dind bool) (string, error) {
@@ -5139,6 +5155,11 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 		Ports: []corev1.ContainerPort{
 			{Name: "proxy", ContainerPort: int32(nfaProxyPort), Protocol: corev1.ProtocolTCP},
 		},
+		Lifecycle: &corev1.Lifecycle{
+			PreStop: &corev1.LifecycleHandler{
+				Exec: &corev1.ExecAction{Command: []string{"/bin/sh", "-c", networkFilterPreStopScript()}},
+			},
+		},
 	}
 
 	// Inject HTTP_PROXY / HTTPS_PROXY env vars into the main container so that
@@ -5159,6 +5180,12 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 	}
 
 	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
+}
+
+const networkFilterProvisionerDrainSeconds = 25
+
+func networkFilterPreStopScript() string {
+	return fmt.Sprintf(`i=0; while [ "$i" -lt %d ] && nc -z 127.0.0.1 %d; do sleep 1; i=$((i+1)); done`, networkFilterProvisionerDrainSeconds, provisionerPort)
 }
 
 func buildNFAConfig(sandbox *entities.SandboxParams) string {
