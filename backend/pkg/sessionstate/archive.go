@@ -237,7 +237,7 @@ func packGitWorkspace(tw *tar.Writer, cwd string, add func(string, string) error
 }
 
 func excludedUntrackedPath(path string) bool {
-	if filepath.ToSlash(path) == ".agentapi/session-state.tar.zst" || strings.HasPrefix(filepath.ToSlash(path), ".agentapi/.session-state-") {
+	if filepath.ToSlash(path) == ".agentapi/session-state.tar.zst" || filepath.ToSlash(path) == ".agentapi/workspace-restored" || strings.HasPrefix(filepath.ToSlash(path), ".agentapi/.session-state-") {
 		return true
 	}
 	excluded := map[string]bool{
@@ -255,6 +255,14 @@ func excludedUntrackedPath(path string) bool {
 
 // Unpack restores a trusted backend snapshot without permitting path traversal.
 func Unpack(r io.Reader, home, cwd string) error {
+	return unpack(r, home, cwd, false)
+}
+
+func UnpackMissing(r io.Reader, home, cwd string) error {
+	return unpack(r, home, cwd, true)
+}
+
+func unpack(r io.Reader, home, cwd string, keepWorkspace bool) error {
 	buffered := newMagicReader(r)
 	var archiveReader io.Reader
 	var closeReader io.Closer
@@ -294,6 +302,9 @@ func Unpack(r io.Reader, home, cwd string) error {
 			return fmt.Errorf("unsafe archive entry %q", h.Name)
 		}
 		if clean == filepath.FromSlash("git/manifest.json") || clean == filepath.FromSlash("git/staged.patch") || clean == filepath.FromSlash("git/worktree.patch") {
+			if keepWorkspace {
+				continue
+			}
 			data, readErr := io.ReadAll(io.LimitReader(tr, maxRestoredFileBytes+1))
 			if readErr != nil || len(data) > maxRestoredFileBytes {
 				return fmt.Errorf("invalid git snapshot entry %q", h.Name)
@@ -321,10 +332,20 @@ func Unpack(r io.Reader, home, cwd string) error {
 		default:
 			return fmt.Errorf("unexpected archive entry %q", h.Name)
 		}
+		if keepWorkspace && strings.HasPrefix(clean, "cwd"+string(filepath.Separator)) && clean != filepath.Join("cwd", ".acp-session-id") {
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return err
 		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		flags := os.O_CREATE | os.O_TRUNC | os.O_WRONLY
+		if keepWorkspace {
+			flags = os.O_CREATE | os.O_EXCL | os.O_WRONLY
+		}
+		f, err := os.OpenFile(target, flags, 0o600)
+		if keepWorkspace && os.IsExist(err) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
