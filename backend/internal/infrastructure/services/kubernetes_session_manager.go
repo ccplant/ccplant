@@ -581,7 +581,7 @@ func (m *KubernetesSessionManager) RefreshRunnerSessionStatus(ctx context.Contex
 			continue
 		}
 		session.SetStatus("starting")
-		go m.watchAgentAPIStatus(context.Background(), session)
+		m.startAgentAPIStatusWatcher(context.Background(), session)
 		return nil
 	}
 	return nil
@@ -2539,8 +2539,8 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	}
 
 	// Continue watching deployment health and agentapi runtime status.
-	go m.watchAgentAPIStatus(ctx, session)
-	m.watchDeploymentStatus(ctx, session)
+	m.startAgentAPIStatusWatcher(ctx, session)
+	m.runDeploymentStatusWatcher(ctx, session)
 }
 
 // GetSession returns a session by ID
@@ -2660,6 +2660,7 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 				return session, false, nil
 			}
 			ks.SetStatus("starting")
+			m.startWorkloadStatusWatchers(context.Background(), ks)
 			return session, true, nil
 		case !errors.IsNotFound(err):
 			return session, false, fmt.Errorf("get deployment: %w", err)
@@ -2684,6 +2685,7 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 				return session, false, nil
 			}
 			ks.SetStatus("starting")
+			m.startWorkloadStatusWatchers(context.Background(), ks)
 			return session, true, nil
 		case !errors.IsNotFound(err):
 			return session, false, fmt.Errorf("get pod: %w", err)
@@ -2704,8 +2706,7 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 
 	ks.SetStatus("starting")
 	log.Printf("[K8S_SESSION] Lazily recreated workload for session %s after chat access", id)
-	go m.watchAgentAPIStatus(context.Background(), ks)
-	go m.watchDeploymentStatus(context.Background(), ks)
+	m.startWorkloadStatusWatchers(context.Background(), ks)
 	go m.scheduleSuspendWhenRestoredWorkloadReady(ks)
 	return session, true, nil
 }
@@ -5732,8 +5733,8 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 				}
 
 				// Continue watching deployment health and agentapi runtime status.
-				go m.watchAgentAPIStatus(ctx, session)
-				m.watchDeploymentStatus(ctx, session)
+				m.startAgentAPIStatusWatcher(ctx, session)
+				m.runDeploymentStatusWatcher(ctx, session)
 				return
 			}
 
@@ -5777,6 +5778,41 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 			}
 		}
 	}
+}
+
+func (m *KubernetesSessionManager) startDeploymentStatusWatcher(ctx context.Context, session *KubernetesSession) bool {
+	if !session.deploymentWatcherActive.CompareAndSwap(false, true) {
+		return false
+	}
+	go func() {
+		defer session.deploymentWatcherActive.Store(false)
+		m.watchDeploymentStatus(ctx, session)
+	}()
+	return true
+}
+
+func (m *KubernetesSessionManager) runDeploymentStatusWatcher(ctx context.Context, session *KubernetesSession) {
+	if !session.deploymentWatcherActive.CompareAndSwap(false, true) {
+		return
+	}
+	defer session.deploymentWatcherActive.Store(false)
+	m.watchDeploymentStatus(ctx, session)
+}
+
+func (m *KubernetesSessionManager) startAgentAPIStatusWatcher(ctx context.Context, session *KubernetesSession) bool {
+	if !session.agentStatusWatcherActive.CompareAndSwap(false, true) {
+		return false
+	}
+	go func() {
+		defer session.agentStatusWatcherActive.Store(false)
+		m.watchAgentAPIStatus(ctx, session)
+	}()
+	return true
+}
+
+func (m *KubernetesSessionManager) startWorkloadStatusWatchers(ctx context.Context, session *KubernetesSession) {
+	m.startAgentAPIStatusWatcher(ctx, session)
+	m.startDeploymentStatusWatcher(ctx, session)
 }
 
 func statusCanRecoverFromWorkloadReadiness(status string) bool {
@@ -7058,8 +7094,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	m.mutex.Unlock()
 
 	// Start watching deployment health and agentapi runtime status.
-	go m.watchDeploymentStatus(ctx, session)
-	go m.watchAgentAPIStatus(ctx, session)
+	m.startWorkloadStatusWatchers(ctx, session)
 	go m.scheduleSuspendWhenRestoredWorkloadReady(session)
 
 	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
@@ -7191,8 +7226,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 
 	// Start watching workload health and agentapi runtime status.
 	if status != "suspended" {
-		go m.watchDeploymentStatus(ctx, session)
-		go m.watchAgentAPIStatus(ctx, session)
+		m.startWorkloadStatusWatchers(ctx, session)
 		go m.scheduleSuspendWhenRestoredWorkloadReady(session)
 	}
 
