@@ -38,6 +38,8 @@ var (
 	errDirectRuntimeUnauthorized = errors.New("direct runtime credential rejected")
 )
 
+var directRuntimeReadyPollInterval = time.Second
+
 func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string, provisionerPort int) {
 	if cfg == nil || !cfg.Enabled || cfg.Endpoint == "" || cfg.SessionID == "" || cfg.Token == "" || cfg.Generation <= 0 {
 		return
@@ -255,6 +257,10 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 	if command.Method == http.MethodPost && (command.Path == "/internal/session-prompt" || command.Path == "/internal/session-interrupt-prompt") {
 		// Direct runtime sessions expose an ACP bridge. Force the ACP prompt path
 		// here instead of guessing an HTTP endpoint from the configured agent name.
+		if err := w.waitUntilAgentReady(commandCtx, command.ID); err != nil {
+			log.Printf("[DIRECT_RUNTIME] prompt %s was not delivered because the agent did not become ready: %v", command.ID, err)
+			return
+		}
 		if command.Path == "/internal/session-interrupt-prompt" {
 			if err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.CancelAgent", func(operationCtx context.Context) error {
 				return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.agentURL)
@@ -367,6 +373,26 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 			}
 			frames = nil
 			batchBytes = 0
+		}
+	}
+}
+
+func (w *directRuntimeWorker) waitUntilAgentReady(ctx context.Context, commandID string) error {
+	ticker := time.NewTicker(directRuntimeReadyPollInterval)
+	defer ticker.Stop()
+	held := false
+	for {
+		if w.localStatus(ctx) == string(StatusReady) {
+			return nil
+		}
+		if !held {
+			held = true
+			log.Printf("[DIRECT_RUNTIME] holding prompt %s until the agent is ready", commandID)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
 		}
 	}
 }
