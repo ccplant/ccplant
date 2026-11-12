@@ -818,7 +818,7 @@ long polls. Configure their per-Pod hard connection limits independently:
 
 ```bash
 helm upgrade agentapi-proxy ./helm/agentapi-proxy \
-  --set api.redis.sessionControlPoolSize=10 \
+  --set api.redis.sessionControlPoolSize=50 \
   --set api.redis.sessionControlBlockingPoolSize=400
 ```
 

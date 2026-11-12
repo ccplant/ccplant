@@ -741,7 +741,7 @@ spec:
             - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $apiRedis.dialTimeout | default "5s" | quote }}}
             - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $apiRedis.readTimeout | default "3s" | quote }}}
             - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $apiRedis.writeTimeout | default "3s" | quote }}}
-            - {name: AGENTAPI_REDIS_SESSION_CONTROL_POOL_SIZE, value: {{ $apiRedis.sessionControlPoolSize | default 10 | quote }}}
+            - {name: AGENTAPI_REDIS_SESSION_CONTROL_POOL_SIZE, value: {{ $apiRedis.sessionControlPoolSize | default 50 | quote }}}
             - {name: AGENTAPI_REDIS_SESSION_CONTROL_BLOCKING_POOL_SIZE, value: {{ $apiRedis.sessionControlBlockingPoolSize | default 400 | quote }}}
             {{- end }}
             {{- $workerTokenRef := dig "workerControl" "tokenSecretRef" (dict) $api }}

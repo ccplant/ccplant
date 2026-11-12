@@ -61,7 +61,7 @@ func TestLoadConfigSessionControlPoolSizes(t *testing.T) {
 
 	loadedConfig, err := LoadConfig("")
 	assert.NoError(t, err)
-	assert.Equal(t, 10, loadedConfig.Redis.SessionControlPoolSize)
+	assert.Equal(t, 50, loadedConfig.Redis.SessionControlPoolSize)
 	assert.Equal(t, 400, loadedConfig.Redis.SessionControlBlockingPoolSize)
 
 	t.Setenv("AGENTAPI_REDIS_SESSION_CONTROL_POOL_SIZE", "12")

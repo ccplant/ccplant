@@ -1548,7 +1548,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.dial_timeout", "5s")
 	v.SetDefault("redis.read_timeout", "3s")
 	v.SetDefault("redis.write_timeout", "3s")
-	v.SetDefault("redis.session_control_pool_size", 10)
+	v.SetDefault("redis.session_control_pool_size", 50)
 	v.SetDefault("redis.session_control_blocking_pool_size", 400)
 }
 

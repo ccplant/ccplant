@@ -820,7 +820,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 }
 
 const (
-	defaultSessionControlPoolSize         = 10
+	defaultSessionControlPoolSize         = 50
 	defaultSessionControlBlockingPoolSize = 400
 )
 
