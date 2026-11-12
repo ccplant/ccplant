@@ -704,7 +704,8 @@ func sessionStateVolumeRootOf(volumePath string) string {
 	return filepath.Dir(dir)
 }
 
-func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string, keepWorkspace bool) (bool, error) {
+func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string, keepWorkspaceOption ...bool) (bool, error) {
+	keepWorkspace := len(keepWorkspaceOption) > 0 && keepWorkspaceOption[0]
 	unpack := sessionstate.Unpack
 	if keepWorkspace {
 		unpack = sessionstate.UnpackMissing
