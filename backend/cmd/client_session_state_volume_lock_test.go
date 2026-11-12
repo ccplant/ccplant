@@ -30,6 +30,10 @@ type slowBackup struct {
 
 func startSlowBackup(t *testing.T) *slowBackup {
 	t.Helper()
+	// Exercise the full-workspace archive path so the sparse file keeps the
+	// helper alive long enough to observe and contend on the volume lock.
+	// Normal volume backups intentionally omit the workspace.
+	t.Setenv("AGENTAPI_SESSION_TEMPLATE_SNAPSHOT_ID", "tpl_lock_test")
 	home := t.TempDir()
 	cwd := t.TempDir()
 	if err := os.WriteFile(filepath.Join(cwd, ".acp-session-id"), []byte("thread-1"), 0o600); err != nil {
