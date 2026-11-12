@@ -1494,6 +1494,10 @@ func (c *SessionPoolController) reconcileManagerSessionStatusesInner(ctx context
 		if route.Status == "resuming" && status != "active" && status != "running" && status != "stable" && status != "resuming" {
 			continue
 		}
+		if route.Transport == portrepos.SessionRouteTransportDirectRuntime &&
+			route.Status == "error" && status != "suspended" && status != "stopped" {
+			continue
+		}
 		if route.Status == status {
 			continue
 		}
