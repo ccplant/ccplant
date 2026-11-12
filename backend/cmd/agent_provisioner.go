@@ -170,7 +170,7 @@ func runTerminationStateBackup(ctx context.Context) error {
 func notifyTerminationSuspend(ctx context.Context) error {
 	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
 	token := os.Getenv("PROVISIONER_TOKEN")
-	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
+	sessionID := terminationSessionID()
 	if proxy == "" || token == "" || sessionID == "" {
 		return fmt.Errorf("PROVISIONER_PROXY_URL, PROVISIONER_TOKEN and AGENTAPI_SESSION_ID are required")
 	}
@@ -187,6 +187,13 @@ func notifyTerminationSuspend(ctx context.Context) error {
 		return fmt.Errorf("termination suspend failed: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func terminationSessionID() string {
+	if allocatedID := os.Getenv("AGENTAPI_ALLOCATED_SESSION_ID"); allocatedID != "" {
+		return allocatedID
+	}
+	return os.Getenv("AGENTAPI_SESSION_ID")
 }
 
 func installAgentInstructions() error {
