@@ -67,6 +67,8 @@ const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
 
 var instrumentedHTTPClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
+const sessionControlConnectionTimeout = time.Second
+
 const (
 	sessionSuspendAtAnnotation               = "agentapi.proxy/suspend-at"
 	sessionSuspendedAtAnnotation             = "agentapi.proxy/suspended-at"
@@ -3820,7 +3822,9 @@ func (m *KubernetesSessionManager) connectedSessionControlStore(ctx context.Cont
 	if store == nil {
 		return nil
 	}
-	connected, err := telemetry.Operation(ctx, "sessionmanager.CheckControlConnection", func(operationCtx context.Context) (bool, error) {
+	connectionCtx, cancel := context.WithTimeout(ctx, sessionControlConnectionTimeout)
+	defer cancel()
+	connected, err := telemetry.Operation(connectionCtx, "sessionmanager.CheckControlConnection", func(operationCtx context.Context) (bool, error) {
 		connected, err := store.IsConnected(operationCtx, sessionID)
 		telemetry.SetAttributes(operationCtx, telemetry.Bool("session.control_connected", connected))
 		return connected, err

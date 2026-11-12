@@ -17,10 +17,21 @@ const (
 )
 
 type RedisStore struct {
-	client *redis.Client
+	client         *redis.Client
+	blockingClient *redis.Client
 }
 
-func NewRedisStore(client *redis.Client) *RedisStore { return &RedisStore{client: client} }
+func NewRedisStore(client *redis.Client) *RedisStore {
+	return NewRedisStoreWithBlockingClient(client, client)
+}
+
+// NewRedisStoreWithBlockingClient keeps long-polling XREAD calls off the
+// command client's pool. Otherwise enough concurrent session polls can occupy
+// every pooled connection and make short commands such as EXISTS wait for a
+// connection rather than reaching Redis.
+func NewRedisStoreWithBlockingClient(client, blockingClient *redis.Client) *RedisStore {
+	return &RedisStore{client: client, blockingClient: blockingClient}
+}
 
 func commandKey(sessionID string) string { return "agentapi:session:{" + sessionID + "}:commands" }
 func eventKey(sessionID string) string   { return "agentapi:session:{" + sessionID + "}:events" }
@@ -157,7 +168,7 @@ func (s *RedisStore) read(ctx context.Context, key, after string, wait time.Dura
 	if count <= 0 || count > 100 {
 		count = 100
 	}
-	result, err := s.client.XRead(ctx, &redis.XReadArgs{Streams: []string{key, after}, Count: count, Block: wait}).Result()
+	result, err := s.blockingClient.XRead(ctx, &redis.XReadArgs{Streams: []string{key, after}, Count: count, Block: wait}).Result()
 	if err == redis.Nil {
 		return nil, nil
 	}

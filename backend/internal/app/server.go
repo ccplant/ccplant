@@ -820,9 +820,12 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 }
 
 func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
-	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
+	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB}
 	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
 		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.ReadTimeout); err == nil && d > 0 {
+		opts.ReadTimeout = d
 	}
 	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
 		opts.WriteTimeout = d
@@ -839,7 +842,10 @@ func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
 		return nil
 	}
 	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled")
-	return infrasessioncontrol.NewRedisStore(client)
+	blockingOpts := *opts
+	blockingOpts.ReadTimeout = 35 * time.Second
+	blockingClient := redis.NewClient(&blockingOpts)
+	return infrasessioncontrol.NewRedisStoreWithBlockingClient(client, blockingClient)
 }
 
 func buildSessionAllocationNotifier(cfg *config.Config) (sessionrunnercore.AllocationNotifier, *redis.Client) {
