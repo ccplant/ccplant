@@ -88,6 +88,36 @@ func TestConfigureGitHubTokenBrokerGHWrapperRequestsCloneRepository(t *testing.T
 	}
 }
 
+func TestConfigureGitHubTokenBrokerUsesSessionHome(t *testing.T) {
+	processHome := t.TempDir()
+	sessionHome := t.TempDir()
+	t.Setenv("HOME", processHome)
+
+	settings := &SessionSettings{Env: map[string]string{
+		"HOME":                         sessionHome,
+		"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN": "lease-token",
+	}}
+	if err := configureGitHubTokenBroker(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	helperPath := filepath.Join(sessionHome, ".local", "bin", "agentapi-github-credential")
+	if _, err := os.Stat(helperPath); err != nil {
+		t.Fatalf("credential helper was not written to the session home: %v", err)
+	}
+	gitConfig, err := os.ReadFile(filepath.Join(sessionHome, ".gitconfig"))
+	if err != nil {
+		t.Fatalf("global git config was not written to the session home: %v", err)
+	}
+	if content := string(gitConfig); !strings.Contains(content, helperPath) || !strings.Contains(content, "useHttpPath = true") {
+		t.Fatalf("session git config does not enable the broker helper:\n%s", content)
+	}
+	if _, err := os.Stat(filepath.Join(processHome, ".gitconfig")); !os.IsNotExist(err) {
+		t.Fatalf("process home git config was unexpectedly modified: %v", err)
+	}
+}
+
 func TestSetupSettingsConfiguresGitHubBrokerWithoutPreloadedRepositories(t *testing.T) {
 	settings := &SessionSettings{Env: map[string]string{
 		"AGENTAPI_GITHUB_BROKER_URL": "https://broker.example.test/credentials",
