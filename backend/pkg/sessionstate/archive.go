@@ -124,6 +124,8 @@ func pack(w io.Writer, agentType, sessionID, home, cwd string, includeWorkspace 
 		root = filepath.Join(home, ".claude", "projects")
 	case "codex-acp":
 		root = filepath.Join(home, ".codex", "sessions")
+	case "pi":
+		root = filepath.Join(home, ".pi", "agent", "sessions")
 	default:
 		return fmt.Errorf("unsupported ACP agent type %q", agentType)
 	}
@@ -140,6 +142,7 @@ func pack(w io.Writer, agentType, sessionID, home, cwd string, includeWorkspace 
 		name := info.Name()
 		include := agentType == "claude-acp" && (name == sessionID+".jsonl" || strings.Contains(filepath.ToSlash(path), "/"+sessionID+"/"))
 		include = include || agentType == "codex-acp" && strings.Contains(name, sessionID) && strings.HasSuffix(name, ".jsonl")
+		include = include || agentType == "pi" && strings.Contains(name, sessionID) && strings.HasSuffix(name, ".jsonl")
 		if !include {
 			return nil
 		}

@@ -4232,11 +4232,15 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		// non-root provisioner tries to clone or restore repository state.
 		rootUID := int64(0)
 		falseVal := false
+		command := []string{"chown", "-R", "999:999", "/home/agentapi/workdir"}
+		if m.config.SessionPersistence.Backend == "volume" {
+			command = []string{"/bin/sh", "-ec", "mkdir -p /home/agentapi/workdir/.agentapi/persistent-home/claude-projects /home/agentapi/workdir/.agentapi/persistent-home/codex /home/agentapi/workdir/.agentapi/persistent-home/pi-sessions /home/agentapi/workdir/.agentapi/persistent-home/herdr-core && chown -R 999:999 /home/agentapi/workdir"}
+		}
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "prepare-workdir-permissions",
 			Image:           m.k8sConfig.Image,
 			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-			Command:         []string{"chown", "-R", "999:999", "/home/agentapi/workdir"},
+			Command:         command,
 			SecurityContext: &corev1.SecurityContext{
 				RunAsUser:    &rootUID,
 				RunAsNonRoot: &falseVal,
@@ -6941,6 +6945,14 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			MountPath: "/notification-subscriptions-source",
 			ReadOnly:  true,
 		},
+	}
+	if m.config.SessionPersistence.Backend == "volume" {
+		volumeMounts = append(volumeMounts,
+			corev1.VolumeMount{Name: "workdir", MountPath: "/home/agentapi/.claude/projects", SubPath: ".agentapi/persistent-home/claude-projects"},
+			corev1.VolumeMount{Name: "workdir", MountPath: "/home/agentapi/.codex", SubPath: ".agentapi/persistent-home/codex"},
+			corev1.VolumeMount{Name: "workdir", MountPath: "/home/agentapi/.pi/agent/sessions", SubPath: ".agentapi/persistent-home/pi-sessions"},
+			corev1.VolumeMount{Name: "workdir", MountPath: "/home/agentapi/.local/state/herdr-core", SubPath: ".agentapi/persistent-home/herdr-core"},
+		)
 	}
 
 	// session-settings Secret – optional mount for Pod restart auto-provisioning.

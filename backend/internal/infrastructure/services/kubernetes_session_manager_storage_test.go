@@ -36,6 +36,38 @@ func TestManagedStorageUsesExistingContainerPaths(t *testing.T) {
 	}
 }
 
+func TestVolumePersistenceMountsAgentAndHerdrStateFromWorkdirPVC(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.config.SessionPersistence.Backend = "volume"
+	request := &entities.RunServerRequest{UserID: "alice"}
+	session := NewKubernetesSession("session", request, "deployment", "service", "session-pvc", "test-ns", 9000, nil, nil)
+
+	volumes := manager.buildVolumes(session)
+	require.NotEmpty(t, volumes)
+	require.NotNil(t, volumes[0].PersistentVolumeClaim)
+	require.Equal(t, "session-pvc", volumes[0].PersistentVolumeClaim.ClaimName)
+
+	mounts := manager.buildMainContainerVolumeMounts(session, request)
+	for path, subPath := range map[string]string{
+		"/home/agentapi/.claude/projects":        ".agentapi/persistent-home/claude-projects",
+		"/home/agentapi/.codex":                  ".agentapi/persistent-home/codex",
+		"/home/agentapi/.pi/agent/sessions":      ".agentapi/persistent-home/pi-sessions",
+		"/home/agentapi/.local/state/herdr-core": ".agentapi/persistent-home/herdr-core",
+	} {
+		require.Contains(t, mounts, corev1.VolumeMount{Name: "workdir", MountPath: path, SubPath: subPath})
+	}
+}
+
+func TestAgentAndHerdrStateMountsRequireVolumePersistence(t *testing.T) {
+	manager := newWorkloadTestManager(t, true)
+	request := &entities.RunServerRequest{UserID: "alice"}
+	session := NewKubernetesSession("session", request, "deployment", "service", "session-pvc", "test-ns", 9000, nil, nil)
+
+	for _, mount := range manager.buildMainContainerVolumeMounts(session, request) {
+		require.NotContains(t, mount.SubPath, ".agentapi/persistent-home/")
+	}
+}
+
 func TestFilterManagedStoragesForAgent(t *testing.T) {
 	storages := []entities.ResolvedStorageAttachment{
 		{StorageAttachment: entities.StorageAttachment{StoragePath: "session-state/codex", Managed: true}},

@@ -170,6 +170,28 @@ func TestPackUnpackCodex(t *testing.T) {
 	}
 }
 
+func TestPackUnpackPi(t *testing.T) {
+	srcHome, srcCwd := t.TempDir(), t.TempDir()
+	id := "55555555-5555-5555-5555-555555555555"
+	mustWrite(t, filepath.Join(srcCwd, ".acp-session-id"), id)
+	session := filepath.Join(".pi", "agent", "sessions", "--workspace--", id+".jsonl")
+	mustWrite(t, filepath.Join(srcHome, session), "pi session\n")
+	mustWrite(t, filepath.Join(srcHome, ".pi", "agent", "sessions", "--workspace--", "other.jsonl"), "other\n")
+
+	var archive bytes.Buffer
+	if err := PackConversation(&archive, "pi", id, srcHome, srcCwd); err != nil {
+		t.Fatal(err)
+	}
+	dstHome, dstCwd := t.TempDir(), t.TempDir()
+	if err := Unpack(&archive, dstHome, dstCwd); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(dstHome, session), "pi session\n")
+	if _, err := os.Stat(filepath.Join(dstHome, ".pi", "agent", "sessions", "--workspace--", "other.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("unrelated Pi transcript restored: %v", err)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

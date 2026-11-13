@@ -125,7 +125,7 @@ ccplant session-manager install \
 
 `X.Y.Z`は使用するccplantリリースのChartバージョンへ置き換えてください。Kubernetes版はNamespaceを必要に応じて作成し、OCI Chart `oci://ghcr.io/ccplant/charts/session-manager`をインストールして、リソースがReadyになるまで最大10分待ちます。
 
-`--persistence`を指定すると、各Session Podのworkdirに専用PVCを作成します。suspend/resume時にACPの会話履歴も保存・復元するには、`--persistence-backend volume`を指定します。`volume`バックエンドはSession PVCも自動的に有効化します。`--storage-class`を省略した場合はクラスタのデフォルトStorageClassを使用し、`--persistence-size`のデフォルトは`10Gi`です。これはSession Manager Pod自身の共有PVCではありません。
+`--persistence`を指定すると、各Session Podのworkdirに専用PVCを作成します。suspend/resume時に会話履歴も保存・復元するには、`--persistence-backend volume`を指定します。`volume`バックエンドはSession PVCも自動的に有効化し、Claude Code、Codex、Piのセッション履歴とherdr-coreの状態を同じPVC上の専用ディレクトリに保持します。`--storage-class`を省略した場合はクラスタのデフォルトStorageClassを使用し、`--persistence-size`のデフォルトは`10Gi`です。これはSession Manager Pod自身の共有PVCではありません。
 
 セッションを再利用可能なWorkspaceとして保存するには、元セッションのPVCとは別に、Workspace snapshotを保持するS3またはS3互換ストレージが必要です。資格情報はコマンドラインへ直接指定せず、Session Managerと同じnamespaceにあるKubernetes Secretを参照します。ワークロードアイデンティティなどでS3認証を提供する場合、Secret参照は省略できます。
 
