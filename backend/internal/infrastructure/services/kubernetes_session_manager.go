@@ -435,11 +435,13 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	if err != nil {
 		return err
 	}
-	// The Service is the canonical cross-replica policy. A non-leader replica
-	// may still have the pre-allocation request cached in memory; do not let it
-	// overwrite a newer policy applied by the elected control loop.
+	// The Service is the canonical cross-replica policy for allocation and resume
+	// settings. A replica restored from Kubernetes may not have those settings in
+	// memory, while another replica has already persisted them. Prefer that
+	// durable policy so a stable event cannot replace it with the manager default.
 	hasCachedPolicy := ks.Request() != nil && ks.Request().ProvisionSettings != nil && ks.Request().ProvisionSettings.Session.AutoSuspendEnabled != nil
-	if hasCachedPolicy && getErr == nil {
+	hasPersistedSessionPolicy := getErr == nil && svc.Annotations[sessionAutoSuspendPolicySourceAnnotation] == "resume"
+	if getErr == nil && (hasCachedPolicy || hasPersistedSessionPolicy) {
 		if rawEnabled, ok := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; ok {
 			if parsedEnabled, parseErr := strconv.ParseBool(rawEnabled); parseErr == nil {
 				enabled = parsedEnabled

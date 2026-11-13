@@ -265,6 +265,37 @@ func TestScheduleSessionSuspendPreservesCanonicalPolicyAcrossReplicas(t *testing
 	}
 }
 
+func TestScheduleSessionSuspendPreservesCanonicalPolicyWithoutCachedSettings(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels: map[string]string{"agentapi.proxy/session-id": "session-1"},
+		Annotations: map[string]string{
+			sessionAutoSuspendEnabledAnnotation:      "true",
+			sessionAutoSuspendIdleSecondsAnnotation:  "60",
+			sessionAutoSuspendPolicySourceAnnotation: "resume",
+		},
+	}}
+	manager := newSuspendTestManager(t, service)
+	session := NewKubernetesSession("session-1", &entities.RunServerRequest{},
+		"agentapi-session-session-1", service.Name, "session-1-pvc", "test-ns", 9000, nil, nil)
+	manager.sessions[session.id] = session
+
+	if err := manager.ScheduleSessionSuspend(context.Background(), session.id); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, stored.Annotations[sessionSuspendAtAnnotation])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remaining := time.Until(deadline); remaining < 45*time.Second || remaining > 75*time.Second {
+		t.Fatalf("canonical one-minute policy was not preserved; remaining=%v annotations=%#v", remaining, stored.Annotations)
+	}
+}
+
 func TestResolveAutoSuspendPolicyForRemoteSessionWithoutLocalPersistence(t *testing.T) {
 	manager := newSuspendTestManager(t)
 	manager.config.SessionPersistence.Backend = ""
