@@ -17,6 +17,7 @@ import { getEnterKeyBehavior, getFontSettings, FontSettings, setFontSettings as 
 import ShareSessionButton from './ShareSessionButton';
 import MessageItem from './MessageItem';
 import ToolExecutionPane from './ToolExecutionPane';
+import HerdrAgentPanel from './HerdrAgentPanel';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
 import { canRebuildCompleteHistoryWindow, mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
@@ -2159,6 +2160,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
 
 
             {/* Share Session Button */}
+            {sessionId && agentAPI && !acpServerEnabled && (
+              <HerdrAgentPanel key={sessionId} sessionId={sessionId} client={agentAPI} />
+            )}
             {sessionId && agentAPI && (
               <ShareSessionButton sessionId={sessionId} agentAPI={agentAPI} />
             )}

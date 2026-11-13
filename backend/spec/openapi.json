@@ -15,6 +15,69 @@
     }
   ],
   "paths": {
+    "/{sessionId}/herdr/agents": {
+      "parameters": [{ "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "listHerdrAgents",
+        "summary": "List detected local Herdr agents in a session runtime",
+        "description": "Opt-in ACP runtime feature (AGENTAPI_HERDR_ENABLED=1). Requires session:read and access to the owning session. Shared links are not supported. No server or agent is started. herdr and herdr-core are separate adapters; remote-machine terminals and unrecognized programs are excluded. Responses are no-store.",
+        "tags": ["Sessions"],
+        "responses": {
+          "200": { "description": "Detected agents and number of unavailable local servers", "content": { "application/json": { "schema": { "type": "object", "required": ["agents", "unavailable_servers"], "properties": {
+            "agents": { "type": "array", "items": { "$ref": "#/components/schemas/HerdrAgent" } },
+            "unavailable_servers": { "type": "integer", "minimum": 0 },
+            "input_disabled": { "type": "boolean", "description": "Persistent write-ahead latch disables input after uncertain delivery. Bridge restart does not clear it. Operator recovery requires target terminal termination or entire Pod teardown first" }
+          } } } } },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Permission or session access denied" },
+          "404": { "description": "Runtime does not enable this feature" }
+        }
+      }
+    },
+    "/{sessionId}/herdr/output": {
+      "parameters": [
+        { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } },
+        { "name": "server_id", "in": "query", "required": true, "schema": { "type": "string" } },
+        { "name": "pane_id", "in": "query", "required": true, "schema": { "type": "string" } },
+        { "name": "generation", "in": "query", "required": true, "schema": { "type": "string" } }
+      ],
+      "get": {
+        "operationId": "readHerdrOutput",
+        "summary": "Read the selected existing agent terminal",
+        "description": "Requires session:read and session access. Target must match the latest agent list. Returns plain terminal text, not a structured conversation. herdr: at most 150 recent unwrapped lines; hc: screen only (no scrolling). RPC response is bounded to 2 MiB. No-store; content is not logged by the adapter.",
+        "tags": ["Sessions"],
+        "responses": {
+          "200": { "description": "Terminal text", "content": { "application/json": { "schema": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" } } } } } },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Permission or session access denied" },
+          "404": { "description": "Feature disabled" },
+          "409": { "description": "Target changed or disappeared; refresh selection" },
+          "503": { "description": "Herdr unavailable" }
+        }
+      }
+    },
+    "/{sessionId}/herdr/input": {
+      "parameters": [{ "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "sendHerdrInput",
+        "summary": "Send literal text and Enter to a selected waiting agent",
+        "description": "Requires session:create AND access to the owning session. Target generation and waiting state are checked immediately before sending. No shell command, arbitrary RPC, socket path, raw keys or permission approval is accepted. Control characters other than newline/tab are rejected. Single in-flight input per runtime; never automatically retry an uncertain delivery. This is terminal input, not an ACP prompt, and does not lock out other Herdr clients. hc may wait for a human draft before delivery.",
+        "tags": ["Sessions"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["server_id", "pane_id", "generation", "text"], "properties": {
+          "server_id": { "type": "string" }, "pane_id": { "type": "string" }, "generation": { "type": "string" },
+          "text": { "type": "string", "minLength": 1, "maxLength": 16000, "description": "At most 16000 UTF-8 bytes" }
+        } } } } },
+        "responses": {
+          "200": { "description": "Input delivered to terminal (not proof of model completion)", "content": { "application/json": { "schema": { "type": "object", "required": ["sent"], "properties": { "sent": { "type": "boolean" } } } } } },
+          "400": { "description": "Invalid or oversized input" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Permission or session access denied" },
+          "404": { "description": "Feature disabled" },
+          "409": { "description": "Target changed, busy, blocked, unknown, or another send is in progress" },
+          "503": { "description": "Delivery uncertain; inspect terminal before retrying" }
+        }
+      }
+    },
     "/teams": {
       "get": {
         "summary": "List accessible ccplant teams",
@@ -7558,6 +7621,23 @@
   },
   "components": {
     "schemas": {
+      "HerdrAgent": {
+        "type": "object",
+        "required": ["server_id", "server_name", "runtime", "pane_id", "terminal_id", "agent", "status", "label", "generation", "can_input"],
+        "properties": {
+          "server_id": { "type": "string", "description": "Opaque local endpoint identifier, not a socket path" },
+          "server_name": { "type": "string" },
+          "runtime": { "type": "string", "enum": ["herdr", "core"] },
+          "pane_id": { "type": "string", "description": "Herdr pane ID or hc local terminal address" },
+          "terminal_id": { "type": "string" },
+          "agent": { "type": "string" },
+          "status": { "type": "string", "description": "Reported/detected state; unknown is not idle" },
+          "label": { "type": "string" },
+          "session_id": { "type": "string", "description": "Native agent session ID when reported (session file paths are omitted)" },
+          "generation": { "type": "string", "description": "Selection fingerprint; must match on every output/input request" },
+          "can_input": { "type": "boolean", "description": "Waiting agent eligible for safe input; hc additionally requires direct AI launch, non-keep, root foreground PID, and idle state" }
+        }
+      },
       "SecretProjection": {
         "type":"object","required":["key","type"],"properties":{"key":{"type":"string"},"type":{"type":"string","enum":["env","file"]},"env_name":{"type":"string"},"path":{"type":"string"},"permissions":{"type":"string","enum":["0400","0600"]}}
       },

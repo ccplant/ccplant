@@ -1896,6 +1896,9 @@ func (c *SessionController) recordRemoteLifecycleStatus(ctx context.Context, rou
 
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
+	if err := c.authorizeHerdrRequest(ctx); err != nil {
+		return err
+	}
 	if err := c.checkRestartHold(ctx); err != nil {
 		return err
 	}
