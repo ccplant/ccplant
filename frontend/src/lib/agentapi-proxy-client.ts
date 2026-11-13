@@ -683,6 +683,29 @@ function parseACPJSONRPCMessages(rawMsgs: ACPJSONRPCMessage[]): SessionMessage[]
   return result;
 }
 
+export interface HerdrTerminalStatus {
+  state: string;
+  title?: string;
+  msg?: string;
+}
+
+export interface HerdrTerminal {
+  address: string;
+  name?: string | null;
+  title?: string;
+  state: string;
+  cwd?: string;
+  argv?: string[];
+  status?: HerdrTerminalStatus | null;
+}
+
+interface HerdrRPCResponse<T> {
+  jsonrpc: '2.0';
+  id: number;
+  result?: T;
+  error?: { code: number; message: string };
+}
+
 /**
  * AgentAPIProxyClient handles session management and communicates directly with agentapi-proxy.
  */
@@ -2911,6 +2934,38 @@ export class AgentAPIProxyClient {
       }
       return null;
     }
+  }
+
+  private async herdrRPC<T>(sessionId: string, method: string, params: Record<string, unknown>): Promise<T> {
+    const response = await this.makeRequest<HerdrRPCResponse<T>>(`/${sessionId}/herdr/rpc`, {
+      method: 'POST',
+      body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
+    });
+    if (response.error) {
+      throw new Error(`herdr-core RPC ${response.error.code}: ${response.error.message}`);
+    }
+    if (response.result === undefined) {
+      throw new Error('herdr-core returned no result');
+    }
+    return response.result;
+  }
+
+  async listHerdrTerminals(sessionId: string): Promise<HerdrTerminal[]> {
+    const result = await this.herdrRPC<{ terminals: HerdrTerminal[] }>(sessionId, 'terminal.list', { all: false });
+    return result.terminals ?? [];
+  }
+
+  async readHerdrTerminal(sessionId: string, terminal: string, lines = 200): Promise<string> {
+    const result = await this.herdrRPC<{ text: string }>(sessionId, 'terminal.read', { terminal, lines });
+    return result.text ?? '';
+  }
+
+  async sendHerdrTerminal(sessionId: string, terminal: string, text: string): Promise<void> {
+    await this.herdrRPC(sessionId, 'terminal.send', { terminal, text, wait: false });
+  }
+
+  async interruptHerdrTerminal(sessionId: string, terminal: string): Promise<void> {
+    await this.herdrRPC(sessionId, 'terminal.interrupt', { terminal });
   }
 
   /**

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -133,7 +134,7 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	// /internal/session-state/... and steal provisioner callbacks.
 	for _, endpoint := range []string{
 		"health", "status", "session", "messages", "message", "rpc", "sse",
-		"events", "tool_status", "action", "stop",
+		"events", "tool_status", "action", "stop", "herdr/rpc",
 	} {
 		e.Any("/:sessionId/"+endpoint, h.ProxySession, h.hmacMiddleware())
 	}
@@ -328,8 +329,9 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 	if err != nil || target == nil || target.Host == "" {
 		return echo.NewHTTPError(http.StatusInternalServerError, "invalid session runtime address")
 	}
-
 	suffix := strings.TrimPrefix(c.Request().URL.Path, "/"+sessionID+"/")
+	target = sessionProxyTarget(target, suffix)
+
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = -1
 	originalDirector := proxy.Director
@@ -349,6 +351,15 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 	}
 	proxy.ServeHTTP(c.Response(), c.Request())
 	return nil
+}
+
+func sessionProxyTarget(target *url.URL, suffix string) *url.URL {
+	if suffix != "herdr/rpc" {
+		return target
+	}
+	targetCopy := *target
+	targetCopy.Host = net.JoinHostPort(target.Hostname(), "9001")
+	return &targetCopy
 }
 
 func (h *Handlers) workloadSuspended(ctx context.Context, sessionID string) bool {

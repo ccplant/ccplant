@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -44,6 +45,12 @@ func (p *awsBranchKMSProvider) Decrypt(ctx context.Context, keyRef string, ciphe
 	output, err := p.client.Decrypt(ctx, &kms.DecryptInput{
 		KeyId: aws.String(keyRef), CiphertextBlob: ciphertext, EncryptionContext: aad,
 	})
+	if err != nil {
+		// Keep the caller-facing error deliberately opaque while retaining the
+		// AWS error code in server logs. This is essential for distinguishing
+		// invalid ciphertext/context from missing KMS permissions in operations.
+		log.Printf("[KV_ENCRYPTION] AWS KMS branch key decryption failed: %v", err)
+	}
 	if err != nil || output == nil || len(output.Plaintext) != dataKeySize {
 		if output != nil {
 			clear(output.Plaintext)

@@ -2,6 +2,45 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentAPIProxyClient, AgentAPIProxyError } from '../agentapi-proxy-client';
 
+describe('AgentAPIProxyClient herdr-core transport', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('lists terminals through the session-scoped JSON-RPC bridge', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        result: { terminals: [{ address: 't7', name: 'review', state: 'live', status: { state: 'working' } }] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.listHerdrTerminals('session-a')).resolves.toEqual([
+      { address: 't7', name: 'review', state: 'live', status: { state: 'working' } },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/session-a/herdr/rpc',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(request.body as string)).toMatchObject({ method: 'terminal.list', params: { all: false } });
+  });
+
+  it('sends prompts with terminal.send', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { turn: 3 } }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await client.sendHerdrTerminal('session-a', 't7', 'continue');
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(request.body as string)).toMatchObject({
+      method: 'terminal.send', params: { terminal: 't7', text: 'continue', wait: false },
+    });
+  });
+});
+
 describe('AgentAPIProxyClient team settings', () => {
   afterEach(() => {
     vi.restoreAllMocks();

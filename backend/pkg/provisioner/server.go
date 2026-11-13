@@ -4,6 +4,7 @@
 package provisioner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -172,6 +173,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
 	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
 	mux.HandleFunc("/one-time-secrets/", s.handleOneTimeSecret)
+	mux.HandleFunc("/herdr/rpc", s.handleHerdrRPC)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
@@ -191,6 +193,85 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
 	return nil
+}
+
+var allowedHerdrMethods = map[string]struct{}{
+	"terminal.list":      {},
+	"terminal.get":       {},
+	"terminal.read":      {},
+	"terminal.send":      {},
+	"terminal.interrupt": {},
+}
+
+// handleHerdrRPC exposes the small, user-facing part of herdr-core's JSON-RPC
+// API. herdr-core speaks JSON-RPC over stdin/stdout through `hc connect`; the
+// provisioner is the only process in a session Pod that can reach that local
+// transport. Keep the allowlist deliberately narrower than the full API: the
+// web UI may inspect and talk to existing terminals, but cannot start or kill
+// arbitrary processes.
+func (s *Server) handleHerdrRPC(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "invalid JSON-RPC request", http.StatusBadRequest)
+		return
+	}
+	var request struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil || request.JSONRPC != "2.0" || len(request.ID) == 0 {
+		http.Error(w, "invalid JSON-RPC request", http.StatusBadRequest)
+		return
+	}
+	if _, ok := allowedHerdrMethods[request.Method]; !ok {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      request.ID,
+			"error": map[string]interface{}{
+				"code": -32601, "message": "Method not found",
+			},
+		})
+		return
+	}
+
+	cmd := exec.CommandContext(r.Context(), "hc", "connect")
+	cmd.Stdin = bytes.NewReader(append(body, '\n'))
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{writer: &stdout, remaining: 8 << 20}
+	cmd.Stderr = &limitedWriter{writer: &stderr, remaining: 64 << 10}
+	if err := cmd.Run(); err != nil {
+		log.Printf("[PROVISIONER] herdr-core RPC %s failed: %v: %s", request.Method, err, strings.TrimSpace(stderr.String()))
+		http.Error(w, "herdr-core is unavailable", http.StatusBadGateway)
+		return
+	}
+	if !json.Valid(stdout.Bytes()) {
+		log.Printf("[PROVISIONER] herdr-core RPC %s returned invalid JSON", request.Method)
+		http.Error(w, "invalid response from herdr-core", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(stdout.Bytes())
+}
+
+type limitedWriter struct {
+	writer    io.Writer
+	remaining int64
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > w.remaining {
+		return 0, fmt.Errorf("output limit exceeded")
+	}
+	n, err := w.writer.Write(p)
+	w.remaining -= int64(n)
+	return n, err
 }
 
 // handleOneTimeSecret lets the agent process consume a value without exposing
