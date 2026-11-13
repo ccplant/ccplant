@@ -156,6 +156,18 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 			return nil, fmt.Errorf("create session directory %s: %w", dir, err)
 		}
 	}
+	herdrRuntimeDir := nativeHerdrRuntimeDir(id)
+	if err := os.MkdirAll(herdrRuntimeDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create native herdr runtime directory: %w", err)
+	}
+	if err := os.Chmod(herdrRuntimeDir, 0o700); err != nil {
+		return nil, fmt.Errorf("secure native herdr runtime directory: %w", err)
+	}
+	defer func() {
+		if !created {
+			_ = os.RemoveAll(herdrRuntimeDir)
+		}
+	}()
 	agentPort, err := reserveTCPPort()
 	if err != nil {
 		return nil, err
@@ -192,6 +204,9 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 	cmd.Dir = workdir
 	cmd.Env = nativeProvisionerEnvironment(os.Environ(),
 		"HOME="+home,
+		// herdr-core uses XDG_RUNTIME_DIR for its Unix socket. Native session
+		// homes can be deeply nested enough to exceed sockaddr_un's path limit.
+		"XDG_RUNTIME_DIR="+herdrRuntimeDir,
 		"TMPDIR="+tmpDir,
 		"CFFIXED_USER_HOME="+home,
 		"AGENTAPI_NATIVE_SESSION_ROOT="+root,
@@ -258,7 +273,7 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		m.mu.Lock()
 		delete(m.provisionRequests, id)
 		m.mu.Unlock()
-		if err := os.RemoveAll(root); err != nil {
+		if err := cleanupNativeSessionDirs(root); err != nil {
 			s.mu.Lock()
 			s.statusMessage = "session cleanup failed: " + err.Error()
 			s.updatedAt = time.Now().UTC()
@@ -271,6 +286,10 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 
 func validNativeSessionID(id string) bool {
 	return id != "" && id != "." && id != ".." && filepath.Base(id) == id
+}
+
+func nativeHerdrRuntimeDir(id string) string {
+	return filepath.Join(os.TempDir(), "ccplant-hc-"+id)
 }
 
 func nativeProvisionerEnvironment(base []string, values ...string) []string {
@@ -520,10 +539,19 @@ func terminateNativeProcessGroup(pid int, root string) error {
 			}
 		}
 	}
-	if err := os.RemoveAll(root); err != nil {
-		return fmt.Errorf("remove session state: %w", err)
+	return cleanupNativeSessionDirs(root)
+}
+
+func cleanupNativeSessionDirs(root string) error {
+	stateErr := os.RemoveAll(root)
+	herdrErr := os.RemoveAll(nativeHerdrRuntimeDir(filepath.Base(root)))
+	if stateErr != nil {
+		stateErr = fmt.Errorf("remove session state: %w", stateErr)
 	}
-	return nil
+	if herdrErr != nil {
+		herdrErr = fmt.Errorf("remove session herdr runtime: %w", herdrErr)
+	}
+	return errors.Join(stateErr, herdrErr)
 }
 
 func (m *NativeSessionManager) SendMessage(ctx context.Context, id, message string) error {

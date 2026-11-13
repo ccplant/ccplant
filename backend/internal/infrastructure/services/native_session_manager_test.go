@@ -37,10 +37,14 @@ func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *te
 	native := session.(*NativeSession)
 	wantHome := filepath.Join(stateDir, "sessions", "native-1", "home")
 	foundHome := false
+	foundHerdrRuntime := false
 	foundProxyBinary := false
 	for _, value := range native.cmd.Env {
 		if value == "HOME="+wantHome {
 			foundHome = true
+		}
+		if value == "XDG_RUNTIME_DIR="+nativeHerdrRuntimeDir("native-1") {
+			foundHerdrRuntime = true
 		}
 		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") || strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") {
 			t.Fatalf("native path override was retained: %q", value)
@@ -51,6 +55,9 @@ func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *te
 	}
 	if !foundHome {
 		t.Fatalf("virtual HOME %q was not configured", wantHome)
+	}
+	if !foundHerdrRuntime {
+		t.Fatal("short herdr-core runtime directory was not passed to provisioner")
 	}
 	if !foundProxyBinary {
 		t.Fatal("managed agentapi-proxy binary was not passed to provisioner")
