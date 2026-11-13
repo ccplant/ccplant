@@ -410,6 +410,14 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		startReq.Scope = entities.ScopeUser
 	}
 
+	// Preserve the credential from the built-in GitHub login before trying
+	// organization-based Connection routing. During the migration to GitHub
+	// Connections, an organization may already be mapped even though a user has
+	// not linked that Connection yet. In that case the authenticated built-in
+	// token remains a valid session credential and must take precedence, just as
+	// a params.github_token supplied by the caller does.
+	populateGitHubTokenFromAuthHeader(ctx, &startReq)
+
 	// Service accounts cannot use user scope.
 	// Automatically route to the service account's team scope.
 	{
