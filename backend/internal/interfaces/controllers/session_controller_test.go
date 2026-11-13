@@ -26,6 +26,14 @@ type githubConnectionURLResolverStub struct {
 	apiURL  string
 }
 
+type rejectingOrganizationResolver struct {
+	githubConnectionURLResolverStub
+}
+
+func (rejectingOrganizationResolver) ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error) {
+	return "", "connection-1", true, errors.New("GitHub connection is not linked to this user")
+}
+
 type githubRoutingProfileRepo struct {
 	repositories.SessionProfileRepository
 	profile *entities.SessionProfile
@@ -154,6 +162,29 @@ func TestStartSessionDryRunReturnsRedactedPlanWithoutCreatingSession(t *testing.
 	settings := body["settings"].(map[string]interface{})
 	require.Equal(t, "<redacted>", settings["env"].(map[string]interface{})["VISIBLE_NAME"])
 	require.Equal(t, "<redacted>", settings["credentials"])
+}
+
+func TestStartSessionUsesBuiltInGitHubTokenBeforeUnlinkedOrganizationConnection(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","tags":{"repository":"acme/repo"}}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "alice", CanCreate: true, CanRead: true},
+	})
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "built-in-token"})
+
+	creator := &previewSessionCreator{}
+	controller := NewSessionController(nil, creator, WithGitHubTokenResolver(rejectingOrganizationResolver{}))
+
+	require.NoError(t, controller.StartSession(ctx))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	effective := body["effective_request"].(map[string]interface{})
+	require.Equal(t, "<redacted>", effective["params"].(map[string]interface{})["github_token"])
 }
 
 func TestStartSessionRejectsInvalidDryRun(t *testing.T) {
