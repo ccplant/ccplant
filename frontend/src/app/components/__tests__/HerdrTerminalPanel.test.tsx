@@ -20,22 +20,26 @@ describe('HerdrTerminalPanel', () => {
     await waitFor(() => expect(container).toBeEmptyDOMElement())
   })
 
-  it('selects an agent and shows its output without adding another composer', async () => {
-    const client = createClient([{ address: 'term-1', name: 'researcher', state: 'running' }])
+  it('selects an agent from a compact dropdown and shows its output without adding another composer', async () => {
+    const client = createClient([
+      { address: 'term-1', name: 'researcher', state: 'running' },
+      { address: 'term-2', name: 'reviewer', state: 'idle' },
+    ])
     const onSelect = vi.fn()
     const { rerender } = render(
       <HerdrTerminalPanel client={client} sessionId="session-1" selectedTerminal="" onSelectTerminal={onSelect} />,
     )
 
-    const agent = await screen.findByRole('button', { name: /researcher/ })
-    fireEvent.click(agent)
+    const agentSelect = await screen.findByRole('combobox', { name: 'Herdr エージェント' })
+    expect(screen.getAllByRole('option')).toHaveLength(3)
+    fireEvent.change(agentSelect, { target: { value: 'term-1' } })
     expect(onSelect).toHaveBeenCalledWith('term-1')
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 
     rerender(<HerdrTerminalPanel client={client} sessionId="session-1" selectedTerminal="term-1" onSelectTerminal={onSelect} />)
     expect(await screen.findByText('agent output')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /researcher/ }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Herdr エージェント' }), { target: { value: '' } })
     expect(onSelect).toHaveBeenLastCalledWith('')
   })
 })
