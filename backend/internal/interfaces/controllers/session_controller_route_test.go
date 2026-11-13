@@ -176,7 +176,7 @@ func TestStartSessionReusesMatchingDirectRuntimeThroughPromptCommand(t *testing.
 	}}
 	routes := &deletionRouteRepo{route: &repositories.SessionRoute{
 		SessionID: "existing", RemoteSessionID: "runner-1", ManagerID: "manager-a",
-		Transport: repositories.SessionRouteTransportDirectRuntime, Status: "active",
+		Transport: repositories.SessionRouteTransportDirectRuntime, Status: "stable",
 		UserID: "user-1", Scope: string(entities.ScopeUser),
 		Tags: map[string]string{"slack_thread_ts": "123", "slackbot_id": "bot-1"},
 	}}
@@ -206,6 +206,9 @@ func TestStartSessionReusesMatchingDirectRuntimeThroughPromptCommand(t *testing.
 	}
 	if got := string(tunnel.body); got != `{"content":"follow up","type":"user"}` {
 		t.Fatalf("queued body = %s", got)
+	}
+	if !routes.saved || routes.route.Status != "running" || routes.route.StatusUpdatedAt.IsZero() {
+		t.Fatalf("persisted route status=%q updated_at=%v, want running with timestamp", routes.route.Status, routes.route.StatusUpdatedAt)
 	}
 }
 

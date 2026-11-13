@@ -848,6 +848,12 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 			if err != nil {
 				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to queue reusable session prompt").SetInternal(err)
 			}
+			// The queued prompt starts a new turn immediately from the parent's
+			// perspective. Persist that transition before TTL cleanup can treat the
+			// previous active/stable timestamp as an expired completion time.
+			if err := c.RecordRemoteSessionStatus(ctx.Request().Context(), route, "running"); err != nil {
+				return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to persist reusable session status").SetInternal(err)
+			}
 			log.Printf("[SESSION_REUSE] Reused direct runtime %s command_id=%s for tags %v", route.SessionID, commandID, startReq.ReuseMatchTags)
 			return route.SessionID, true, nil
 		}
