@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -18,13 +19,71 @@ import (
 type NotificationHandlers struct {
 	service        *notification.Service
 	sessionManager portrepos.SessionManager
+	sessionRoutes  portrepos.SessionRouteRepository
 }
 
 // NewNotificationHandlers creates new notification handlers
-func NewNotificationHandlers(service *notification.Service, sessionManager portrepos.SessionManager) *NotificationHandlers {
+func NewNotificationHandlers(service *notification.Service, sessionManager portrepos.SessionManager, sessionRoutes ...portrepos.SessionRouteRepository) *NotificationHandlers {
+	var routeRepo portrepos.SessionRouteRepository
+	if len(sessionRoutes) > 0 {
+		routeRepo = sessionRoutes[0]
+	}
 	return &NotificationHandlers{
 		service:        service,
 		sessionManager: sessionManager,
+		sessionRoutes:  routeRepo,
+	}
+}
+
+type contextSessionGetter interface {
+	GetSessionContext(context.Context, string) (entities.Session, error)
+}
+
+type notificationSession struct {
+	ID             string
+	UserID         string
+	Scope          entities.ResourceScope
+	TeamID         string
+	InitialMessage string
+}
+
+func (h *NotificationHandlers) resolveNotificationSession(ctx context.Context, id string) (*notificationSession, error) {
+	var lookupErr error
+	if getter, ok := h.sessionManager.(contextSessionGetter); ok {
+		session, err := getter.GetSessionContext(ctx, id)
+		if err != nil {
+			lookupErr = err
+		} else if session != nil {
+			return notificationSessionFromEntity(session), nil
+		}
+	} else if h.sessionManager != nil {
+		if session := h.sessionManager.GetSession(id); session != nil {
+			return notificationSessionFromEntity(session), nil
+		}
+	}
+
+	if h.sessionRoutes != nil {
+		route, err := h.sessionRoutes.Get(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("look up session route: %w", err)
+		}
+		if route != nil {
+			return &notificationSession{
+				ID: id, UserID: route.UserID, Scope: entities.ResourceScope(route.Scope),
+				TeamID: route.TeamID, InitialMessage: route.InitialMessage,
+			}, nil
+		}
+	}
+	if lookupErr != nil {
+		return nil, fmt.Errorf("look up session: %w", lookupErr)
+	}
+	return nil, nil
+}
+
+func notificationSessionFromEntity(session entities.Session) *notificationSession {
+	return &notificationSession{
+		ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(),
+		TeamID: session.TeamID(), InitialMessage: session.Description(),
 	}
 }
 
@@ -123,10 +182,13 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 	if webhook.SessionID == "" || webhook.EventType == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "SessionID and EventType are required")
 	}
-	if h.sessionManager == nil {
+	if h.sessionManager == nil && h.sessionRoutes == nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Session manager not available")
 	}
-	session := h.sessionManager.GetSession(webhook.SessionID)
+	session, err := h.resolveNotificationSession(c.Request().Context(), webhook.SessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session lookup is temporarily unavailable").SetInternal(err)
+	}
 	if session == nil || !canAccessNotificationSession(c, session) {
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}
@@ -137,7 +199,7 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 			webhook.Data = make(map[string]interface{})
 		}
 		// Add initial message (description) so Slack notifications show what task triggered this
-		if desc := session.Description(); desc != "" {
+		if desc := session.InitialMessage; desc != "" {
 			if _, exists := webhook.Data["initial_message"]; !exists {
 				webhook.Data["initial_message"] = desc
 			}
@@ -145,7 +207,7 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 		// Build full URL using NOTIFICATION_BASE_URL if not already set
 		if _, exists := webhook.Data["url"]; !exists {
 			if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
-				webhook.Data["url"] = baseURL + "/sessions/" + session.ID()
+				webhook.Data["url"] = baseURL + "/sessions/" + session.ID
 			}
 		}
 	}
@@ -193,11 +255,14 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 
 	// When session_id is provided, resolve the target user from the session.
 	if req.SessionID != "" {
-		if h.sessionManager == nil {
+		if h.sessionManager == nil && h.sessionRoutes == nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "Session manager not available")
 		}
 
-		session := h.sessionManager.GetSession(req.SessionID)
+		session, err := h.resolveNotificationSession(c.Request().Context(), req.SessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Session lookup is temporarily unavailable").SetInternal(err)
+		}
 		if session == nil {
 			return echo.NewHTTPError(http.StatusNotFound, "session not found")
 		}
@@ -206,7 +271,7 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 		}
 
 		// Team-scoped sessions do not trigger push notifications.
-		if session.Scope() == entities.ScopeTeam {
+		if session.Scope == entities.ScopeTeam {
 			return c.JSON(http.StatusOK, &notification.SendNotificationResponse{
 				Success: true,
 				Message: "team-scoped sessions do not trigger push notifications",
@@ -214,18 +279,18 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 		}
 
 		// User-scoped session: resolve to the owner's user_id.
-		req.UserID = session.UserID()
+		req.UserID = session.UserID
 
 		// Auto-construct session URL from NOTIFICATION_BASE_URL if not provided.
 		if req.URL == "" {
 			if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
-				req.URL = baseURL + "/sessions/" + session.ID()
+				req.URL = baseURL + "/sessions/" + session.ID
 			}
 		}
 
 		// Add session description (initial message) so the recipient knows which task triggered this.
 		if req.InitialMessage == "" {
-			if desc := session.Description(); desc != "" {
+			if desc := session.InitialMessage; desc != "" {
 				req.InitialMessage = desc
 			}
 		}
@@ -243,12 +308,12 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
-func canAccessNotificationSession(ctx echo.Context, session entities.Session) bool {
-	if session.Scope() == entities.ScopeTeam {
+func canAccessNotificationSession(ctx echo.Context, session *notificationSession) bool {
+	if session.Scope == entities.ScopeTeam {
 		authzCtx := auth.GetAuthorizationContext(ctx)
-		return authzCtx != nil && authzCtx.CanAccessTeam(session.TeamID())
+		return authzCtx != nil && authzCtx.CanAccessTeam(session.TeamID)
 	}
-	return auth.UserOwnsSession(ctx, session.UserID())
+	return auth.UserOwnsSession(ctx, session.UserID)
 }
 
 // GetHistory handles GET /notifications/history

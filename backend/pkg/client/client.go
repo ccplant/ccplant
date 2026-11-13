@@ -587,6 +587,17 @@ type SendNotificationResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
+// HTTPStatusError preserves the response status for callers that need to
+// distinguish retryable failures from permanent request errors.
+type HTTPStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("server returned status %d: %s", e.StatusCode, e.Body)
+}
+
 // SendNotification sends a push notification via the API.
 // Either SessionID or UserID must be specified.
 func (c *Client) SendNotification(ctx context.Context, req *SendNotificationRequest) (*SendNotificationResponse, error) {
@@ -619,7 +630,7 @@ func (c *Client) SendNotification(ctx context.Context, req *SendNotificationRequ
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 
 	var sendResp SendNotificationResponse

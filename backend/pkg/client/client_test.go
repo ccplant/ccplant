@@ -8,7 +8,21 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
+
+func TestClientSendNotificationPreservesHTTPStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	_, err := NewClient(server.URL).SendNotification(context.Background(), &SendNotificationRequest{Title: "done", Body: "done", SessionID: "session"})
+	var statusErr *HTTPStatusError
+	require.ErrorAs(t, err, &statusErr)
+	require.Equal(t, http.StatusServiceUnavailable, statusErr.StatusCode)
+}
 
 func TestNewClient(t *testing.T) {
 	baseURL := "http://localhost:8080"

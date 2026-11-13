@@ -367,7 +367,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		echo:   e,
 		server: server,
 		handlers: &HandlerRegistry{
-			notificationHandlers:           controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
+			notificationHandlers:           controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager, server.sessionRouteRepo),
 			healthController:               controllers.NewHealthController(),
 			sessionController:              sessionController,
 			acpController:                  acpController,
