@@ -73,6 +73,7 @@ import {
 } from '../types/share';
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken, ExternalSessionManagerOperationalStatus, ExternalSessionManagerLogs } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
+import type { HerdrAgent, HerdrTarget } from './herdr-types';
 import { TeamConfig, TeamMembershipState, TeamMembershipSyncResult } from '../types/team-config';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
 import { AdminSessionRunner, ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolLogs, SessionPoolStatusResponse, SessionPoolSupplier } from '../types/session_pool';
@@ -1106,6 +1107,21 @@ export class AgentAPIProxyClient {
         error instanceof Error ? error.message : 'Unknown network error'
       );
     }
+  }
+
+  async listHerdrAgents(sessionId: string): Promise<{ agents: HerdrAgent[]; unavailable_servers: number; input_disabled?: boolean }> {
+    return this.makeRequest(`/${encodeURIComponent(sessionId)}/herdr/agents`, { cache: 'no-store' });
+  }
+
+  async readHerdrOutput(sessionId: string, target: HerdrTarget): Promise<{ text: string }> {
+    const query = new URLSearchParams({ ...target });
+    return this.makeRequest(`/${encodeURIComponent(sessionId)}/herdr/output?${query}`, { cache: 'no-store' });
+  }
+
+  async sendHerdrInput(sessionId: string, target: HerdrTarget, text: string): Promise<{ sent: boolean }> {
+    return this.makeRequest(`/${encodeURIComponent(sessionId)}/herdr/input`, {
+      method: 'POST', body: JSON.stringify({ ...target, text }),
+    });
   }
 
   // High-level operations based on agentapi-proxy

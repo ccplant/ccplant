@@ -39,7 +39,8 @@ export default defineConfig({
           { text: 'ローカルで起動・開発', link: '/guide/local-development' },
           { text: 'アーキテクチャ', link: '/guide/architecture' },
           { text: 'デプロイ', link: '/guide/deployment' },
-          { text: 'Session Manager', link: '/guide/session-manager' }
+          { text: 'Session Manager', link: '/guide/session-manager' },
+          { text: 'Pod内エージェント', link: '/guide/herdr-agents' }
         ]
       }
     ],

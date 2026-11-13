@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -176,6 +177,18 @@ func (c *ShareController) DeleteShare(ctx echo.Context) error {
 
 // RouteToSharedSession handles ANY /s/:shareToken/* to access shared session
 func (c *ShareController) RouteToSharedSession(ctx echo.Context) error {
+	// Herdr output can include secrets and other agents' work, not only the
+	// conversation intentionally shared by this link.
+	// Echo's wildcard can retain escaping whereas the reverse proxy uses
+	// decoded URL.Path. Inspect exactly the path the Director will forward.
+	parts := strings.SplitN(ctx.Request().URL.Path, "/", 4)
+	subpath := "/"
+	if len(parts) == 4 {
+		subpath = path.Clean("/" + parts[3])
+	}
+	if subpath == "/herdr" || strings.HasPrefix(subpath, "/herdr/") {
+		return echo.NewHTTPError(http.StatusForbidden, "Herdr is not available through shared links")
+	}
 	shareToken := ctx.Param("shareToken")
 
 	// Find share by token

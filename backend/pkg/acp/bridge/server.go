@@ -12,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/pkg/acp"
+	"github.com/takutakahashi/agentapi-proxy/pkg/herdr"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 )
@@ -56,6 +57,9 @@ func NewServer(b *Bridge, verbose bool) *Server {
 }
 
 func (s *Server) registerRoutes() {
+	if os.Getenv("AGENTAPI_HERDR_ENABLED") == "1" {
+		herdr.Register(s.echo)
+	}
 	s.echo.GET("/health", s.handleHealth)
 	// /status is polled by the provisioner to detect when the agent is ready.
 	// It must return HTTP 200; the body mirrors the agentapi status shape so
