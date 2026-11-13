@@ -24,6 +24,40 @@ func TestClientCmd(t *testing.T) {
 	assert.Equal(t, "AgentAPI Client CLI", ClientCmd.Short)
 }
 
+func TestSendNotificationWithRetryRetries503(t *testing.T) {
+	attempts := 0
+	waits := 0
+	response, err := sendNotificationWithRetry(context.Background(), func(context.Context) (*client.SendNotificationResponse, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, &client.HTTPStatusError{StatusCode: http.StatusServiceUnavailable, Body: "unavailable"}
+		}
+		return &client.SendNotificationResponse{Success: true}, nil
+	}, func(context.Context, time.Duration) error {
+		waits++
+		return nil
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, response.Success)
+	assert.Equal(t, 3, attempts)
+	assert.Equal(t, 2, waits)
+}
+
+func TestSendNotificationWithRetryDoesNotRetry404(t *testing.T) {
+	attempts := 0
+	_, err := sendNotificationWithRetry(context.Background(), func(context.Context) (*client.SendNotificationResponse, error) {
+		attempts++
+		return nil, &client.HTTPStatusError{StatusCode: http.StatusNotFound, Body: "missing"}
+	}, func(context.Context, time.Duration) error {
+		t.Fatal("wait called for non-retryable response")
+		return nil
+	})
+
+	assert.Error(t, err)
+	assert.Equal(t, 1, attempts)
+}
+
 func TestConsumeSecretPrintsOnlyValue(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)

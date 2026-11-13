@@ -68,8 +68,7 @@ agentapi-proxy helpers setup-gh
 ccplant client send-notification \
   --title "作業が完了しました" \
   --body "作業内容を確認してください" \
-  --notify-session-id "$AGENTAPI_SESSION_ID" \
-  --url "$NOTIFICATION_BASE_URL/agentapi?session=$AGENTAPI_SESSION_ID"
+  --notify-session-id "$AGENTAPI_SESSION_ID"
 ```
 
 **重要**: 全ての作業が完了した時点で、**必ず**上記コマンドを実行してユーザーに通知を送信してください。

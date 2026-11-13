@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -729,6 +730,41 @@ func runDeleteSession(cmd *cobra.Command, args []string) {
 const notifyRateLimitFile = "/tmp/notify"
 const notifyRateLimitCooldown = 3 * time.Minute
 
+const (
+	notifyMaxAttempts = 3
+	notifyTimeout     = 30 * time.Second
+)
+
+func sendNotificationWithRetry(ctx context.Context, send func(context.Context) (*client.SendNotificationResponse, error), wait func(context.Context, time.Duration) error) (*client.SendNotificationResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= notifyMaxAttempts; attempt++ {
+		resp, err := send(ctx)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		var statusErr *client.HTTPStatusError
+		if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusServiceUnavailable || attempt == notifyMaxAttempts {
+			break
+		}
+		if err := wait(ctx, time.Duration(attempt)*time.Second); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func waitForNotificationRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func checkNotifyRateLimit() bool {
 	data, err := os.ReadFile(notifyRateLimitFile)
 	if err != nil {
@@ -771,7 +807,11 @@ func runClientSendNotification(cmd *cobra.Command, args []string) error {
 		UserID:    clientNotifyUserID,
 	}
 
-	resp, err := c.SendNotification(context.Background(), req)
+	ctx, cancel := context.WithTimeout(cmd.Context(), notifyTimeout)
+	defer cancel()
+	resp, err := sendNotificationWithRetry(ctx, func(ctx context.Context) (*client.SendNotificationResponse, error) {
+		return c.SendNotification(ctx, req)
+	}, waitForNotificationRetry)
 	if err != nil {
 		return fmt.Errorf("failed to send notification: %w", err)
 	}

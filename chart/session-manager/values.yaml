@@ -89,7 +89,7 @@ sessionPersistence:
       key: secret-access-key
 
 session:
-  image: "ghcr.io/ccplant/ccplant-agent:assets-8f5c4685e7ee739e600356c3e7b37900"
+  image: "ghcr.io/ccplant/ccplant-agent:assets-49169c4af9ce4fcc7b803cbaf4fbad55"
   # Source image for the ccplant binary injected into session Pods.
   # Empty follows the session-manager image.
   cliImage: ""

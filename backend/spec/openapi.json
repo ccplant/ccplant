@@ -5316,6 +5316,12 @@
           "401": {
             "description": "Unauthorized"
           },
+          "404": {
+            "description": "Session not found or not accessible"
+          },
+          "503": {
+            "description": "Session lookup is temporarily unavailable"
+          },
           "500": {
             "description": "Failed to send notification"
           }
