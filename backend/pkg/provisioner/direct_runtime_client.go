@@ -308,7 +308,11 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: http.StatusNoContent, Done: true, CreatedAt: time.Now().UTC()}})
 		return
 	}
-	target := w.agentURL + command.Path
+	targetBase := w.agentURL
+	if command.Path == "/herdr/rpc" {
+		targetBase = w.provisionerURL
+	}
+	target := targetBase + command.Path
 	if command.RawQuery != "" {
 		target += "?" + command.RawQuery
 	}

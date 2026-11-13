@@ -251,6 +251,40 @@ func TestDirectRuntimeSessionPromptUsesACPProtocol(t *testing.T) {
 	}
 }
 
+func TestDirectRuntimeRoutesHerdrRPCToProvisioner(t *testing.T) {
+	var provisionerCalls, agentCalls int
+	provisioner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provisionerCalls++
+		if r.URL.Path != "/herdr/rpc" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"terminals":[]}}`))
+	}))
+	defer provisioner.Close()
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agentCalls++
+		http.NotFound(w, r)
+	}))
+	defer agent.Close()
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer parent.Close()
+
+	worker := &directRuntimeWorker{
+		cfg:    &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "public", Token: "secret", Generation: 1},
+		client: parent.Client(), agentURL: agent.URL, provisionerURL: provisioner.URL,
+	}
+	worker.executeRequest(context.Background(), core.Command{
+		ID: "herdr-1", StreamID: "1-0", Method: http.MethodPost, Path: "/herdr/rpc",
+		Body: []byte(`{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{"all":false}}`),
+	})
+
+	if provisionerCalls != 1 || agentCalls != 0 {
+		t.Fatalf("provisioner calls=%d agent calls=%d", provisionerCalls, agentCalls)
+	}
+}
+
 func TestDirectRuntimeInterruptPromptCancelsBeforePrompt(t *testing.T) {
 	var methods []string
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -133,7 +134,7 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	// /internal/session-state/... and steal provisioner callbacks.
 	for _, endpoint := range []string{
 		"health", "status", "session", "messages", "message", "rpc", "sse",
-		"events", "tool_status", "action", "stop",
+		"events", "tool_status", "action", "stop", "herdr/rpc",
 	} {
 		e.Any("/:sessionId/"+endpoint, h.ProxySession, h.hmacMiddleware())
 	}
@@ -328,8 +329,13 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 	if err != nil || target == nil || target.Host == "" {
 		return echo.NewHTTPError(http.StatusInternalServerError, "invalid session runtime address")
 	}
-
 	suffix := strings.TrimPrefix(c.Request().URL.Path, "/"+sessionID+"/")
+	if suffix == "herdr/rpc" {
+		targetCopy := *target
+		target = &targetCopy
+		target.Host = net.JoinHostPort(target.Hostname(), "9001")
+	}
+
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = -1
 	originalDirector := proxy.Director

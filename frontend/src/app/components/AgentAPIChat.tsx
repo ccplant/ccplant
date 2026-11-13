@@ -17,6 +17,7 @@ import { getEnterKeyBehavior, getFontSettings, FontSettings, setFontSettings as 
 import ShareSessionButton from './ShareSessionButton';
 import MessageItem from './MessageItem';
 import ToolExecutionPane from './ToolExecutionPane';
+import HerdrTerminalPanel from './HerdrTerminalPanel';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
 import { canRebuildCompleteHistoryWindow, mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
@@ -808,6 +809,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showControlPanel, setShowControlPanel] = useState(false);
+  const [showHerdrTerminals, setShowHerdrTerminals] = useState(false);
   const [showSecretModal, setShowSecretModal] = useState(false);
   const [secretValue, setSecretValue] = useState('');
   const [secretLifetime, setSecretLifetime] = useState(600);
@@ -2864,10 +2866,20 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                       >
                         履歴・テンプレート
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowHerdrTerminals(true);
+                          setShowComposerMenu(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        herdr-core ターミナル
+                      </button>
                     </div>
                   )}
                 </div>
-                
+
                 <button
                   onClick={() => sendMessage()}
                   disabled={!isConnected || isLoading || (!inputValue.trim() && attachedImages.length === 0) || agentStatus?.status === 'running'}
@@ -3257,6 +3269,13 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           questions={pendingAction.content.questions}
           onSubmit={handleAnswerSubmit}
           onClose={handleQuestionModalClose}
+        />
+      )}
+      {showHerdrTerminals && sessionId && (
+        <HerdrTerminalPanel
+          client={agentAPI}
+          sessionId={sessionId}
+          onClose={() => setShowHerdrTerminals(false)}
         />
       )}
     </div>
