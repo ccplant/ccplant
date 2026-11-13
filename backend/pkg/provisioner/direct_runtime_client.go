@@ -396,7 +396,7 @@ func (w *directRuntimeWorker) waitUntilAgentReady(ctx context.Context, commandID
 	defer ticker.Stop()
 	held := false
 	for {
-		if w.localStatus(ctx) == string(StatusReady) {
+		if w.readLocalStatus(ctx, w.provisionerURL+"/status", true) == string(StatusReady) {
 			return nil
 		}
 		if !held {
