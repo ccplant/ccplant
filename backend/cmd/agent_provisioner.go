@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -168,13 +169,19 @@ func runTerminationStateBackup(ctx context.Context) error {
 }
 
 func notifyTerminationSuspend(ctx context.Context) error {
-	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
-	token := os.Getenv("PROVISIONER_TOKEN")
+	proxy := strings.TrimRight(os.Getenv("PROVISIONER_LOCAL_PROXY_URL"), "/")
+	if proxy == "" {
+		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	}
+	token := os.Getenv("SESSION_CONTROL_TOKEN")
+	if token == "" {
+		token = os.Getenv("PROVISIONER_TOKEN")
+	}
 	sessionID := terminationSessionID()
 	if proxy == "" || token == "" || sessionID == "" {
-		return fmt.Errorf("PROVISIONER_PROXY_URL, PROVISIONER_TOKEN and AGENTAPI_SESSION_ID are required")
+		return fmt.Errorf("session control proxy URL, token and session ID are required")
 	}
-	req, err := internalRequest(http.MethodPost, proxy+"/internal/session-state/"+sessionID+"/terminate", token, nil)
+	req, err := internalRequest(http.MethodPost, proxy+"/internal/session-state/"+url.PathEscape(sessionID)+"/terminate", token, nil)
 	if err != nil {
 		return err
 	}
