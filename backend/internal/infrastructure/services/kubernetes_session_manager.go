@@ -762,14 +762,14 @@ func (m *KubernetesSessionManager) SuspendSessionOnTermination(ctx context.Conte
 	if !m.isPVCEnabled() {
 		return fmt.Errorf("termination suspend requires a PVC-backed session")
 	}
-	session, ok := m.GetSession(sessionID).(*KubernetesSession)
-	if !ok || session == nil {
-		return nil
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
+		if session.Status() == "suspended" {
+			return nil
+		}
+		serviceName = session.ServiceName()
 	}
-	if session.Status() == "suspended" {
-		return nil
-	}
-	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, session.ServiceName(), metav1.GetOptions{})
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
 		// Explicit session deletion removes the Service before the Pod finishes
 		// its SIGTERM handler. There is nothing left to suspend in that case.

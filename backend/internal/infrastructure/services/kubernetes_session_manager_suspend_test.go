@@ -132,6 +132,29 @@ func TestSuspendSessionOnTerminationRemovesDeploymentWithoutCheckpoint(t *testin
 	}
 }
 
+func TestSuspendSessionOnTerminationUsesCanonicalServiceWithoutLocalSession(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels: map[string]string{"agentapi.proxy/session-id": "session-1"},
+	}}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1", Namespace: "test-ns"}}
+	manager := newSuspendTestManager(t, service, deployment)
+
+	if err := manager.SuspendSessionOnTermination(context.Background(), "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.client.AppsV1().Deployments("test-ns").Get(context.Background(), deployment.Name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("deployment should be removed on termination suspend, got %v", err)
+	}
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Annotations[sessionSuspendedAtAnnotation] == "" {
+		t.Fatalf("suspended-at annotation was not persisted: %#v", stored.Annotations)
+	}
+}
+
 func TestAcquireSessionSuspendOwnershipIsExclusiveAndCanBeTakenOverAfterExpiry(t *testing.T) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
 		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
