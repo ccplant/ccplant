@@ -62,6 +62,7 @@ const (
 type CredentialContext struct {
 	Kind         CredentialKind
 	Token        string
+	Provider     string
 	ConnectionID string
 }
 
@@ -163,7 +164,17 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			// This allows personal API keys (loaded via bootstrap) to work
 			if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
 				c.Set("internal_user", user)
-				SetCredentialContext(c, &CredentialContext{Kind: CredentialKindAPIKey})
+				credential := &CredentialContext{Kind: CredentialKindAPIKey}
+				if resolver, ok := authService.(interface {
+					ResolveAPIKeyConnection(string) (string, string, bool)
+				}); ok {
+					apiKey := c.Request().Header.Get("X-API-Key")
+					if apiKey == "" {
+						apiKey = extractAPIKeyFromAuthHeader(c.Request().Header.Get("Authorization"))
+					}
+					credential.Provider, credential.ConnectionID, _ = resolver.ResolveAPIKeyConnection(apiKey)
+				}
+				SetCredentialContext(c, credential)
 				log.Printf("API key authentication successful: user %s (type: %s)", user.ID(), user.UserType())
 				// Build and store authorization context
 				authzCtx := buildAuthorizationContext(user)
@@ -331,6 +342,14 @@ func GetGitHubCredentialFromContext(c echo.Context) (*CredentialContext, bool) {
 // needs the GitHub token for user-scoped session enrichment.
 func SetCredentialContext(c echo.Context, credential *CredentialContext) {
 	c.Set(credentialContextKey, credential)
+}
+
+// GetCredentialContext returns metadata for the credential accepted for the
+// current request. Controllers use this to protect the identity backing the
+// active login session from being unlinked.
+func GetCredentialContext(c echo.Context) (*CredentialContext, bool) {
+	credential, ok := c.Get(credentialContextKey).(*CredentialContext)
+	return credential, ok && credential != nil
 }
 
 // buildAuthorizationContext builds authorization context from user entity

@@ -47,6 +47,7 @@ export interface GoogleIdentity {
   avatar_url?: string
   hosted_domain?: string
   created_at: string
+  current: boolean
 }
 
 export interface GoogleIdentitiesResponse {

@@ -516,6 +516,62 @@ func TestResolveLoginPrincipalUsesLinkedPrincipalID(t *testing.T) {
 	require.Equal(t, principal.ID, resolved.ID)
 }
 
+func TestConnectionLoginCreatesLinkedIdentity(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{
+		ID:                "enterprise",
+		Name:              "Enterprise GitHub",
+		BaseURL:           "https://github.example.com",
+		APIURL:            "https://github.example.com/api/v3",
+		AllowUserCreation: true,
+	}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+
+	principal, created, err := controller.resolveLoginPrincipalWithCreated(
+		context.Background(),
+		connection,
+		githubOAuthUser{ID: 42, Login: "alice", AvatarURL: "https://github.example.com/alice.png"},
+		"access-token",
+		nil,
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	var identity githubIdentity
+	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, identity.PrincipalID)
+	require.Equal(t, connection.ID, identity.ConnectionID)
+	require.Equal(t, "alice", identity.Login)
+}
+
+func TestCannotUnlinkConnectionUsedByCurrentLogin(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{ID: "enterprise", Name: "Enterprise GitHub", AllowUserCreation: true}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+	principal, _, err := controller.resolveLoginPrincipalWithCreated(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "access-token", nil)
+	require.NoError(t, err)
+
+	var identity githubIdentity
+	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/users/me/github-identities/"+identity.ID, nil)
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	ctx.SetParamNames("identity_id")
+	ctx.SetParamValues(identity.ID)
+	ctx.Set("internal_user", entities.NewUser(entities.UserID(principal.ID), entities.UserTypeRegular, "alice"))
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, ConnectionID: connection.ID})
+
+	err = controller.Unlink(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusConflict, httpErr.Code)
+}
+
 func TestResolveLoginPrincipalLinksExistingBuiltInGHESPrincipal(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")

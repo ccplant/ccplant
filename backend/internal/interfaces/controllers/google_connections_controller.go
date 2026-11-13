@@ -100,6 +100,7 @@ type googleIdentity struct {
 type googleIdentityResponse struct {
 	googleIdentity
 	ConnectionName string `json:"connection_name"`
+	Current        bool   `json:"current"`
 }
 
 type googleOAuthState struct {
@@ -407,10 +408,11 @@ func (c *GoogleConnectionsController) ListIdentities(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list Google identities").SetInternal(err)
 	}
 	result := make([]googleIdentityResponse, 0)
+	credential, _ := auth.GetCredentialContext(ctx)
 	for _, identity := range identities {
 		if identity.PrincipalID == principal.ID {
 			if connection, _, _, loadErr := c.loadConnection(ctx.Request().Context(), identity.ConnectionID); loadErr == nil {
-				result = append(result, googleIdentityResponse{googleIdentity: identity, ConnectionName: connection.Name})
+				result = append(result, googleIdentityResponse{googleIdentity: identity, ConnectionName: connection.Name, Current: credential != nil && credential.Provider == "google" && credential.ConnectionID == identity.ConnectionID})
 			}
 		}
 	}
@@ -487,6 +489,9 @@ func (c *GoogleConnectionsController) Unlink(ctx echo.Context) error {
 	}
 	for _, identity := range identities {
 		if identity.ID == ctx.Param("identity_id") && identity.PrincipalID == principal.ID {
+			if credential, ok := auth.GetCredentialContext(ctx); ok && credential.Provider == "google" && credential.ConnectionID == identity.ConnectionID {
+				return echo.NewHTTPError(http.StatusConflict, "the connection used by the current login cannot be unlinked")
+			}
 			if err := c.client.CoreV1().Secrets(c.namespace).Delete(ctx.Request().Context(), googleIdentitySecretName(identity.ConnectionID, identity.Subject), metav1.DeleteOptions{}); err != nil {
 				return echo.NewHTTPError(http.StatusInternalServerError, "failed to unlink identity").SetInternal(err)
 			}

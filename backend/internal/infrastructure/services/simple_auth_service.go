@@ -39,6 +39,7 @@ type SimpleAuthService struct {
 	apiKeys                  map[string]*services.APIKey
 	users                    map[entities.UserID]*entities.User
 	keyToUserID              map[string]entities.UserID
+	apiKeyConnections        map[string]apiKeyConnection
 	apiTokens                map[string]*apiTokenRecord // keyed by plaintext secret
 	apiTokenRepo             repositories.APITokenRepository
 	localUserRepo            repositories.LocalUserRepository
@@ -64,6 +65,11 @@ type SimpleAuthService struct {
 	// sticky (revoking or reconciling away a token never unshadows its
 	// secret), re-loading the legacy credential later cannot revive it either.
 	shadowedSecrets map[string]struct{}
+}
+
+type apiKeyConnection struct {
+	provider     string
+	connectionID string
 }
 
 func (s *SimpleAuthService) SetGitHubConnectionCredentialResolver(resolver GitHubConnectionCredentialResolver) {
@@ -96,12 +102,33 @@ func (s *SimpleAuthService) SetGitHubMembershipResolver(resolver interface {
 // NewSimpleAuthService creates a new SimpleAuthService
 func NewSimpleAuthService() *SimpleAuthService {
 	return &SimpleAuthService{
-		apiKeys:         make(map[string]*services.APIKey),
-		users:           make(map[entities.UserID]*entities.User),
-		keyToUserID:     make(map[string]entities.UserID),
-		apiTokens:       make(map[string]*apiTokenRecord),
-		shadowedSecrets: make(map[string]struct{}),
+		apiKeys:           make(map[string]*services.APIKey),
+		users:             make(map[entities.UserID]*entities.User),
+		keyToUserID:       make(map[string]entities.UserID),
+		apiKeyConnections: make(map[string]apiKeyConnection),
+		apiTokens:         make(map[string]*apiTokenRecord),
+		shadowedSecrets:   make(map[string]struct{}),
 	}
+}
+
+// SetAPIKeyConnection records which external connection created a temporary
+// login API key.
+func (s *SimpleAuthService) SetAPIKeyConnection(apiKey, provider, connectionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.apiKeyConnections == nil {
+		s.apiKeyConnections = make(map[string]apiKeyConnection)
+	}
+	s.apiKeyConnections[apiKey] = apiKeyConnection{provider: provider, connectionID: connectionID}
+}
+
+// ResolveAPIKeyConnection returns the external connection that issued a
+// temporary login API key, if any.
+func (s *SimpleAuthService) ResolveAPIKeyConnection(apiKey string) (string, string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	connection, ok := s.apiKeyConnections[apiKey]
+	return connection.provider, connection.connectionID, ok
 }
 
 // markShadowedLocked records a secret as authoritative under the named-token
@@ -470,6 +497,7 @@ func (s *SimpleAuthService) RevokeAPIKey(ctx context.Context, apiKey string) err
 	// Remove API key
 	delete(s.apiKeys, apiKey)
 	delete(s.keyToUserID, apiKey)
+	delete(s.apiKeyConnections, apiKey)
 
 	return nil
 }
