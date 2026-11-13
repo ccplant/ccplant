@@ -174,9 +174,6 @@ func notifyTerminationSuspend(ctx context.Context) error {
 		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
 	}
 	token := os.Getenv("SESSION_CONTROL_TOKEN")
-	if token == "" {
-		token = os.Getenv("PROVISIONER_TOKEN")
-	}
 	sessionID := terminationSessionID()
 	if proxy == "" || token == "" || sessionID == "" {
 		return fmt.Errorf("session control proxy URL, token and session ID are required")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,17 @@ func TestNotifyTerminationSuspendUsesLocalSessionControlEndpoint(t *testing.T) {
 	}
 	if gotAuthorization != "Bearer runner-control-token" {
 		t.Fatalf("Authorization = %q", gotAuthorization)
+	}
+}
+
+func TestNotifyTerminationSuspendRequiresSessionControlToken(t *testing.T) {
+	t.Setenv("PROVISIONER_LOCAL_PROXY_URL", "http://manager.invalid")
+	t.Setenv("SESSION_CONTROL_TOKEN", "")
+	t.Setenv("PROVISIONER_TOKEN", "upstream-token")
+	t.Setenv("AGENTAPI_ALLOCATED_SESSION_ID", "runner-1")
+
+	err := notifyTerminationSuspend(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("notifyTerminationSuspend error = %v, want a missing-credential error before any request", err)
 	}
 }
