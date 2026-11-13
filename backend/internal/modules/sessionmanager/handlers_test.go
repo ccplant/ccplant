@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -230,6 +231,24 @@ func TestProxySessionRequiresHMAC(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/remote-1/status", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestSessionProxyTargetRoutesHerdrRPCToProvisioner(t *testing.T) {
+	target, err := url.Parse("http://[2001:db8::1]:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	herdrTarget := sessionProxyTarget(target, "herdr/rpc")
+	if got, want := herdrTarget.String(), "http://[2001:db8::1]:9001"; got != want {
+		t.Fatalf("herdr target = %q, want %q", got, want)
+	}
+	if got, want := target.String(), "http://[2001:db8::1]:8080"; got != want {
+		t.Fatalf("original target mutated: got %q, want %q", got, want)
+	}
+	if got := sessionProxyTarget(target, "rpc"); got != target {
+		t.Fatal("ordinary runtime endpoint should keep its original target")
 	}
 }
 

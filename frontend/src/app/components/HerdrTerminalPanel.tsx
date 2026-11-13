@@ -62,6 +62,17 @@ export default function HerdrTerminalPanel({ client, sessionId, onClose }: Props
     }
   };
 
+  const interrupt = async () => {
+    if (!selected) return;
+    try {
+      await client.interruptHerdrTerminal(sessionId, selected);
+      await refreshOutput();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ターミナルを中断できませんでした');
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="herdr-core terminals">
       <div className="flex h-[80vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-xl dark:bg-gray-900">
@@ -89,7 +100,7 @@ export default function HerdrTerminalPanel({ client, sessionId, onClose }: Props
             <div className="mt-3 flex gap-2">
               <textarea value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send(); } }} disabled={!selected} rows={2} placeholder="プロンプトを入力（Ctrl/Cmd+Enter で送信）" className="min-w-0 flex-1 rounded border border-gray-300 bg-white p-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white" />
               <button type="button" onClick={() => void send()} disabled={!selected || !prompt.trim()} className="rounded bg-blue-600 px-4 text-sm text-white disabled:bg-gray-400">送信</button>
-              <button type="button" onClick={() => selected && void client.interruptHerdrTerminal(sessionId, selected)} disabled={!selected} className="rounded bg-red-600 px-3 text-sm text-white disabled:bg-gray-400">中断</button>
+              <button type="button" onClick={() => void interrupt()} disabled={!selected} className="rounded bg-red-600 px-3 text-sm text-white disabled:bg-gray-400">中断</button>
             </div>
           </section>
         </div>

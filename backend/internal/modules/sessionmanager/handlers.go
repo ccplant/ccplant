@@ -330,11 +330,7 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "invalid session runtime address")
 	}
 	suffix := strings.TrimPrefix(c.Request().URL.Path, "/"+sessionID+"/")
-	if suffix == "herdr/rpc" {
-		targetCopy := *target
-		target = &targetCopy
-		target.Host = net.JoinHostPort(target.Hostname(), "9001")
-	}
+	target = sessionProxyTarget(target, suffix)
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = -1
@@ -355,6 +351,15 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 	}
 	proxy.ServeHTTP(c.Response(), c.Request())
 	return nil
+}
+
+func sessionProxyTarget(target *url.URL, suffix string) *url.URL {
+	if suffix != "herdr/rpc" {
+		return target
+	}
+	targetCopy := *target
+	targetCopy.Host = net.JoinHostPort(target.Hostname(), "9001")
+	return &targetCopy
 }
 
 func (h *Handlers) workloadSuspended(ctx context.Context, sessionID string) bool {
