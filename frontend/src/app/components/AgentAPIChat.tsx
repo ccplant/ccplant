@@ -809,7 +809,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showControlPanel, setShowControlPanel] = useState(false);
-  const [showHerdrTerminals, setShowHerdrTerminals] = useState(false);
+  const [selectedHerdrTerminal, setSelectedHerdrTerminal] = useState('');
+  const [isHerdrActionPending, setIsHerdrActionPending] = useState(false);
+  const [herdrRefreshToken, setHerdrRefreshToken] = useState(0);
   const [showSecretModal, setShowSecretModal] = useState(false);
   const [secretValue, setSecretValue] = useState('');
   const [secretLifetime, setSecretLifetime] = useState(600);
@@ -823,6 +825,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   useEffect(() => {
     if (isInitialLoadComplete) setIsResuming(false);
   }, [isInitialLoadComplete]);
+
+  useEffect(() => {
+    setSelectedHerdrTerminal('');
+  }, [sessionId]);
 
   // Restore sidebar visibility from localStorage after mount
   useEffect(() => {
@@ -1877,6 +1883,41 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     }
   }, [inputValue, attachedImages, isLoading, isConnected, sessionId, agentStatus, loadRecentMessages, acpInfo, acpServerEnabled]);
 
+  const sendComposerMessage = useCallback(async () => {
+    if (!selectedHerdrTerminal) {
+      await sendMessage();
+      return;
+    }
+    const content = inputValue.trim();
+    if (!content || !sessionId || !agentAPIRef.current || isHerdrActionPending || !isConnected) return;
+
+    setIsHerdrActionPending(true);
+    setError(null);
+    try {
+      await agentAPIRef.current.sendHerdrTerminal(sessionId, selectedHerdrTerminal, content);
+      setInputValue('');
+      setHerdrRefreshToken(current => current + 1);
+    } catch (err) {
+      setError(`Herdr エージェントへの送信に失敗しました: ${err instanceof Error ? err.message : '不明なエラー'}`);
+    } finally {
+      setIsHerdrActionPending(false);
+    }
+  }, [inputValue, isConnected, isHerdrActionPending, selectedHerdrTerminal, sendMessage, sessionId]);
+
+  const interruptSelectedHerdr = useCallback(async () => {
+    if (!selectedHerdrTerminal || !sessionId || !agentAPIRef.current || isHerdrActionPending) return;
+    setIsHerdrActionPending(true);
+    setError(null);
+    try {
+      await agentAPIRef.current.interruptHerdrTerminal(sessionId, selectedHerdrTerminal);
+      setHerdrRefreshToken(current => current + 1);
+    } catch (err) {
+      setError(`Herdr エージェントを中断できませんでした: ${err instanceof Error ? err.message : '不明なエラー'}`);
+    } finally {
+      setIsHerdrActionPending(false);
+    }
+  }, [isHerdrActionPending, selectedHerdrTerminal, sessionId]);
+
   const sendStopSignal = async () => {
     if (!sessionId || !agentAPIRef.current) {
       setError('セッションが利用できません');
@@ -2022,7 +2063,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
 
       if (shouldSend) {
         e.preventDefault();
-        sendMessage();
+        void sendComposerMessage();
       }
     }
   };
@@ -2678,7 +2719,16 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 <button type="button" onClick={() => setSecretFeedback(null)} aria-label="通知を閉じる" className="ml-3 font-bold">×</button>
               </div>
             )}
-            {attachedImages.length > 0 && (
+            {sessionId && (
+              <HerdrTerminalPanel
+                client={agentAPI}
+                sessionId={sessionId}
+                selectedTerminal={selectedHerdrTerminal}
+                onSelectTerminal={setSelectedHerdrTerminal}
+                refreshToken={herdrRefreshToken}
+              />
+            )}
+            {!selectedHerdrTerminal && attachedImages.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-2">
                 {attachedImages.map((image, index) => (
                   <div key={`${image.name}:${index}`} className="relative">
@@ -2715,7 +2765,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              onPaste={handleImagePaste}
+              onPaste={selectedHerdrTerminal ? undefined : handleImagePaste}
               onFocus={() => {
                 // テンプレートの自動表示を無効化
               }}
@@ -2724,14 +2774,16 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               }}
               placeholder={
                 !isConnected || !isInitialLoadComplete
-                  ? "Connecting..." 
-                  : agentStatus?.status === 'running'
+                  ? "Connecting..."
+                  : selectedHerdrTerminal
+                    ? "選択した Herdr エージェントへ送信..."
+                    : agentStatus?.status === 'running'
                     ? "Agent is running, please wait..."
                     : "Write a comment..."
               }
               className="w-full resize-none border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[80px]"
               rows={3}
-              disabled={!isConnected || !isInitialLoadComplete || isLoading || agentStatus?.status === 'running'}
+              disabled={!isConnected || !isInitialLoadComplete || (selectedHerdrTerminal ? isHerdrActionPending : isLoading || agentStatus?.status === 'running')}
             />
             {showTemplates && templates.length > 0 && (
               <div className="absolute z-50 w-full bottom-full mb-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-y-auto">
@@ -2805,7 +2857,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   <button
                     type="button"
                     onClick={() => imageInputRef.current?.click()}
-                    disabled={!isConnected || isLoading || agentStatus?.status === 'running' || attachedImages.length >= 4}
+                    disabled={!!selectedHerdrTerminal || !isConnected || isLoading || agentStatus?.status === 'running' || attachedImages.length >= 4}
                     className="rounded-md bg-sky-600 px-2 py-2 text-xs text-white transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
                     title="画像をアップロード（最大4枚、ペースト対応）"
                     aria-label="画像を添付"
@@ -2866,27 +2918,27 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                       >
                         履歴・テンプレート
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowHerdrTerminals(true);
-                          setShowComposerMenu(false);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                      >
-                        herdr-core ターミナル
-                      </button>
                     </div>
                   )}
                 </div>
 
+                {selectedHerdrTerminal && (
+                  <button
+                    type="button"
+                    onClick={() => void interruptSelectedHerdr()}
+                    disabled={isHerdrActionPending || !isConnected}
+                    className="shrink-0 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
+                  >
+                    中断
+                  </button>
+                )}
                 <button
-                  onClick={() => sendMessage()}
-                  disabled={!isConnected || isLoading || (!inputValue.trim() && attachedImages.length === 0) || agentStatus?.status === 'running'}
+                  onClick={() => void sendComposerMessage()}
+                  disabled={!isConnected || (selectedHerdrTerminal ? isHerdrActionPending || !inputValue.trim() : isLoading || (!inputValue.trim() && attachedImages.length === 0) || agentStatus?.status === 'running')}
                   aria-label="Send"
-                  className="px-3 sm:px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm font-medium"
+                  className="shrink-0 px-3 sm:px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm font-medium"
                 >
-                  {isLoading ? 'Sending...' : 'Comment'}
+                  {selectedHerdrTerminal ? (isHerdrActionPending ? '送信中...' : 'Herdrへ送信') : (isLoading ? 'Sending...' : 'Comment')}
                 </button>
               </div>
             </div>
@@ -3269,13 +3321,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           questions={pendingAction.content.questions}
           onSubmit={handleAnswerSubmit}
           onClose={handleQuestionModalClose}
-        />
-      )}
-      {showHerdrTerminals && sessionId && (
-        <HerdrTerminalPanel
-          client={agentAPI}
-          sessionId={sessionId}
-          onClose={() => setShowHerdrTerminals(false)}
         />
       )}
     </div>
