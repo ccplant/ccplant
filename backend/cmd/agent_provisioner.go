@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -168,13 +169,16 @@ func runTerminationStateBackup(ctx context.Context) error {
 }
 
 func notifyTerminationSuspend(ctx context.Context) error {
-	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
-	token := os.Getenv("PROVISIONER_TOKEN")
-	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
-	if proxy == "" || token == "" || sessionID == "" {
-		return fmt.Errorf("PROVISIONER_PROXY_URL, PROVISIONER_TOKEN and AGENTAPI_SESSION_ID are required")
+	proxy := strings.TrimRight(os.Getenv("PROVISIONER_LOCAL_PROXY_URL"), "/")
+	if proxy == "" {
+		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
 	}
-	req, err := internalRequest(http.MethodPost, proxy+"/internal/session-state/"+sessionID+"/terminate", token, nil)
+	token := os.Getenv("SESSION_CONTROL_TOKEN")
+	sessionID := terminationSessionID()
+	if proxy == "" || token == "" || sessionID == "" {
+		return fmt.Errorf("session control proxy URL, token and session ID are required")
+	}
+	req, err := internalRequest(http.MethodPost, proxy+"/internal/session-state/"+url.PathEscape(sessionID)+"/terminate", token, nil)
 	if err != nil {
 		return err
 	}
@@ -187,6 +191,13 @@ func notifyTerminationSuspend(ctx context.Context) error {
 		return fmt.Errorf("termination suspend failed: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func terminationSessionID() string {
+	if allocatedID := os.Getenv("AGENTAPI_ALLOCATED_SESSION_ID"); allocatedID != "" {
+		return allocatedID
+	}
+	return os.Getenv("AGENTAPI_SESSION_ID")
 }
 
 func installAgentInstructions() error {

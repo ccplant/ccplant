@@ -107,6 +107,7 @@ func TestProvisionClearsStaleAbortedMarker(t *testing.T) {
 	}
 }
 func TestScheduleSessionSuspendFromReadyUsesSessionControlToken(t *testing.T) {
+	t.Setenv("AGENTAPI_ALLOCATED_SESSION_ID", "")
 	var gotPath, gotAuth string
 	manager := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")

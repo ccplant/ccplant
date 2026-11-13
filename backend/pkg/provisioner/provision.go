@@ -83,7 +83,7 @@ func recordWorkspaceRestored(sourceID string) error {
 func scheduleSessionSuspendFromReady(ctx context.Context) error {
 	proxy := sessionControlProxyURL()
 	token := os.Getenv("SESSION_CONTROL_TOKEN")
-	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
+	sessionID := sessionControlSessionID()
 	if proxy == "" || token == "" || sessionID == "" {
 		return nil
 	}

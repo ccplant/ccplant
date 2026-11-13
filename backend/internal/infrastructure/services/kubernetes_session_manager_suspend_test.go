@@ -132,6 +132,29 @@ func TestSuspendSessionOnTerminationRemovesDeploymentWithoutCheckpoint(t *testin
 	}
 }
 
+func TestSuspendSessionOnTerminationUsesCanonicalServiceWithoutLocalSession(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels: map[string]string{"agentapi.proxy/session-id": "session-1"},
+	}}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1", Namespace: "test-ns"}}
+	manager := newSuspendTestManager(t, service, deployment)
+
+	if err := manager.SuspendSessionOnTermination(context.Background(), "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.client.AppsV1().Deployments("test-ns").Get(context.Background(), deployment.Name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("deployment should be removed on termination suspend, got %v", err)
+	}
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Annotations[sessionSuspendedAtAnnotation] == "" {
+		t.Fatalf("suspended-at annotation was not persisted: %#v", stored.Annotations)
+	}
+}
+
 func TestAcquireSessionSuspendOwnershipIsExclusiveAndCanBeTakenOverAfterExpiry(t *testing.T) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
 		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
@@ -242,6 +265,37 @@ func TestScheduleSessionSuspendPreservesCanonicalPolicyAcrossReplicas(t *testing
 	}
 }
 
+func TestScheduleSessionSuspendPreservesCanonicalPolicyWithoutCachedSettings(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels: map[string]string{"agentapi.proxy/session-id": "session-1"},
+		Annotations: map[string]string{
+			sessionAutoSuspendEnabledAnnotation:      "true",
+			sessionAutoSuspendIdleSecondsAnnotation:  "60",
+			sessionAutoSuspendPolicySourceAnnotation: "resume",
+		},
+	}}
+	manager := newSuspendTestManager(t, service)
+	session := NewKubernetesSession("session-1", &entities.RunServerRequest{},
+		"agentapi-session-session-1", service.Name, "session-1-pvc", "test-ns", 9000, nil, nil)
+	manager.sessions[session.id] = session
+
+	if err := manager.ScheduleSessionSuspend(context.Background(), session.id); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, stored.Annotations[sessionSuspendAtAnnotation])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remaining := time.Until(deadline); remaining < 45*time.Second || remaining > 75*time.Second {
+		t.Fatalf("canonical one-minute policy was not preserved; remaining=%v annotations=%#v", remaining, stored.Annotations)
+	}
+}
+
 func TestResolveAutoSuspendPolicyForRemoteSessionWithoutLocalPersistence(t *testing.T) {
 	manager := newSuspendTestManager(t)
 	manager.config.SessionPersistence.Backend = ""
@@ -294,6 +348,35 @@ func TestReconcileInitializesMissingSuspendTimer(t *testing.T) {
 	}
 	if stored.Annotations[sessionSuspendAtAnnotation] == "" || stored.Annotations[sessionAutoSuspendIdleSecondsAnnotation] != "60" {
 		t.Fatalf("missing initialized suspend annotations: %#v", stored.Annotations)
+	}
+}
+
+func TestReconcileRepairsEnabledPolicyWithoutSuspendTimer(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels: map[string]string{"agentapi.proxy/session-id": "session-1"},
+		Annotations: map[string]string{
+			sessionAutoSuspendEnabledAnnotation:     "true",
+			sessionAutoSuspendIdleSecondsAnnotation: "60",
+		},
+	}}
+	manager := newSuspendTestManager(t, service)
+	enabled := true
+	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		AutoSuspendEnabled: &enabled, AutoSuspendMinutes: 1,
+	}}
+	session := NewKubernetesSession("session-1", &entities.RunServerRequest{ProvisionSettings: settings},
+		"agentapi-session-session-1", service.Name, "session-1-pvc", "test-ns", 9000, nil, nil)
+	manager.sessions[session.id] = session
+
+	manager.reconcileSessionSuspends(context.Background())
+
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Annotations[sessionSuspendAtAnnotation] == "" {
+		t.Fatalf("enabled policy without a deadline was not repaired: %#v", stored.Annotations)
 	}
 }
 

@@ -435,11 +435,13 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	if err != nil {
 		return err
 	}
-	// The Service is the canonical cross-replica policy. A non-leader replica
-	// may still have the pre-allocation request cached in memory; do not let it
-	// overwrite a newer policy applied by the elected control loop.
+	// The Service is the canonical cross-replica policy for allocation and resume
+	// settings. A replica restored from Kubernetes may not have those settings in
+	// memory, while another replica has already persisted them. Prefer that
+	// durable policy so a stable event cannot replace it with the manager default.
 	hasCachedPolicy := ks.Request() != nil && ks.Request().ProvisionSettings != nil && ks.Request().ProvisionSettings.Session.AutoSuspendEnabled != nil
-	if hasCachedPolicy && getErr == nil {
+	hasPersistedSessionPolicy := getErr == nil && svc.Annotations[sessionAutoSuspendPolicySourceAnnotation] == "resume"
+	if getErr == nil && (hasCachedPolicy || hasPersistedSessionPolicy) {
 		if rawEnabled, ok := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; ok {
 			if parsedEnabled, parseErr := strconv.ParseBool(rawEnabled); parseErr == nil {
 				enabled = parsedEnabled
@@ -762,14 +764,14 @@ func (m *KubernetesSessionManager) SuspendSessionOnTermination(ctx context.Conte
 	if !m.isPVCEnabled() {
 		return fmt.Errorf("termination suspend requires a PVC-backed session")
 	}
-	session, ok := m.GetSession(sessionID).(*KubernetesSession)
-	if !ok || session == nil {
-		return nil
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
+		if session.Status() == "suspended" {
+			return nil
+		}
+		serviceName = session.ServiceName()
 	}
-	if session.Status() == "suspended" {
-		return nil
-	}
-	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, session.ServiceName(), metav1.GetOptions{})
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
 		// Explicit session deletion removes the Service before the Pod finishes
 		// its SIGTERM handler. There is nothing left to suspend in that case.
@@ -1014,7 +1016,11 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 			continue
 		}
 		if svc.Annotations[sessionSuspendAtAnnotation] == "" && svc.Annotations[sessionSuspendedAtAnnotation] == "" {
-			if _, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; !policyKnown {
+			// A claimed stock runner can already have its allocation policy while
+			// still missing a deadline: ready raced with removal of the stock label.
+			// Reconcile both an unknown policy and an enabled policy without a timer.
+			policyEnabled, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]
+			if !policyKnown || policyEnabled == "true" {
 				if sessionID != "" {
 					if err := m.ScheduleSessionSuspend(ctx, sessionID); err != nil {
 						log.Printf("[K8S_SESSION] Failed to initialize suspend timer for session %s: %v", sessionID, err)
@@ -1551,17 +1557,8 @@ func (m *KubernetesSessionManager) publishStockSession(session *KubernetesSessio
 		return
 	}
 
-	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(context.Background(), session.ServiceName(), metav1.GetOptions{})
+	published, err := m.markStockServiceReady(context.Background(), session.ServiceName())
 	if err != nil {
-		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
-			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service lookup failure: %v", delErr)
-		}
-		cancel()
-		log.Printf("[K8S_SESSION] Failed to get stock service for session %s: %v", session.ID(), err)
-		return
-	}
-	stockSvc.Labels["agentapi.proxy/stock"] = "true"
-	if _, err := m.client.CoreV1().Services(m.namespace).Update(context.Background(), stockSvc, metav1.UpdateOptions{}); err != nil {
 		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service update failure: %v", delErr)
 		}
@@ -1569,8 +1566,33 @@ func (m *KubernetesSessionManager) publishStockSession(session *KubernetesSessio
 		log.Printf("[K8S_SESSION] Failed to mark stock session %s ready: %v", session.ID(), err)
 		return
 	}
+	if !published {
+		log.Printf("[K8S_SESSION] Stock session %s was allocated before it became ready; leaving its labels unchanged", session.ID())
+		return
+	}
 	log.Printf("[K8S_SESSION] Stock session %s created successfully (dind=%t)",
 		session.ID(), dind)
+}
+
+func (m *KubernetesSessionManager) markStockServiceReady(ctx context.Context, serviceName string) (bool, error) {
+	published := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		published = false
+		svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if svc.Labels["agentapi.proxy/stock"] != "creating" {
+			return nil
+		}
+		svc.Labels["agentapi.proxy/stock"] = "true"
+		if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		published = true
+		return nil
+	})
+	return published, err
 }
 
 func (m *KubernetesSessionManager) registerSessionRunner(ctx context.Context, runnerID, pool string, dind bool) (string, error) {
@@ -1770,6 +1792,13 @@ func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, se
 	}
 	if err := m.updateClaimedRunnerIdentityLabels(ctx, sessionID, settings); err != nil {
 		return err
+	}
+	// Ready may have been reported while this Service still carried the stock
+	// label. In that race ScheduleSessionSuspend intentionally does nothing, so
+	// schedule once more after the claim is durable. The reconciler also repairs
+	// this state if the best-effort call fails during a transient API outage.
+	if err := m.ScheduleSessionSuspend(ctx, sessionID); err != nil {
+		log.Printf("[K8S_SESSION] Failed to schedule suspend after claiming stock session %s: %v", sessionID, err)
 	}
 	return nil
 }
@@ -5144,6 +5173,11 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 		Ports: []corev1.ContainerPort{
 			{Name: "proxy", ContainerPort: int32(nfaProxyPort), Protocol: corev1.ProtocolTCP},
 		},
+		Lifecycle: &corev1.Lifecycle{
+			PreStop: &corev1.LifecycleHandler{
+				Exec: &corev1.ExecAction{Command: []string{"/bin/sh", "-c", networkFilterPreStopScript()}},
+			},
+		},
 	}
 
 	// Inject HTTP_PROXY / HTTPS_PROXY env vars into the main container so that
@@ -5164,6 +5198,12 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 	}
 
 	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
+}
+
+const networkFilterProvisionerDrainSeconds = 25
+
+func networkFilterPreStopScript() string {
+	return fmt.Sprintf(`i=0; while [ "$i" -lt %d ] && nc -z 127.0.0.1 %d; do sleep 1; i=$((i+1)); done`, networkFilterProvisionerDrainSeconds, provisionerPort)
 }
 
 func buildNFAConfig(sandbox *entities.SandboxParams) string {
