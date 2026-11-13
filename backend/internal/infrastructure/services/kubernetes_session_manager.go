@@ -1014,7 +1014,11 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 			continue
 		}
 		if svc.Annotations[sessionSuspendAtAnnotation] == "" && svc.Annotations[sessionSuspendedAtAnnotation] == "" {
-			if _, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; !policyKnown {
+			// A claimed stock runner can already have its allocation policy while
+			// still missing a deadline: ready raced with removal of the stock label.
+			// Reconcile both an unknown policy and an enabled policy without a timer.
+			policyEnabled, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]
+			if !policyKnown || policyEnabled == "true" {
 				if sessionID != "" {
 					if err := m.ScheduleSessionSuspend(ctx, sessionID); err != nil {
 						log.Printf("[K8S_SESSION] Failed to initialize suspend timer for session %s: %v", sessionID, err)
@@ -1786,6 +1790,13 @@ func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, se
 	}
 	if err := m.updateClaimedRunnerIdentityLabels(ctx, sessionID, settings); err != nil {
 		return err
+	}
+	// Ready may have been reported while this Service still carried the stock
+	// label. In that race ScheduleSessionSuspend intentionally does nothing, so
+	// schedule once more after the claim is durable. The reconciler also repairs
+	// this state if the best-effort call fails during a transient API outage.
+	if err := m.ScheduleSessionSuspend(ctx, sessionID); err != nil {
+		log.Printf("[K8S_SESSION] Failed to schedule suspend after claiming stock session %s: %v", sessionID, err)
 	}
 	return nil
 }

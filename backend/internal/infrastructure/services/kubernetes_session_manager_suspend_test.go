@@ -320,6 +320,35 @@ func TestReconcileInitializesMissingSuspendTimer(t *testing.T) {
 	}
 }
 
+func TestReconcileRepairsEnabledPolicyWithoutSuspendTimer(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels: map[string]string{"agentapi.proxy/session-id": "session-1"},
+		Annotations: map[string]string{
+			sessionAutoSuspendEnabledAnnotation:     "true",
+			sessionAutoSuspendIdleSecondsAnnotation: "60",
+		},
+	}}
+	manager := newSuspendTestManager(t, service)
+	enabled := true
+	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		AutoSuspendEnabled: &enabled, AutoSuspendMinutes: 1,
+	}}
+	session := NewKubernetesSession("session-1", &entities.RunServerRequest{ProvisionSettings: settings},
+		"agentapi-session-session-1", service.Name, "session-1-pvc", "test-ns", 9000, nil, nil)
+	manager.sessions[session.id] = session
+
+	manager.reconcileSessionSuspends(context.Background())
+
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Annotations[sessionSuspendAtAnnotation] == "" {
+		t.Fatalf("enabled policy without a deadline was not repaired: %#v", stored.Annotations)
+	}
+}
+
 func TestReconcileRestoresSuspendedSessionForStatusHeartbeat(t *testing.T) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
 		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",

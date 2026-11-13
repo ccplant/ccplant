@@ -1023,8 +1023,9 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	enabled := true
 	claimedSettings := &sessionsettings.SessionSettings{
-		Session: sessionsettings.SessionMeta{ID: "public-session", UserID: "alice", Scope: "user", AgentType: "codex-acp"},
+		Session: sessionsettings.SessionMeta{ID: "public-session", UserID: "alice", Scope: "user", AgentType: "codex-acp", AutoSuspendEnabled: &enabled, AutoSuspendMinutes: 1},
 		ParentRuntime: &sessionsettings.ParentRuntimeConfig{
 			Enabled: true, Endpoint: "https://parent.example.com", SessionID: "public-session",
 			ManagerID: "manager-a", Token: "runtime-token", Generation: 1,
@@ -1048,6 +1049,9 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 	}
 	if svc.Labels["agentapi.proxy/user-id"] != "alice" || svc.Labels["agentapi.proxy/scope"] != "user" {
 		t.Fatalf("service identity labels = %v, want alice/user", svc.Labels)
+	}
+	if svc.Annotations[sessionSuspendAtAnnotation] == "" {
+		t.Fatalf("claimed runner missing suspend timer: %#v", svc.Annotations)
 	}
 	pod, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, "agentapi-session-"+sessionID, metav1.GetOptions{})
 	if err != nil {
