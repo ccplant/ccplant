@@ -215,6 +215,31 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 			if err := os.WriteFile(marker, []byte("parked\n"), 0o600); err != nil {
 				return fmt.Errorf("mark herdr terminals parked: %w", err)
 			}
+			list := exec.CommandContext(ctx, "hc", "ls")
+			output, err := list.Output()
+			if err != nil {
+				_ = os.Remove(marker)
+				return fmt.Errorf("list herdr terminals before parking: %w", err)
+			}
+			var terminals struct {
+				Terminals []struct {
+					Address string `json:"address"`
+				} `json:"terminals"`
+			}
+			if err := json.Unmarshal(output, &terminals); err != nil {
+				_ = os.Remove(marker)
+				return fmt.Errorf("decode herdr terminals before parking: %w", err)
+			}
+			for _, terminal := range terminals.Terminals {
+				if terminal.Address == "" {
+					continue
+				}
+				keep := exec.CommandContext(ctx, "hc", "keep", terminal.Address)
+				if output, err := keep.CombinedOutput(); err != nil {
+					_ = os.Remove(marker)
+					return fmt.Errorf("keep herdr terminal %s before parking: %w: %s", terminal.Address, err, strings.TrimSpace(string(output)))
+				}
+			}
 			park := exec.CommandContext(ctx, "hc", "server", "stop")
 			if output, err := park.CombinedOutput(); err != nil {
 				_ = os.Remove(marker)

@@ -69,7 +69,7 @@ func TestExecuteControlCommandParksHerdrAfterCheckpoint(t *testing.T) {
 	t.Setenv("TMPDIR", dir)
 	marker := filepath.Join(dir, "parked")
 	hc := filepath.Join(dir, "hc")
-	if err := os.WriteFile(hc, []byte("#!/bin/sh\nprintf '%s' \"$*\" > \"$HC_TEST_MARKER\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(hc, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HC_TEST_MARKER\"\nif [ \"$*\" = 'ls' ]; then\n  printf '%s\\n' '{\"terminals\":[{\"address\":\"t1\"},{\"address\":\"t2\"}]}'\nfi\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -84,8 +84,8 @@ func TestExecuteControlCommandParksHerdrAfterCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "server stop" {
-		t.Fatalf("hc args = %q, want server stop", got)
+	if string(got) != "ls\nkeep t1\nkeep t2\nserver stop\n" {
+		t.Fatalf("hc calls = %q", got)
 	}
 	if _, err := os.Stat(herdrParkMarkerPath()); err != nil {
 		t.Fatalf("park marker: %v", err)
