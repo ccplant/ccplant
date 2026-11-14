@@ -294,6 +294,10 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 			}
 		}, allocator.Stop)
 	} else {
+		// Runtime configuration is process-local. Every replica can serve lifecycle
+		// requests, so each one must apply the parent profile even though only the
+		// elected leader owns allocation polling and manager heartbeats.
+		go runSessionRunnerRuntimeProfilePoller(runtimeCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, manager)
 		instanceID, _ := os.Hostname()
 		if instanceID == "" {
 			instanceID = uuid.NewString()
@@ -338,6 +342,25 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+}
+
+func runSessionRunnerRuntimeProfilePoller(ctx context.Context, upstream, managerID, token string, manager *services.KubernetesSessionManager) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	appliedRevision := ""
+	for {
+		if revision, err := syncSessionRunnerRuntimeProfile(ctx, client, upstream, managerID, token, appliedRevision, manager); err != nil {
+			log.Printf("[SESSION_MANAGER] Runner runtime profile sync failed: %v", err)
+		} else if revision != "" {
+			appliedRevision = revision
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 type leaderElectionRunner interface {
