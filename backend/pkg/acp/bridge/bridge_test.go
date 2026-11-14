@@ -1,15 +1,50 @@
 package bridge
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/pkg/acp"
 )
+
+func TestFinishPromptPersistsContextCancellationAsCancelledResult(t *testing.T) {
+	b := New(nil, "session-1", false, "", false)
+	historyFile := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := b.SetHistoryFile(historyFile); err != nil {
+		t.Fatal(err)
+	}
+
+	clientID := json.RawMessage(`7`)
+	b.finishPrompt(clientID, "", fmt.Errorf("acp session/prompt: %w", context.Canceled))
+
+	data, err := os.ReadFile(historyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got jsonRPCMsg
+	if err := json.Unmarshal(bytes.TrimSpace(data), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Error != nil {
+		t.Fatalf("persisted cancellation as RPC error: %#v", got.Error)
+	}
+	result, ok := got.Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("result type = %T, want map[string]interface{}", got.Result)
+	}
+	if result["stopReason"] != string(acp.StopReasonCancelled) {
+		t.Fatalf("stopReason = %v, want %q", result["stopReason"], acp.StopReasonCancelled)
+	}
+}
 
 func TestMessagesReturnsMessagesSinceLastUserMessage(t *testing.T) {
 	b := New(nil, "session-1", false, "", false)

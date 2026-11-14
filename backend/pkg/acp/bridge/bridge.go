@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -122,6 +123,12 @@ func (b *Bridge) SetHistoryFile(path string) error {
 			continue
 		}
 		raw := append(json.RawMessage(nil), line...)
+		// Older runtimes persisted shutdown cancellation as an RPC error. Drop
+		// that known-invalid terminal record when restoring history so sessions
+		// suspended before the fix do not reopen in an error state.
+		if isPromptContextCanceledErrorRaw(raw) {
+			continue
+		}
 		if isUserMessageRaw(raw) {
 			b.lastUserMessageIdx = len(b.history)
 			b.userMessageIndices = append(b.userMessageIndices, len(b.history))
@@ -130,6 +137,14 @@ func (b *Bridge) SetHistoryFile(path string) error {
 	}
 	b.restoredHistory = len(b.history) > 0
 	return nil
+}
+
+func isPromptContextCanceledErrorRaw(raw json.RawMessage) bool {
+	var msg struct {
+		Error *rpcError `json:"error"`
+	}
+	return json.Unmarshal(raw, &msg) == nil && msg.Error != nil &&
+		msg.Error.Code == -32000 && msg.Error.Message == "acp session/prompt: context canceled"
 }
 
 func isTranscriptKind(kind acp.SessionUpdateKind) bool {
@@ -639,12 +654,26 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 
 	go func() {
 		stopReason, err := b.acp.PromptBlocks(promptCtx, prompt)
+		b.finishPrompt(clientID, stopReason, err)
+	}()
 
-		// Flush any chunk that was still buffered when the agent turn ended.
-		b.flushChunkBuffer()
-		b.setStatus("stable")
+	return nil
+}
 
-		if err != nil {
+func (b *Bridge) finishPrompt(clientID json.RawMessage, stopReason acp.StopReason, err error) {
+	// Flush any chunk that was still buffered when the agent turn ended.
+	b.flushChunkBuffer()
+	b.setStatus("stable")
+
+	if err != nil {
+		// A client cancellation or server shutdown interrupts the in-flight ACP
+		// request with context.Canceled. This is a normal cancelled turn, not an
+		// agent failure. Persisting it as a JSON-RPC error makes a suspended
+		// session reopen in an error state after its history is restored.
+		if errors.Is(err, context.Canceled) {
+			stopReason = acp.StopReasonCancelled
+			log.Printf("[bridge] Prompt cancelled (session=%s)", b.sessionId)
+		} else {
 			log.Printf("[bridge] Prompt error (session=%s): %v", b.sessionId, err)
 			b.broadcast(jsonRPCMsg{
 				JSONRPC: "2.0",
@@ -653,15 +682,14 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 			})
 			return
 		}
-		log.Printf("[bridge] Prompt done (session=%s, stopReason=%s)", b.sessionId, stopReason)
-		b.broadcast(jsonRPCMsg{
-			JSONRPC: "2.0",
-			ID:      &clientID,
-			Result:  acp.PromptResult{StopReason: stopReason},
-		})
-	}()
+	}
 
-	return nil
+	log.Printf("[bridge] Prompt done (session=%s, stopReason=%s)", b.sessionId, stopReason)
+	b.broadcast(jsonRPCMsg{
+		JSONRPC: "2.0",
+		ID:      &clientID,
+		Result:  acp.PromptResult{StopReason: stopReason},
+	})
 }
 
 // HandleReply routes a JSON-RPC result from the HTTP client to a pending

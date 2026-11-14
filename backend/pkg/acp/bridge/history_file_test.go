@@ -110,6 +110,28 @@ func TestSetHistoryFileRestoresRawMessages(t *testing.T) {
 	}
 }
 
+func TestSetHistoryFileDropsLegacyPromptContextCancellationError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	history := strings.Join([]string{
+		`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hello"}}}}`,
+		`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"acp session/prompt: context canceled"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(history), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	b := New(nil, "session", false, "", false)
+	if err := b.SetHistoryFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.history) != 1 {
+		t.Fatalf("restored history length = %d, want 1", len(b.history))
+	}
+	if b.UserPromptCount() != 1 {
+		t.Fatalf("user prompt count = %d, want 1", b.UserPromptCount())
+	}
+}
+
 func TestEmitUpdateDropsSessionLoadReplayWithDifferentShape(t *testing.T) {
 	b := restoredBridge(t, ad1aRestored...)
 	want := historyKinds(t, b)
