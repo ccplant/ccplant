@@ -27,6 +27,10 @@ var (
 	errSessionSetupFailed     = errors.New("session state checkpoint rejected: session setup failed before session state was restored")
 )
 
+func herdrParkMarkerPath() string {
+	return filepath.Join(os.TempDir(), "agentapi-herdr-parked")
+}
+
 func sessionSetupCheckpointError(sessionID string) error {
 	if sessionID == "" {
 		return nil
@@ -193,6 +197,7 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 		cmd.Env = append(os.Environ(), "AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1", "AGENTAPI_AGENT_TYPE="+agentType)
 		var checkpoint struct {
 			SnapshotID string `json:"snapshot_id"`
+			ParkHerdr  bool   `json:"park_herdr"`
 		}
 		_ = json.Unmarshal(command.Payload, &checkpoint)
 		if err := sessionSetupCheckpointError(os.Getenv("AGENTAPI_SESSION_ID")); err != nil {
@@ -204,6 +209,42 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("backup session state: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		if checkpoint.ParkHerdr {
+			marker := herdrParkMarkerPath()
+			if err := os.WriteFile(marker, []byte("parked\n"), 0o600); err != nil {
+				return fmt.Errorf("mark herdr terminals parked: %w", err)
+			}
+			list := exec.CommandContext(ctx, "hc", "ls")
+			output, err := list.Output()
+			if err != nil {
+				_ = os.Remove(marker)
+				return fmt.Errorf("list herdr terminals before parking: %w", err)
+			}
+			var terminals struct {
+				Terminals []struct {
+					Address string `json:"address"`
+				} `json:"terminals"`
+			}
+			if err := json.Unmarshal(output, &terminals); err != nil {
+				_ = os.Remove(marker)
+				return fmt.Errorf("decode herdr terminals before parking: %w", err)
+			}
+			for _, terminal := range terminals.Terminals {
+				if terminal.Address == "" {
+					continue
+				}
+				keep := exec.CommandContext(ctx, "hc", "keep", terminal.Address)
+				if output, err := keep.CombinedOutput(); err != nil {
+					_ = os.Remove(marker)
+					return fmt.Errorf("keep herdr terminal %s before parking: %w: %s", terminal.Address, err, strings.TrimSpace(string(output)))
+				}
+			}
+			park := exec.CommandContext(ctx, "hc", "server", "stop")
+			if output, err := park.CombinedOutput(); err != nil {
+				_ = os.Remove(marker)
+				return fmt.Errorf("park herdr terminals: %w: %s", err, strings.TrimSpace(string(output)))
+			}
 		}
 		return nil
 	default:

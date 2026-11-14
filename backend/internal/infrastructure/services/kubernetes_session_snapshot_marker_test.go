@@ -21,9 +21,10 @@ import (
 )
 
 type snapshotMarkerFixture struct {
-	manager *KubernetesSessionManager
-	client  *fake.Clientset
-	session *KubernetesSession
+	manager              *KubernetesSessionManager
+	client               *fake.Clientset
+	session              *KubernetesSession
+	checkpointRawQueries []string
 }
 
 func newSnapshotMarkerFixture(t *testing.T, checkpointStatus int) *snapshotMarkerFixture {
@@ -34,7 +35,8 @@ func newSnapshotMarkerFixture(t *testing.T, checkpointStatus int) *snapshotMarke
 func newSnapshotMarkerFixtureWithCheckpoint(t *testing.T, checkpoint func(*snapshotMarkerFixture) int) *snapshotMarkerFixture {
 	t.Helper()
 	fixture := &snapshotMarkerFixture{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fixture.checkpointRawQueries = append(fixture.checkpointRawQueries, r.URL.RawQuery)
 		w.WriteHeader(checkpoint(fixture))
 	}))
 	t.Cleanup(server.Close)
@@ -108,6 +110,9 @@ func TestIdleSuspendRecordsOwnResumeSourceAfterCheckpoint(t *testing.T) {
 	if fixture.deploymentExists(t) {
 		t.Fatal("suspend kept the workload")
 	}
+	if len(fixture.checkpointRawQueries) != 1 || !strings.Contains(fixture.checkpointRawQueries[0], "park_herdr=true") {
+		t.Fatalf("checkpoint queries = %v, want park_herdr=true", fixture.checkpointRawQueries)
+	}
 }
 
 func TestIdleSuspendWritesNothingWhenCheckpointFails(t *testing.T) {
@@ -147,6 +152,9 @@ func TestPauseWithParentSettingsRecordsOwnResumeSourceAfterCheckpoint(t *testing
 	stored := fixture.stored(t)
 	if stored.Session.ResumeFrom != "public-1" || !stored.Paused || stored.InitialMessage != "replacement" {
 		t.Fatalf("paused settings resume_from=%q paused=%v initial_message=%q", stored.Session.ResumeFrom, stored.Paused, stored.InitialMessage)
+	}
+	if len(fixture.checkpointRawQueries) != 1 || strings.Contains(fixture.checkpointRawQueries[0], "park_herdr") {
+		t.Fatalf("checkpoint queries = %v, pause must not park herdr", fixture.checkpointRawQueries)
 	}
 }
 

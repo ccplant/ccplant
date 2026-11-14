@@ -295,7 +295,10 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 	}
 	if command.Method == http.MethodPost && command.Path == "/internal/checkpoint-session-state" {
 		query, _ := url.ParseQuery(command.RawQuery)
-		payload, _ := json.Marshal(map[string]string{"snapshot_id": query.Get("snapshot_id")})
+		payload, _ := json.Marshal(map[string]interface{}{
+			"snapshot_id": query.Get("snapshot_id"),
+			"park_herdr":  query.Get("park_herdr") == "true",
+		})
 		err := executeControlCommand(commandCtx, w.client, w.checkpointAgentType(commandCtx), controlCommand{Type: "checkpoint_session_state", Payload: payload})
 		if status := sessionSetupCheckpointStatus(err); status != 0 {
 			_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: status, Done: true, CreatedAt: time.Now().UTC()}})

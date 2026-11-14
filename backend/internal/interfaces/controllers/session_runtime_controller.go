@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
@@ -43,6 +44,13 @@ func (c *SessionRuntimeController) Checkpoint(ctx echo.Context) error {
 	target := "http://session.local/internal/checkpoint-session-state"
 	if snapshotID := ctx.QueryParam("snapshot_id"); snapshotID != "" {
 		target += "?snapshot_id=" + url.QueryEscape(snapshotID)
+	}
+	if ctx.QueryParam("park_herdr") == "true" {
+		separator := "?"
+		if strings.Contains(target, "?") {
+			separator = "&"
+		}
+		target += separator + "park_herdr=true"
 	}
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, target, nil)
 	if err != nil {

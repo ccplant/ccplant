@@ -731,7 +731,7 @@ func (m *KubernetesSessionManager) suspendSessionIf(ctx context.Context, session
 	}
 	saved := false
 	if m.requiresSessionCheckpoint(ks) {
-		if err := m.checkpointSessionStateWithSettings(ctx, sessionID, "", settings); err != nil {
+		if err := m.checkpointSessionStateWithSettings(ctx, sessionID, "", settings, true); err != nil {
 			_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
 			return fmt.Errorf("checkpoint session state: %w", err)
 		}
@@ -852,10 +852,10 @@ func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, s
 	if len(snapshotID) > 0 {
 		templateID = snapshotID[0]
 	}
-	return m.checkpointSessionStateWithSettings(ctx, sessionID, templateID, nil)
+	return m.checkpointSessionStateWithSettings(ctx, sessionID, templateID, nil, false)
 }
 
-func (m *KubernetesSessionManager) checkpointSessionStateWithSettings(ctx context.Context, sessionID, templateID string, override *sessionsettings.SessionSettings) error {
+func (m *KubernetesSessionManager) checkpointSessionStateWithSettings(ctx context.Context, sessionID, templateID string, override *sessionsettings.SessionSettings, parkHerdr bool) error {
 	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
 		settings := session.ProvisionSettings()
 		if override != nil {
@@ -870,7 +870,7 @@ func (m *KubernetesSessionManager) checkpointSessionStateWithSettings(ctx contex
 			}
 		}
 		if settings != nil && settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
-			return requestParentSessionCheckpoint(ctx, settings.ParentRuntime, templateID)
+			return requestParentSessionCheckpoint(ctx, settings.ParentRuntime, templateID, parkHerdr)
 		}
 	}
 	store := m.connectedSessionControlStore(ctx, sessionID)
@@ -878,7 +878,7 @@ func (m *KubernetesSessionManager) checkpointSessionStateWithSettings(ctx contex
 		return fmt.Errorf("session control is unavailable")
 	}
 	commandID := uuid.NewString()
-	payload, _ := json.Marshal(map[string]string{"snapshot_id": templateID})
+	payload, _ := json.Marshal(map[string]interface{}{"snapshot_id": templateID, "park_herdr": parkHerdr})
 	if _, err := store.EnqueueCommand(ctx, sessionID, coresessioncontrol.Command{ID: commandID, Type: "checkpoint_session_state", Payload: payload, CreatedAt: time.Now().UTC()}); err != nil {
 		return err
 	}
@@ -948,10 +948,13 @@ func (m *KubernetesSessionManager) CreateSessionContextSnapshot(ctx context.Cont
 	return m.checkpointSessionState(ctx, sessionID, snapshotID)
 }
 
-func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsettings.ParentRuntimeConfig, snapshotID string) error {
+func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsettings.ParentRuntimeConfig, snapshotID string, parkHerdr bool) error {
 	endpoint := strings.TrimRight(runtime.Endpoint, "/") + "/internal/session-runtime/" + url.PathEscape(runtime.SessionID) + "/checkpoint?generation=" + strconv.FormatInt(runtime.Generation, 10)
 	if snapshotID != "" {
 		endpoint += "&snapshot_id=" + url.QueryEscape(snapshotID)
+	}
+	if parkHerdr {
+		endpoint += "&park_herdr=true"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {

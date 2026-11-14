@@ -214,6 +214,10 @@ func (s *Server) handleHerdrRPC(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if _, err := os.Stat(herdrParkMarkerPath()); err == nil {
+		http.Error(w, "herdr-core is parked for session suspend", http.StatusServiceUnavailable)
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		http.Error(w, "invalid JSON-RPC request", http.StatusBadRequest)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -60,6 +61,34 @@ func TestExecuteControlCommandCheckpointsThroughProxyBinary(t *testing.T) {
 	err := executeControlCommand(context.Background(), http.DefaultClient, "codex-acp", controlCommand{Type: "checkpoint_session_state"})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExecuteControlCommandParksHerdrAfterCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	marker := filepath.Join(dir, "parked")
+	hc := filepath.Join(dir, "hc")
+	if err := os.WriteFile(hc, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HC_TEST_MARKER\"\nif [ \"$*\" = 'ls' ]; then\n  printf '%s\\n' '{\"terminals\":[{\"address\":\"t1\"},{\"address\":\"t2\"}]}'\nfi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HC_TEST_MARKER", marker)
+	t.Setenv("AGENTAPI_SESSION_ID", "")
+	t.Setenv("CCPLANT_BINARY_PATH", "/bin/true")
+	payload := json.RawMessage(`{"park_herdr":true}`)
+	if err := executeControlCommand(context.Background(), http.DefaultClient, "codex-acp", controlCommand{Type: "checkpoint_session_state", Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "ls\nkeep t1\nkeep t2\nserver stop\n" {
+		t.Fatalf("hc calls = %q", got)
+	}
+	if _, err := os.Stat(herdrParkMarkerPath()); err != nil {
+		t.Fatalf("park marker: %v", err)
 	}
 }
 
