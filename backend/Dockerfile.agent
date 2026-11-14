@@ -52,9 +52,9 @@ RUN ARCH=$(dpkg --print-architecture) && \
     chmod +x /usr/local/bin/acp-posts
 
 # Install a pinned herdr-core release for persistent terminal-based agent sessions.
-ARG HERDR_CORE_VERSION=0.1.19
-ARG HERDR_CORE_SHA256_AMD64=4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424
-ARG HERDR_CORE_SHA256_ARM64=f95c34fd7177ed58807d74fe4ee78bb3dc73eb37f21c69496064000a21abcb10
+ARG HERDR_CORE_VERSION=0.1.21
+ARG HERDR_CORE_SHA256_AMD64=78424755c10a40dde38a0bdb55c20ac19706e9ae05ed68fc2acf1fcff0d941c1
+ARG HERDR_CORE_SHA256_ARM64=e844a2bfab48a226097679d076bc83042fe57fccef5387ef802e5b24e78b529a
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) HERDR_CORE_ARCH="x86_64"; HERDR_CORE_SHA256="$HERDR_CORE_SHA256_AMD64" ;; \
