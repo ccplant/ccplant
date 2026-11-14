@@ -54,7 +54,7 @@ export default function HerdrTerminalPanel({ client, sessionId, selectedTerminal
   const selectedState = selected?.status?.state || selected?.state;
 
   return (
-    <div className="mb-2 overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/60">
+    <div className="mb-2 min-w-0 max-w-full overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/60">
       <div className="flex items-center gap-2 px-2 py-1.5">
         <label htmlFor="herdr-agent-select" className="shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">Herdr</label>
         {selected && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${selectedState === 'running' ? 'bg-emerald-400' : 'bg-gray-400'}`} aria-hidden="true" />}

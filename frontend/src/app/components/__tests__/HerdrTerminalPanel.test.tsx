@@ -26,11 +26,12 @@ describe('HerdrTerminalPanel', () => {
       { address: 'term-2', name: 'reviewer', state: 'idle' },
     ])
     const onSelect = vi.fn()
-    const { rerender } = render(
+    const { container, rerender } = render(
       <HerdrTerminalPanel client={client} sessionId="session-1" selectedTerminal="" onSelectTerminal={onSelect} />,
     )
 
     const agentSelect = await screen.findByRole('combobox', { name: 'Herdr エージェント' })
+    expect(container.firstElementChild).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
     expect(screen.getAllByRole('option')).toHaveLength(3)
     fireEvent.change(agentSelect, { target: { value: 'term-1' } })
     expect(onSelect).toHaveBeenCalledWith('term-1')
