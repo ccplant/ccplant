@@ -123,6 +123,12 @@ func (b *Bridge) SetHistoryFile(path string) error {
 			continue
 		}
 		raw := append(json.RawMessage(nil), line...)
+		// Older runtimes persisted shutdown cancellation as an RPC error. Drop
+		// that known-invalid terminal record when restoring history so sessions
+		// suspended before the fix do not reopen in an error state.
+		if isPromptContextCanceledErrorRaw(raw) {
+			continue
+		}
 		if isUserMessageRaw(raw) {
 			b.lastUserMessageIdx = len(b.history)
 			b.userMessageIndices = append(b.userMessageIndices, len(b.history))
@@ -131,6 +137,14 @@ func (b *Bridge) SetHistoryFile(path string) error {
 	}
 	b.restoredHistory = len(b.history) > 0
 	return nil
+}
+
+func isPromptContextCanceledErrorRaw(raw json.RawMessage) bool {
+	var msg struct {
+		Error *rpcError `json:"error"`
+	}
+	return json.Unmarshal(raw, &msg) == nil && msg.Error != nil &&
+		msg.Error.Code == -32000 && msg.Error.Message == "acp session/prompt: context canceled"
 }
 
 func isTranscriptKind(kind acp.SessionUpdateKind) bool {
