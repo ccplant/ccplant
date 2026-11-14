@@ -27,6 +27,10 @@ var (
 	errSessionSetupFailed     = errors.New("session state checkpoint rejected: session setup failed before session state was restored")
 )
 
+func herdrParkMarkerPath() string {
+	return filepath.Join(os.TempDir(), "agentapi-herdr-parked")
+}
+
 func sessionSetupCheckpointError(sessionID string) error {
 	if sessionID == "" {
 		return nil
@@ -207,8 +211,13 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 			return fmt.Errorf("backup session state: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 		if checkpoint.ParkHerdr {
+			marker := herdrParkMarkerPath()
+			if err := os.WriteFile(marker, []byte("parked\n"), 0o600); err != nil {
+				return fmt.Errorf("mark herdr terminals parked: %w", err)
+			}
 			park := exec.CommandContext(ctx, "hc", "server", "stop")
 			if output, err := park.CombinedOutput(); err != nil {
+				_ = os.Remove(marker)
 				return fmt.Errorf("park herdr terminals: %w: %s", err, strings.TrimSpace(string(output)))
 			}
 		}

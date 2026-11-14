@@ -66,6 +66,7 @@ func TestExecuteControlCommandCheckpointsThroughProxyBinary(t *testing.T) {
 
 func TestExecuteControlCommandParksHerdrAfterCheckpoint(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
 	marker := filepath.Join(dir, "parked")
 	hc := filepath.Join(dir, "hc")
 	if err := os.WriteFile(hc, []byte("#!/bin/sh\nprintf '%s' \"$*\" > \"$HC_TEST_MARKER\"\n"), 0o755); err != nil {
@@ -85,6 +86,9 @@ func TestExecuteControlCommandParksHerdrAfterCheckpoint(t *testing.T) {
 	}
 	if string(got) != "server stop" {
 		t.Fatalf("hc args = %q, want server stop", got)
+	}
+	if _, err := os.Stat(herdrParkMarkerPath()); err != nil {
+		t.Fatalf("park marker: %v", err)
 	}
 }
 

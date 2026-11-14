@@ -42,3 +42,18 @@ func TestHerdrRPCRejectsProcessControlMethods(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestHerdrRPCDoesNotRestartParkedCore(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	if err := os.WriteFile(herdrParkMarkerPath(), []byte("parked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/herdr/rpc", strings.NewReader(`{"jsonrpc":"2.0","id":9,"method":"terminal.list"}`))
+	rec := httptest.NewRecorder()
+	New(9001, "").handleHerdrRPC(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
