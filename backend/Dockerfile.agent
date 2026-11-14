@@ -104,6 +104,10 @@ RUN ln -s /opt/ccplant/bin/ccplant /usr/local/bin/ccplant
 # Switch to non-root user
 USER agentapi
 
+# Herdr terminals are deliberately parked before a suspended workload is
+# removed. Replay their saved screen above the recovery shell after resume.
+COPY --chown=agentapi:agentapi config/herdr-core.toml /home/agentapi/.config/herdr-core/config.toml
+
 # Configure global gitignore for .claude, .codex directories and mise.toml
 COPY config/gitignore_global /home/agentapi/.gitignore_global
 RUN git config --global core.excludesfile ~/.gitignore_global
