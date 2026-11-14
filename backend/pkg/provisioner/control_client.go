@@ -193,6 +193,7 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 		cmd.Env = append(os.Environ(), "AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1", "AGENTAPI_AGENT_TYPE="+agentType)
 		var checkpoint struct {
 			SnapshotID string `json:"snapshot_id"`
+			ParkHerdr  bool   `json:"park_herdr"`
 		}
 		_ = json.Unmarshal(command.Payload, &checkpoint)
 		if err := sessionSetupCheckpointError(os.Getenv("AGENTAPI_SESSION_ID")); err != nil {
@@ -204,6 +205,12 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("backup session state: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		if checkpoint.ParkHerdr {
+			park := exec.CommandContext(ctx, "hc", "server", "stop")
+			if output, err := park.CombinedOutput(); err != nil {
+				return fmt.Errorf("park herdr terminals: %w: %s", err, strings.TrimSpace(string(output)))
+			}
 		}
 		return nil
 	default:
