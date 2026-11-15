@@ -255,6 +255,18 @@ type RuntimeProfile struct {
 	Version    int                      `yaml:"version" json:"version"`
 	Kubernetes KubernetesRuntimeProfile `yaml:"kubernetes" json:"kubernetes"`
 	Scia       SciaRuntimeProfile       `yaml:"scia" json:"scia"`
+	Moli       MoliRuntimeProfile       `yaml:"moli" json:"moli"`
+}
+
+type MoliRuntimeProfile struct {
+	Enabled       bool   `yaml:"enabled" json:"enabled"`
+	Image         string `yaml:"image" json:"image"`
+	Port          int    `yaml:"port" json:"port"`
+	Layout        bool   `yaml:"layout" json:"layout"`
+	CPURequest    string `yaml:"cpu_request" json:"cpu_request"`
+	CPULimit      string `yaml:"cpu_limit" json:"cpu_limit"`
+	MemoryRequest string `yaml:"memory_request" json:"memory_request"`
+	MemoryLimit   string `yaml:"memory_limit" json:"memory_limit"`
 }
 
 type KubernetesRuntimeProfile struct {

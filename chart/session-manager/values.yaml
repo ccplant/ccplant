@@ -119,6 +119,14 @@ session:
     resources:
       requests: {cpu: "10m", memory: "512Mi"}
       limits: {cpu: "2", memory: "4Gi"}
+  moli:
+    enabled: false
+    image: ghcr.io/ccplant/ccplant-browser:moli-1.1.24
+    port: 9222
+    layout: false
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: "1", memory: 512Mi}
   # Scheduling rules for the session Pods created by this manager.
   nodeSelector: {}
   affinity: {}

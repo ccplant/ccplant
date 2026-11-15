@@ -586,6 +586,14 @@ spec:
               value: {{ dig "executor" "resources" "requests" "memory" "512Mi" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_LIMIT
               value: {{ dig "executor" "resources" "limits" "memory" "4Gi" .Values.kubernetesSession | quote }}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_ENABLED, value: {{ dig "moli" "enabled" false .Values.kubernetesSession | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_IMAGE, value: {{ dig "moli" "image" "ghcr.io/ccplant/ccplant-browser:moli-1.1.24" .Values.kubernetesSession | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_PORT, value: {{ dig "moli" "port" 9222 .Values.kubernetesSession | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_LAYOUT, value: {{ dig "moli" "layout" false .Values.kubernetesSession | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_CPU_REQUEST, value: {{ dig "moli" "resources" "requests" "cpu" "100m" .Values.kubernetesSession | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_CPU_LIMIT, value: {{ dig "moli" "resources" "limits" "cpu" "1" .Values.kubernetesSession | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_MEMORY_REQUEST, value: {{ dig "moli" "resources" "requests" "memory" "128Mi" .Values.kubernetesSession | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_MEMORY_LIMIT, value: {{ dig "moli" "resources" "limits" "memory" "512Mi" .Values.kubernetesSession | quote }}}
             - name: AGENTAPI_K8S_SESSION_PVC_ENABLED
               value: {{ .Values.kubernetesSession.pvc.enabled | quote }}
             - name: AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS

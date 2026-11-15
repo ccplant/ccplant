@@ -278,6 +278,12 @@ jobs:
     with:
       source_ref: ${{ needs.prepare-manual.outputs.source_sha }}
 
+  manual-browser-image:
+    needs: prepare-manual
+    uses: ./.github/workflows/browser-image.yml
+    with:
+      source_ref: ${{ needs.prepare-manual.outputs.source_sha }}
+
   publish-manual-dev-images:
     needs: prepare-manual
     runs-on: ubuntu-latest
@@ -328,7 +334,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=deploy-manual-frontend
 
   publish-manual-dev-charts:
-    needs: [prepare-manual, manual-agent-image, publish-manual-dev-images]
+    needs: [prepare-manual, manual-agent-image, manual-browser-image, publish-manual-dev-images]
     runs-on: ubuntu-latest
     strategy:
       matrix:

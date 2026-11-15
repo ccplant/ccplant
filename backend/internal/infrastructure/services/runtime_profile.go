@@ -52,6 +52,11 @@ func (m *KubernetesSessionManager) ExternalRuntimeProfile() *sessionsettings.Run
 			TodoistHosts:              append([]string(nil), scia.TodoistHosts...),
 			TodoistPaths:              append([]string(nil), scia.TodoistPaths...),
 		},
+		Moli: sessionsettings.MoliRuntimeProfile{
+			Enabled: k8s.MoliEnabled, Image: k8s.MoliImage, Port: k8s.MoliPort,
+			Layout: k8s.MoliLayout, CPURequest: k8s.MoliCPURequest, CPULimit: k8s.MoliCPULimit,
+			MemoryRequest: k8s.MoliMemoryRequest, MemoryLimit: k8s.MoliMemoryLimit,
+		},
 	}
 }
 
@@ -108,6 +113,15 @@ func (m *KubernetesSessionManager) applyRuntimeProfileLocked(profile *sessionset
 	m.k8sConfig.NetworkFilterInitCPULimit = k8s.NetworkFilterInitCPULimit
 	m.k8sConfig.NetworkFilterInitMemoryRequest = k8s.NetworkFilterInitMemoryRequest
 	m.k8sConfig.NetworkFilterInitMemoryLimit = k8s.NetworkFilterInitMemoryLimit
+	moli := profile.Moli
+	m.k8sConfig.MoliEnabled = moli.Enabled
+	m.k8sConfig.MoliImage = moli.Image
+	m.k8sConfig.MoliPort = moli.Port
+	m.k8sConfig.MoliLayout = moli.Layout
+	m.k8sConfig.MoliCPURequest = moli.CPURequest
+	m.k8sConfig.MoliCPULimit = moli.CPULimit
+	m.k8sConfig.MoliMemoryRequest = moli.MemoryRequest
+	m.k8sConfig.MoliMemoryLimit = moli.MemoryLimit
 
 	scia := profile.Scia
 	m.config.Scia.Enabled = scia.Enabled

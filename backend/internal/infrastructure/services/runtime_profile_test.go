@@ -53,6 +53,16 @@ func TestApplyRuntimeProfileInheritsSciaNFAAndSessionRBAC(t *testing.T) {
 			GoogleHosts:               []string{"google.example"},
 			TodoistHosts:              []string{"todoist.example"},
 		},
+		Moli: sessionsettings.MoliRuntimeProfile{
+			Enabled:       true,
+			Image:         "browser:parent",
+			Port:          19222,
+			Layout:        true,
+			CPURequest:    "101m",
+			CPULimit:      "2",
+			MemoryRequest: "129Mi",
+			MemoryLimit:   "513Mi",
+		},
 	}
 
 	if err := manager.ApplyRuntimeProfile(context.Background(), profile); err != nil {
@@ -64,11 +74,14 @@ func TestApplyRuntimeProfileInheritsSciaNFAAndSessionRBAC(t *testing.T) {
 	if !manager.config.Scia.Enabled || !manager.config.Scia.SessionSidecarEnabled || manager.config.Scia.SessionSidecarImage != "scia:parent" {
 		t.Fatalf("scia profile was not inherited: %#v", manager.config.Scia)
 	}
+	if !manager.k8sConfig.MoliEnabled || manager.k8sConfig.MoliImage != "browser:parent" || manager.k8sConfig.MoliPort != 19222 {
+		t.Fatalf("moli profile was not inherited: %#v", manager.k8sConfig)
+	}
 	localConfig := config.DefaultConfig()
 	localConfig.Scia.Enabled = false
 	manager.SetConfigProvider(staticRuntimeConfigProvider{config: localConfig})
 	manager.refreshConfig()
-	if !manager.config.Scia.Enabled || manager.config.Scia.SessionSidecarImage != "scia:parent" || manager.k8sConfig.NetworkFilterImage != "nfa:parent" {
+	if !manager.config.Scia.Enabled || manager.config.Scia.SessionSidecarImage != "scia:parent" || manager.k8sConfig.NetworkFilterImage != "nfa:parent" || !manager.k8sConfig.MoliEnabled || manager.k8sConfig.MoliImage != "browser:parent" {
 		t.Fatalf("runtime refresh discarded inherited profile: scia=%#v kubernetes=%#v", manager.config.Scia, manager.k8sConfig)
 	}
 	if _, err := client.CoreV1().ServiceAccounts("esm-sessions").Get(context.Background(), "parent-session", metav1.GetOptions{}); err != nil {
