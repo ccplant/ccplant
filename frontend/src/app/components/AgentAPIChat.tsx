@@ -2704,6 +2704,16 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           </div>
         )}
         
+        {sessionId && (
+          <HerdrTerminalPanel
+            client={agentAPI}
+            sessionId={sessionId}
+            selectedTerminal={selectedHerdrTerminal}
+            onSelectTerminal={setSelectedHerdrTerminal}
+            refreshToken={herdrRefreshToken}
+          />
+        )}
+
         <div className="flex items-start space-x-2 sm:space-x-3">
           <div className="flex-shrink-0">
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-blue-500 text-white flex items-center justify-center">
@@ -2712,21 +2722,12 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               </svg>
             </div>
           </div>
-          <div className="flex-1 relative">
+          <div className="relative min-w-0 flex-1">
             {secretFeedback && (
               <div className="mb-2 flex items-start justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
                 <span>{secretFeedback}</span>
                 <button type="button" onClick={() => setSecretFeedback(null)} aria-label="通知を閉じる" className="ml-3 font-bold">×</button>
               </div>
-            )}
-            {sessionId && (
-              <HerdrTerminalPanel
-                client={agentAPI}
-                sessionId={sessionId}
-                selectedTerminal={selectedHerdrTerminal}
-                onSelectTerminal={setSelectedHerdrTerminal}
-                refreshToken={herdrRefreshToken}
-              />
             )}
             {!selectedHerdrTerminal && attachedImages.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-2">
