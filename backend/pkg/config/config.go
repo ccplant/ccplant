@@ -1449,7 +1449,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.moli_enabled", false)
 	v.SetDefault("kubernetes_session.moli_image", DefaultMoliImage)
 	v.SetDefault("kubernetes_session.moli_port", 9222)
-	v.SetDefault("kubernetes_session.moli_layout", false)
+	v.SetDefault("kubernetes_session.moli_layout", true)
 	v.SetDefault("kubernetes_session.moli_cpu_request", "100m")
 	v.SetDefault("kubernetes_session.moli_cpu_limit", "1")
 	v.SetDefault("kubernetes_session.moli_memory_request", "128Mi")

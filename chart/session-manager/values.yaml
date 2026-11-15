@@ -123,7 +123,7 @@ session:
     enabled: false
     image: ghcr.io/ccplant/ccplant-browser:moli-1.1.24
     port: 9222
-    layout: false
+    layout: true
     resources:
       requests: {cpu: 100m, memory: 128Mi}
       limits: {cpu: "1", memory: 512Mi}

@@ -333,7 +333,7 @@ spec:
             - {name: AGENTAPI_K8S_SESSION_MOLI_ENABLED, value: {{ dig "moli" "enabled" false $k8s | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MOLI_IMAGE, value: {{ dig "moli" "image" "ghcr.io/ccplant/ccplant-browser:moli-1.1.24" $k8s | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MOLI_PORT, value: {{ dig "moli" "port" 9222 $k8s | quote }}}
-            - {name: AGENTAPI_K8S_SESSION_MOLI_LAYOUT, value: {{ dig "moli" "layout" false $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MOLI_LAYOUT, value: {{ dig "moli" "layout" true $k8s | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MOLI_CPU_REQUEST, value: {{ dig "moli" "resources" "requests" "cpu" "100m" $k8s | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MOLI_CPU_LIMIT, value: {{ dig "moli" "resources" "limits" "cpu" "1" $k8s | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MOLI_MEMORY_REQUEST, value: {{ dig "moli" "resources" "requests" "memory" "128Mi" $k8s | quote }}}

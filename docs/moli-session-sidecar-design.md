@@ -40,7 +40,7 @@ session:
     enabled: false
     image: ghcr.io/ccplant/ccplant-browser:moli-<pinned-version>
     port: 9222
-    layout: false
+    layout: true
     resources:
       requests:
         cpu: 100m
@@ -77,7 +77,7 @@ manager に継承する。runtime profile の revision/hash と stock Pod templa
 containers:
   - name: moli
     image: ghcr.io/ccplant/ccplant-browser:moli-<pinned-version>
-    args: ["serve", "--host", "127.0.0.1", "--port", "9222"]
+    args: ["serve", "--host", "127.0.0.1", "--port", "9222", "--layout"]
     ports:
       - name: moli-cdp
         containerPort: 9222

@@ -137,6 +137,7 @@ assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED false "$TMP_DIR/executor-
   --set kubernetesSession.enabled=true \
   --set kubernetesSession.executor.enabled=true >"$TMP_DIR/executor-builtin-enabled.yaml"
 assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED true "$TMP_DIR/executor-builtin-enabled.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_MOLI_LAYOUT true "$TMP_DIR/executor-builtin-default.yaml"
 
 "$HELM_BIN" template executor-manager "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --show-only templates/session-manager-deployment.yaml \
@@ -159,6 +160,7 @@ assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED false "$TMP_DIR/executor-
   --set sessionManager.kubernetesSession.executor.enabled=true \
   >"$TMP_DIR/executor-manager-enabled.yaml"
 assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED true "$TMP_DIR/executor-manager-enabled.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_MOLI_LAYOUT true "$TMP_DIR/executor-manager-default.yaml"
 
 "$HELM_BIN" template executor-standalone "$REPO_ROOT/chart/session-manager" \
   >"$TMP_DIR/executor-standalone-default.yaml"
@@ -166,6 +168,7 @@ assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED false "$TMP_DIR/executor-
 "$HELM_BIN" template executor-standalone "$REPO_ROOT/chart/session-manager" \
   --set session.executor.enabled=true >"$TMP_DIR/executor-standalone-enabled.yaml"
 assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED true "$TMP_DIR/executor-standalone-enabled.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_MOLI_LAYOUT true "$TMP_DIR/executor-standalone-default.yaml"
 
 # Public-only session egress must retain the authenticated callback from pool
 # runners to their own manager while denying arbitrary cluster-internal peers.
