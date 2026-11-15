@@ -12,7 +12,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Debian security updates are intentionally resolved at image build time.
 # hadolint ignore=DL3008
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl libfontconfig1 \
     && rm -rf /var/lib/apt/lists/* \
     && case "$TARGETARCH" in \
       amd64) archive_arch=x86_64; archive_sha="$MOLI_SHA256_AMD64" ;; \
