@@ -147,7 +147,8 @@ RUN npm install --global \
       "@agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION}" \
       "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
       "skills@${SKILLS_CLI_VERSION}" && \
-    test -x /home/agentapi/.npm-global/bin/skills
+    test -x /home/agentapi/.npm-global/bin/skills && \
+    codex-acp --version
 
 # Install Pi, pi-acp, and the MCP adapter. Model providers and additional Pi
 # packages are supplied by settings/session profiles at session startup.
