@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,14 @@ func TestBuildDeploymentInjectsMoliIntoEverySession(t *testing.T) {
 	require.True(t, *moli.SecurityContext.RunAsNonRoot)
 	require.True(t, *moli.SecurityContext.ReadOnlyRootFilesystem)
 	require.Equal(t, int64(999), *moli.SecurityContext.RunAsUser)
-	require.Equal(t, "/json/version", moli.ReadinessProbe.HTTPGet.Path)
+	for _, probe := range []*corev1.Probe{moli.StartupProbe, moli.ReadinessProbe, moli.LivenessProbe} {
+		require.NotNil(t, probe.Exec)
+		require.Equal(t, []string{"/bin/bash", "-ec"}, probe.Exec.Command[:2])
+		require.True(t, strings.Contains(probe.Exec.Command[2], "/dev/tcp/127.0.0.1/9222"))
+		require.True(t, strings.Contains(probe.Exec.Command[2], "GET /json/version"))
+		require.Nil(t, probe.HTTPGet)
+		require.Nil(t, probe.TCPSocket)
+	}
 	require.Contains(t, volumeNames(spec.Volumes), "moli-tmp")
 
 	main := findContainerByName(spec.Containers, "agentapi")
