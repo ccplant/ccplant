@@ -147,7 +147,9 @@ RUN npm install --global \
       "@agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION}" \
       "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
       "skills@${SKILLS_CLI_VERSION}" && \
-    test -x /home/agentapi/.npm-global/bin/skills
+    test -x /home/agentapi/.npm-global/bin/skills && \
+    claude-agent-acp --version && \
+    codex-acp --version
 
 # Install Pi, pi-acp, and the MCP adapter. Model providers and additional Pi
 # packages are supplied by settings/session profiles at session startup.
@@ -156,6 +158,7 @@ ARG PI_ACP_VERSION=latest
 RUN npm install --global \
       "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}" \
       "pi-acp@${PI_ACP_VERSION}" && \
+    pi --version && \
     mkdir -p /home/agentapi/.pi/agent/npm && \
     printf '{"private":true,"dependencies":{}}\n' > /home/agentapi/.pi/agent/npm/package.json && \
     pi install npm:pi-mcp-adapter
