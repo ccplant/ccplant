@@ -5261,8 +5261,13 @@ func (m *KubernetesSessionManager) buildMoliSidecar() *corev1.Container {
 	trueVal := true
 	falseVal := false
 	uid := int64(999)
+	// Kubelet HTTP/TCP probes target the Pod IP, but Moli intentionally only
+	// listens on loopback so its unauthenticated CDP endpoint is not exposed to
+	// other Pods. Run the probe inside the container to exercise that loopback
+	// endpoint without weakening the bind address.
+	probeCommand := fmt.Sprintf(`exec 3<>/dev/tcp/127.0.0.1/%d; printf 'GET /json/version HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3; IFS= read -r line <&3; [[ "$line" == *" 200 "* ]]`, port)
 	probe := func() corev1.ProbeHandler {
-		return corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/json/version", Port: intstr.FromInt(port)}}
+		return corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/bin/bash", "-ec", probeCommand}}}
 	}
 	return &corev1.Container{
 		Name:            "moli",
@@ -5282,7 +5287,7 @@ func (m *KubernetesSessionManager) buildMoliSidecar() *corev1.Container {
 		VolumeMounts:   []corev1.VolumeMount{{Name: "moli-tmp", MountPath: "/tmp"}},
 		StartupProbe:   &corev1.Probe{ProbeHandler: probe(), PeriodSeconds: 1, FailureThreshold: 30},
 		ReadinessProbe: &corev1.Probe{ProbeHandler: probe(), PeriodSeconds: 5, FailureThreshold: 3},
-		LivenessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(port)}}, PeriodSeconds: 10, FailureThreshold: 3},
+		LivenessProbe:  &corev1.Probe{ProbeHandler: probe(), PeriodSeconds: 10, FailureThreshold: 3},
 	}
 }
 
