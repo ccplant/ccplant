@@ -4428,6 +4428,15 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			PeriodSeconds:       2,
 		},
 	}
+	var moliSidecar *corev1.Container
+	if m.k8sConfig.MoliEnabled {
+		moliSidecar = m.buildMoliSidecar()
+		endpoint := fmt.Sprintf("http://127.0.0.1:%d", m.k8sConfig.MoliPort)
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: "MOLI_CDP_ENDPOINT", Value: endpoint},
+			corev1.EnvVar{Name: "CDP_ENDPOINT", Value: endpoint},
+		)
+	}
 	executorEnabled := m.k8sConfig.ExecutorEnabled && m.k8sConfig.CLIImage != ""
 	if executorEnabled {
 		container.Env = append(container.Env,
@@ -4467,6 +4476,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	}
 	if dindEnabled {
 		volumes = append(volumes, dindVolumes...)
+	}
+	if moliSidecar != nil {
+		volumes = append(volumes, corev1.Volume{Name: "moli-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
 	}
 
 	// Copy the release-specific CLI into a writable volume as the Pod user.
@@ -4540,6 +4552,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	}
 	if dindSidecar != nil {
 		containers = append(containers, *dindSidecar)
+	}
+	if moliSidecar != nil {
+		containers = append(containers, *moliSidecar)
 	}
 
 	// Note: Initial message is now sent by agent-provisioner internally after agentapi
@@ -4770,6 +4785,18 @@ func restoreSessionPodTemplateInvariants(template *corev1.PodTemplateSpec, gener
 	template.Spec.AutomountServiceAccountToken = generated.Spec.AutomountServiceAccountToken
 	template.Spec.RestartPolicy = generated.Spec.RestartPolicy
 
+	// Manager-owned sidecars must not be removed or weakened by a pod template.
+	// Moli intentionally binds to loopback, so replacing its generated command or
+	// security context could expose CDP outside the session pod.
+	if moli := findContainerByName(generated.Spec.Containers, "moli"); moli != nil {
+		if existing := findContainerByName(template.Spec.Containers, moli.Name); existing != nil {
+			*existing = *moli
+		} else {
+			template.Spec.Containers = append(template.Spec.Containers, *moli)
+		}
+		restoreGeneratedVolume(&template.Spec.Volumes, generated.Spec.Volumes, "moli-tmp")
+	}
+
 	// Pod template customizations must retain the CLI needed to boot the runner.
 	if cli := findContainerByName(generated.Spec.InitContainers, "install-ccplant-cli"); cli != nil {
 		if existing := findContainerByName(template.Spec.InitContainers, cli.Name); existing != nil {
@@ -4831,6 +4858,22 @@ func restoreSessionPodTemplateInvariants(template *corev1.PodTemplateSpec, gener
 		return
 	}
 	template.Spec.Containers = append([]corev1.Container{*generatedMain}, template.Spec.Containers...)
+}
+
+func restoreGeneratedVolume(target *[]corev1.Volume, generated []corev1.Volume, name string) {
+	for _, volume := range generated {
+		if volume.Name != name {
+			continue
+		}
+		for i := range *target {
+			if (*target)[i].Name == name {
+				(*target)[i] = volume
+				return
+			}
+		}
+		*target = append(*target, volume)
+		return
+	}
 }
 
 func findContainerByName(containers []corev1.Container, name string) *corev1.Container {
@@ -5207,6 +5250,40 @@ const networkFilterProvisionerDrainSeconds = 25
 
 func networkFilterPreStopScript() string {
 	return fmt.Sprintf(`i=0; while [ "$i" -lt %d ] && nc -z 127.0.0.1 %d; do sleep 1; i=$((i+1)); done`, networkFilterProvisionerDrainSeconds, provisionerPort)
+}
+
+func (m *KubernetesSessionManager) buildMoliSidecar() *corev1.Container {
+	port := m.k8sConfig.MoliPort
+	args := []string{"serve", "--host", "127.0.0.1", "--port", strconv.Itoa(port)}
+	if m.k8sConfig.MoliLayout {
+		args = append(args, "--layout")
+	}
+	trueVal := true
+	falseVal := false
+	uid := int64(999)
+	probe := func() corev1.ProbeHandler {
+		return corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/json/version", Port: intstr.FromInt(port)}}
+	}
+	return &corev1.Container{
+		Name:            "moli",
+		Image:           m.k8sConfig.MoliImage,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Args:            args,
+		Ports:           []corev1.ContainerPort{{Name: "moli-cdp", ContainerPort: int32(port), Protocol: corev1.ProtocolTCP}},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser: &uid, RunAsGroup: &uid, RunAsNonRoot: &trueVal,
+			AllowPrivilegeEscalation: &falseVal, ReadOnlyRootFilesystem: &trueVal,
+			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+		Resources: buildResourceRequirements(
+			m.k8sConfig.MoliCPURequest, m.k8sConfig.MoliCPULimit,
+			m.k8sConfig.MoliMemoryRequest, m.k8sConfig.MoliMemoryLimit,
+		),
+		VolumeMounts:   []corev1.VolumeMount{{Name: "moli-tmp", MountPath: "/tmp"}},
+		StartupProbe:   &corev1.Probe{ProbeHandler: probe(), PeriodSeconds: 1, FailureThreshold: 30},
+		ReadinessProbe: &corev1.Probe{ProbeHandler: probe(), PeriodSeconds: 5, FailureThreshold: 3},
+		LivenessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(port)}}, PeriodSeconds: 10, FailureThreshold: 3},
+	}
 }
 
 func buildNFAConfig(sandbox *entities.SandboxParams) string {

@@ -282,6 +282,8 @@ type SciaConfig struct {
 // the session-manager image independently.
 const DefaultKubernetesSessionImage = "ghcr.io/ccplant/ccplant-agent:assets-386024248748e1222ffe0027a05616ef"
 
+const DefaultMoliImage = "ghcr.io/ccplant/ccplant-browser:moli-1.1.24"
+
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {
 	// Namespace is the Kubernetes namespace where session resources are created
@@ -314,6 +316,15 @@ type KubernetesSessionConfig struct {
 	ExecutorCPULimit      string `json:"executor_cpu_limit" mapstructure:"executor_cpu_limit"`
 	ExecutorMemoryRequest string `json:"executor_memory_request" mapstructure:"executor_memory_request"`
 	ExecutorMemoryLimit   string `json:"executor_memory_limit" mapstructure:"executor_memory_limit"`
+	// MoliEnabled injects a Pod-local Moli CDP browser into every session.
+	MoliEnabled       bool   `json:"moli_enabled" mapstructure:"moli_enabled"`
+	MoliImage         string `json:"moli_image" mapstructure:"moli_image"`
+	MoliPort          int    `json:"moli_port" mapstructure:"moli_port"`
+	MoliLayout        bool   `json:"moli_layout" mapstructure:"moli_layout"`
+	MoliCPURequest    string `json:"moli_cpu_request" mapstructure:"moli_cpu_request"`
+	MoliCPULimit      string `json:"moli_cpu_limit" mapstructure:"moli_cpu_limit"`
+	MoliMemoryRequest string `json:"moli_memory_request" mapstructure:"moli_memory_request"`
+	MoliMemoryLimit   string `json:"moli_memory_limit" mapstructure:"moli_memory_limit"`
 	// PVCEnabled enables PersistentVolumeClaim for session pods workdir
 	// When disabled, EmptyDir is used instead (data is not persisted across pod restarts)
 	PVCEnabled *bool `json:"pvc_enabled,omitempty" mapstructure:"pvc_enabled"`
@@ -1220,6 +1231,14 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.executor_cpu_limit", "AGENTAPI_K8S_SESSION_EXECUTOR_CPU_LIMIT")
 	_ = v.BindEnv("kubernetes_session.executor_memory_request", "AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_REQUEST")
 	_ = v.BindEnv("kubernetes_session.executor_memory_limit", "AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_LIMIT")
+	_ = v.BindEnv("kubernetes_session.moli_enabled", "AGENTAPI_K8S_SESSION_MOLI_ENABLED")
+	_ = v.BindEnv("kubernetes_session.moli_image", "AGENTAPI_K8S_SESSION_MOLI_IMAGE")
+	_ = v.BindEnv("kubernetes_session.moli_port", "AGENTAPI_K8S_SESSION_MOLI_PORT")
+	_ = v.BindEnv("kubernetes_session.moli_layout", "AGENTAPI_K8S_SESSION_MOLI_LAYOUT")
+	_ = v.BindEnv("kubernetes_session.moli_cpu_request", "AGENTAPI_K8S_SESSION_MOLI_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.moli_cpu_limit", "AGENTAPI_K8S_SESSION_MOLI_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.moli_memory_request", "AGENTAPI_K8S_SESSION_MOLI_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.moli_memory_limit", "AGENTAPI_K8S_SESSION_MOLI_MEMORY_LIMIT")
 	_ = v.BindEnv("kubernetes_session.pvc_enabled", "AGENTAPI_K8S_SESSION_PVC_ENABLED")
 	_ = v.BindEnv("kubernetes_session.pvc_storage_class", "AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS")
 	_ = v.BindEnv("kubernetes_session.pvc_storage_size", "AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE")
@@ -1427,6 +1446,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.executor_cpu_limit", "2")
 	v.SetDefault("kubernetes_session.executor_memory_request", "512Mi")
 	v.SetDefault("kubernetes_session.executor_memory_limit", "4Gi")
+	v.SetDefault("kubernetes_session.moli_enabled", false)
+	v.SetDefault("kubernetes_session.moli_image", DefaultMoliImage)
+	v.SetDefault("kubernetes_session.moli_port", 9222)
+	v.SetDefault("kubernetes_session.moli_layout", false)
+	v.SetDefault("kubernetes_session.moli_cpu_request", "100m")
+	v.SetDefault("kubernetes_session.moli_cpu_limit", "1")
+	v.SetDefault("kubernetes_session.moli_memory_request", "128Mi")
+	v.SetDefault("kubernetes_session.moli_memory_limit", "512Mi")
 	v.SetDefault("kubernetes_session.pvc_enabled", true)
 	v.SetDefault("kubernetes_session.pvc_storage_class", "")
 	v.SetDefault("kubernetes_session.pvc_storage_size", "10Gi")

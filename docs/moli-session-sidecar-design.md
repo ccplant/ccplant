@@ -39,7 +39,6 @@ session:
   moli:
     enabled: false
     image: ghcr.io/ccplant/ccplant-browser:moli-<pinned-version>
-    imagePullPolicy: IfNotPresent
     port: 9222
     layout: false
     resources:
@@ -57,7 +56,6 @@ session:
 | --- | --- |
 | `enabled` | manager が作る全 session Pod への注入を有効化する。既定は `false`。 |
 | `image` | digest または immutable version tag を推奨する。空文字は validation error。 |
-| `imagePullPolicy` | Kubernetes の pull policy。 |
 | `port` | Pod 内 loopback CDP port。1..65535、session の provisioner port と重複不可。 |
 | `layout` | `true` の場合だけ `--layout` を渡し、geometry、coordinate input、screenshot を有効化する。 |
 | `resources` | sidecar 専用 request/limit。agent container の resource と混ぜない。 |
@@ -129,10 +127,9 @@ CDP_ENDPOINT=http://127.0.0.1:9222
 ある場合は生成値を優先し、sidecar と異なる endpoint が session 内へ注入されないようにする。無効時は
 どちらも設定しない。
 
-既存 `session.podTemplate` の strategic merge は Moli 注入後に適用される。`moli` container、`moli-tmp`
-volume、上記 endpoint env は `agentapi` container の command 等と同様に invariant として復元し、template
-による削除や image 差し替えを許可しない。podTemplate で任意の sidecar を注入する現在の escape hatch は
-残すが、組み込み Moli と同名の場合は validation error にする。
+既存 `session.podTemplate` の strategic merge は Moli 注入後に適用される。`moli` container と `moli-tmp`
+volume は `agentapi` container の command 等と同様に invariant として復元し、template による削除、image
+差し替え、loopback bind の変更を許可しない。endpoint env は生成済み `agentapi` container に付与される。
 
 ## 5. Image contract
 
@@ -182,8 +179,7 @@ status message に含める。ログ本文は自動で親 API に転送しない
 
 主な変更点は以下となる。
 
-1. `pkg/config` と `pkg/sessionsettings` に `MoliConfig` / `MoliRuntimeProfile` を追加し、default と validation
-   を実装する。
+1. `pkg/config` と `pkg/sessionsettings` に Moli の設定 / `MoliRuntimeProfile` を追加し、default を実装する。
 2. Helm values、manager Deployment の環境変数、runtime profile serialization に同じ設定を追加する。
 3. Kubernetes session manager に sidecar builder、agent env、volume、probe、resource 設定を追加する。
 4. stock template hash と runtime profile revision に Moli 設定を含める。
