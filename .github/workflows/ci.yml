@@ -20,6 +20,31 @@ jobs:
       - name: Verify agent image references
         run: scripts/check-agent-image-tag.sh
 
+  browser-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate browser image metadata
+        run: scripts/browser-image-tag.sh
+      - name: Build browser image
+        run: docker build --pull --tag ccplant-browser:test browser
+      - name: Smoke-test browser image
+        run: |
+          docker run --rm ccplant-browser:test --version
+          container=$(docker run -d --read-only --tmpfs /tmp:uid=999,gid=999 \
+            -p 127.0.0.1::9222 ccplant-browser:test \
+            serve --host 0.0.0.0 --port 9222)
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          port=$(docker port "$container" 9222/tcp | sed 's/.*://')
+          for _ in $(seq 1 30); do
+            if response=$(curl -fsS "http://127.0.0.1:${port}/json/version"); then
+              break
+            fi
+            sleep 1
+          done
+          test -n "${response:-}"
+          jq -e '."Browser" | strings | length > 0' <<<"$response"
+
   changes:
     runs-on: ubuntu-latest
     outputs:

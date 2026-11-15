@@ -18,6 +18,9 @@ jobs:
   agent-image:
     uses: ./.github/workflows/agent-image.yml
 
+  browser-image:
+    uses: ./.github/workflows/browser-image.yml
+
   metadata:
     runs-on: ubuntu-latest
     outputs:
@@ -403,7 +406,7 @@ jobs:
         run: helm push "$(find dist -maxdepth 1 -name "${CHART_NAME}-*.tgz" -print -quit)" oci://ghcr.io/ccplant/charts
 
   release-complete:
-    needs: [publish-binaries, images, charts, native-app]
+    needs: [publish-binaries, images, charts, native-app, browser-image]
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
