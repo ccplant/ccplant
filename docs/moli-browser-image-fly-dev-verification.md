@@ -65,3 +65,39 @@ usable through an arbitrary public Host header.
 
 The private proxy was stopped and the temporary Fly app was deleted after the
 verification. The local-only Fly configuration was not committed.
+
+## Manager-wide opt-in verification
+
+The manager integration was subsequently deployed from commit
+`9592e26ecd969c85194979d42e654a1f746f62f0`. The manual deployment workflow
+published the browser manifest as
+`sha256:54d79844e0369fc8c9dfade4c28325751a13686a2713da1dd29eed10d88cd5db`
+and smoke-tested it before deploying the API and session runtime images.
+
+The Fly development API was deployed with the following runtime-profile values,
+which were also confirmed in the running API process environment:
+
+```text
+AGENTAPI_K8S_SESSION_MOLI_ENABLED=true
+AGENTAPI_K8S_SESSION_MOLI_IMAGE=ghcr.io/ccplant/ccplant-browser:moli-1.1.24
+AGENTAPI_K8S_SESSION_MOLI_PORT=9222
+AGENTAPI_K8S_SESSION_MOLI_CPU_REQUEST=100m
+AGENTAPI_K8S_SESSION_MOLI_CPU_LIMIT=1
+AGENTAPI_K8S_SESSION_MOLI_MEMORY_REQUEST=128Mi
+AGENTAPI_K8S_SESSION_MOLI_MEMORY_LIMIT=512Mi
+```
+
+The external manager received the profile and replenished its stock pool with
+runner `0d40e1a6-45ee-42eb-ac46-492388c41178`. It registered online seven
+seconds after the preceding stock runner was claimed, then was successfully
+claimed by verification session `7a2376c6-77ab-4666-aba0-595240d35e19`.
+Stock runners are not published until the complete Pod is Ready; the generated
+Moli container contributes a `/json/version` startup/readiness probe, so this
+also verifies Pod-local CDP discovery with the real manager configuration.
+
+The verification session intentionally used the development bootstrap user,
+which has no Codex credential, so its agent process stopped with
+`Codex authentication required` after the Pod and Moli sidecar were ready. This
+does not affect the browser readiness result. Raw Target, Page, and Runtime CDP
+operations were independently verified against the same immutable browser image
+as described above.
