@@ -508,6 +508,13 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// ── Step 7: build and start the agent subprocess ──────────────────────────
 	s.setPhase("provision:start-agent")
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
+	agentEnv := mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
+	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to start herdr notification bridge: %v", err)
+	} else {
+		agentEnv = mergeEnv(agentEnv, map[string]string{"HC_TERMINAL_ID": parentID})
+		log.Printf("[PROVISIONER] Herdr notifications will be delivered through parent terminal %s", parentID)
+	}
 	if shouldRequireConversationResume(settings) {
 		agentArgs = append([]string{agentArgs[0], "--require-resume"}, agentArgs[1:]...)
 	}
@@ -531,7 +538,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
-	cmd.Env = mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
+	cmd.Env = agentEnv
 	cmd.Stdout = os.Stdout
 	var agentStderr bytes.Buffer
 	cmd.Stderr = io.MultiWriter(os.Stderr, &agentStderr)
