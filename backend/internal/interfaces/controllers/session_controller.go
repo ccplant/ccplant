@@ -177,8 +177,8 @@ func WithInteractiveSessionTTL(ttl string) SessionControllerOption {
 	return func(c *SessionController) { c.interactiveSessionTTL = ttl }
 }
 
-func applySessionTTLDefault(req *entities.StartRequest, defaultTTL string, reuseRequested bool) {
-	if defaultTTL == "" || reuseRequested {
+func applySessionTTLDefault(req *entities.StartRequest, defaultTTL string, reuseSession bool) {
+	if defaultTTL == "" || reuseSession {
 		return
 	}
 	if sessionuc.ResolveSessionTTL(req.Params) != "" {
@@ -626,10 +626,11 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	if startReq.MaxSessions > 0 && len(c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.LimitMatchTags})) >= startReq.MaxSessions {
 		return echo.NewHTTPError(http.StatusTooManyRequests, fmt.Sprintf("session limit reached: maximum %d sessions", startReq.MaxSessions))
 	}
-	reuseRequested := len(startReq.ReuseMatchTags) > 0 && startReq.ReuseMessage != ""
+	reuseSession := startReq.ReuseSession
 	// Reuse and limit controls belong to this /start invocation and must not be
 	// persisted as part of the session's restart configuration.
 	startReq.ReuseMatchTags, startReq.ReuseMessage, startReq.StopBeforeReuse = nil, "", false
+	startReq.ReuseSession = false
 	startReq.LimitMatchTags, startReq.MaxSessions = nil, 0
 
 	// Persist the explicit input before profile defaults are merged.
@@ -672,7 +673,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		applySessionProfile(&startReq, profile, profileCfg, explicitSandbox, explicitDocker)
 	}
-	applySessionTTLDefault(&startReq, sessionTTLDefault, reuseRequested)
+	applySessionTTLDefault(&startReq, sessionTTLDefault, reuseSession)
 	if !dryRun {
 		if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
 			config := &sessionrunnercore.Configuration{SessionID: sessionID, TriggeredUserID: startReq.TriggeredUserID, Input: startInput, ProfileID: startReq.ResolvedSessionProfileID, UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Teams: teams}

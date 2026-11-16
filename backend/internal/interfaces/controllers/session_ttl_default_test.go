@@ -9,10 +9,17 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 )
+
+type sessionTTLDefaultManager struct{ triggerIdentityManager }
+
+func (sessionTTLDefaultManager) ListSessions(entities.SessionFilter) []entities.Session { return nil }
+
+func (m sessionTTLDefaultManager) GetSessionManager() repositories.SessionManager { return m }
 
 func TestStartAppliesDefaultSessionTTL(t *testing.T) {
 	schedule := &executiontoken.ExecutionClaims{ScheduleID: "schedule"}
@@ -38,6 +45,10 @@ func TestStartAppliesDefaultSessionTTL(t *testing.T) {
 		{name: "interactive with own ttl", options: all, body: `{"params":{"session_ttl":"2h"}}`, want: "2h"},
 		{name: "interactive with trigger tag", options: all, body: `{"tags":{"schedule_id":"forged"}}`, want: "168h"},
 		{name: "interactive without interactive default", options: []SessionControllerOption{WithScheduleSessionTTL("24h"), WithWebhookSessionTTL("48h")}, body: `{}`, want: ""},
+		{name: "scheduled run with reuse lookup", claims: schedule, options: all, body: `{"tags":{"schedule_id":"schedule","schedule_execution_time":"t1"},"reuse_match_tags":{"schedule_id":"schedule","schedule_execution_time":"t1"},"reuse_message":"run"}`, want: "24h"},
+		{name: "reuse schedule", claims: schedule, options: all, body: `{"tags":{"schedule_id":"schedule"},"reuse_match_tags":{"schedule_id":"schedule"},"reuse_message":"run","reuse_session":true}`, want: ""},
+		{name: "reuse webhook", claims: webhook, options: all, body: `{"tags":{"webhook_id":"webhook"},"reuse_match_tags":{"webhook_id":"webhook"},"reuse_message":"run","reuse_session":true}`, want: ""},
+		{name: "reuse schedule with own ttl", claims: schedule, options: all, body: `{"tags":{"schedule_id":"schedule"},"reuse_match_tags":{"schedule_id":"schedule"},"reuse_message":"run","reuse_session":true,"params":{"session_ttl":"72h"}}`, want: "72h"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,7 +63,7 @@ func TestStartAppliesDefaultSessionTTL(t *testing.T) {
 			}
 			c.Set("authz_context", &auth.AuthorizationContext{User: entities.NewUser("owner", entities.UserTypeRegular, "owner"), PersonalScope: auth.PersonalScopeAuth{UserID: "owner", CanCreate: true}})
 			creator := &triggerIdentityCreator{}
-			controller := NewSessionController(triggerIdentityManager{}, creator, tc.options...)
+			controller := NewSessionController(sessionTTLDefaultManager{}, creator, tc.options...)
 			require.NoError(t, controller.StartSession(c))
 			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 			require.Equal(t, tc.want, sessionuc.ResolveSessionTTL(creator.request.Params))

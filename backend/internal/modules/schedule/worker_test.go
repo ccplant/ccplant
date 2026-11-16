@@ -87,8 +87,8 @@ func TestWorkerBuildLaunchRequestDelegatesReuseToStart(t *testing.T) {
 			if !request.DeferReuseToStart {
 				t.Fatal("schedule reuse must be delegated to /start")
 			}
-			if request.ReuseSession {
-				t.Fatal("schedule worker must not run its own reuse lookup")
+			if request.ReuseSession != tt.reuseSession {
+				t.Fatalf("ReuseSession = %t, want %t", request.ReuseSession, tt.reuseSession)
 			}
 			if request.ReuseMessage != "run" {
 				t.Fatalf("ReuseMessage = %q, want run", request.ReuseMessage)

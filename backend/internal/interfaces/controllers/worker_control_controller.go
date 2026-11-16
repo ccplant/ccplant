@@ -151,6 +151,7 @@ func (wc *WorkerControlController) ClaimDueSchedules(c echo.Context) error {
 		startRequest := entities.StartRequest{Environment: item.SessionConfig.Environment, Tags: tags, Params: item.SessionConfig.Params, Scope: item.GetScope(), TeamID: item.TeamID, SessionProfileID: item.SessionConfig.SessionProfileID}
 		startRequest.ReuseMatchTags = tags
 		startRequest.ReuseMessage = item.SessionConfig.EffectiveReuseMessage()
+		startRequest.ReuseSession = item.SessionConfig.ReuseSession
 		jobs = append(jobs, scheduleJob{ScheduleID: item.ID, ExecutionID: claims.ExecutionID, SessionID: claims.SessionID, ExecutionToken: token, StartRequest: startRequest})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"jobs": jobs})

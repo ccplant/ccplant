@@ -46,6 +46,7 @@ func TestWorkerClaimsAndFinalizesScheduleJob(t *testing.T) {
 				Tags           map[string]string `json:"tags"`
 				ReuseMatchTags map[string]string `json:"reuse_match_tags"`
 				ReuseMessage   string            `json:"reuse_message"`
+				ReuseSession   bool              `json:"reuse_session"`
 			} `json:"start_request"`
 		} `json:"jobs"`
 	}
@@ -59,6 +60,7 @@ func TestWorkerClaimsAndFinalizesScheduleJob(t *testing.T) {
 	require.Equal(t, map[string]string{"schedule_id": "schedule-1", "schedule_name": "test"}, response.Jobs[0].StartRequest.Tags)
 	require.Equal(t, response.Jobs[0].StartRequest.Tags, response.Jobs[0].StartRequest.ReuseMatchTags)
 	require.Equal(t, "initial message", response.Jobs[0].StartRequest.ReuseMessage)
+	require.True(t, response.Jobs[0].StartRequest.ReuseSession)
 	body, _ := json.Marshal(map[string]any{"execution_id": response.Jobs[0].ExecutionID, "session_id": response.Jobs[0].SessionID, "status": "success", "session_reused": true})
 	req = httptest.NewRequest(http.MethodPost, "/internal/worker/schedules/schedule-1/finalize", bytes.NewReader(body))
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
