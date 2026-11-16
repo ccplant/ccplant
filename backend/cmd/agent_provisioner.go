@@ -63,17 +63,17 @@ var herdrNotificationBridgeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		agentURL, err := cmd.Flags().GetString("agent-url")
+		agentSocket, err := cmd.Flags().GetString("agent-socket")
 		if err != nil {
 			return err
 		}
-		return provisioner.RunHerdrNotificationBridge(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), agentType, agentURL)
+		return provisioner.RunHerdrNotificationBridge(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), agentType, agentSocket)
 	},
 }
 
 func init() {
 	herdrNotificationBridgeCmd.Flags().String("agent-type", "", "session agent type")
-	herdrNotificationBridgeCmd.Flags().String("agent-url", "http://127.0.0.1:8080", "local agent API URL")
+	herdrNotificationBridgeCmd.Flags().String("agent-socket", "/tmp/ccplant/agent.sock", "local agent API Unix socket")
 }
 
 func runAgentProvisioner(cmd *cobra.Command, args []string) error {

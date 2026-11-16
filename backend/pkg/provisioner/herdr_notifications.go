@@ -6,20 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os/exec"
 	"strings"
 	"time"
 )
 
 const herdrNotificationBridgeName = "ccplant-session-agent"
+const localAgentRequestTimeout = 30 * time.Second
 
 type herdrTerminal struct {
 	Address string `json:"address"`
 	State   string `json:"state"`
 }
 
-func ensureHerdrNotificationBridge(ctx context.Context, env []string, agentType string) (string, error) {
+func ensureHerdrNotificationBridge(ctx context.Context, env []string, agentType, agentSocket string) (string, error) {
 	if terminal, err := getHerdrNotificationBridge(ctx, env); err == nil {
 		if terminal.State == "live" && strings.TrimSpace(terminal.Address) != "" {
 			return terminal.Address, nil
@@ -40,7 +40,7 @@ func ensureHerdrNotificationBridge(ctx context.Context, env []string, agentType 
 		environmentValue(env, "CCPLANT_BINARY_PATH", "ccplant"),
 		"agent-provisioner", "hc-notification-bridge",
 		"--agent-type", agentType,
-		"--agent-url", "http://127.0.0.1:"+environmentValue(env, "AGENTAPI_PORT", "8080"),
+		"--agent-socket", agentSocket,
 	)
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
@@ -72,7 +72,7 @@ func environmentValue(env []string, key, fallback string) string {
 
 // RunHerdrNotificationBridge forwards hc parent notes directly to the local
 // agent API, using ACP session/prompt for ACP-backed agents.
-func RunHerdrNotificationBridge(ctx context.Context, input io.Reader, output io.Writer, agentType, agentURL string) error {
+func RunHerdrNotificationBridge(ctx context.Context, input io.Reader, output io.Writer, agentType, agentSocket string) error {
 	if _, err := fmt.Fprint(output, "\033]7501;state=working:app=ccplant-hc-bridge\033\\"); err != nil {
 		return err
 	}
@@ -84,12 +84,12 @@ func RunHerdrNotificationBridge(ctx context.Context, input io.Reader, output io.
 			continue
 		}
 		payload, _ := json.Marshal(map[string]string{"content": message})
-		commandCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := executeControlCommandAtBase(commandCtx, http.DefaultClient, localAgentControlType(agentType), controlCommand{
+		commandCtx, cancel := context.WithTimeout(ctx, localAgentRequestTimeout)
+		err := executeControlCommandAtBase(commandCtx, unixSocketHTTPClient(agentSocket), localAgentControlType(agentType), controlCommand{
 			ID:      fmt.Sprintf("hc-notification-%d", sequence),
 			Type:    "prompt",
 			Payload: payload,
-		}, strings.TrimRight(agentURL, "/"))
+		}, "http://unix")
 		cancel()
 		if err != nil {
 			_, _ = fmt.Fprintf(output, "hc notification delivery failed: %v\n", err)

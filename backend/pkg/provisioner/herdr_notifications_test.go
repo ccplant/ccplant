@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +14,12 @@ import (
 
 func TestRunHerdrNotificationBridgeSendsACPPrompt(t *testing.T) {
 	var rpcBody map[string]interface{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	socketPath := filepath.Join(t.TempDir(), "agent.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case http.MethodGet + " /session":
 			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": "acp-session"})
@@ -26,11 +31,12 @@ func TestRunHerdrNotificationBridgeSendsACPPrompt(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	defer server.Close()
+	})}
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
 
 	var output bytes.Buffer
-	if err := RunHerdrNotificationBridge(context.Background(), bytes.NewBufferString("<hc>child exited</hc>\n"), &output, "codex-acp", server.URL); err != nil {
+	if err := RunHerdrNotificationBridge(context.Background(), bytes.NewBufferString("<hc>child exited</hc>\n"), &output, "codex-acp", socketPath); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "state=working:app=ccplant-hc-bridge") {
@@ -60,7 +66,7 @@ fi
 exit 1
 `)
 
-	address, err := ensureHerdrNotificationBridge(context.Background(), os.Environ(), "codex-acp")
+	address, err := ensureHerdrNotificationBridge(context.Background(), os.Environ(), "codex-acp", "/tmp/test-agent.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +88,7 @@ printf '%s\n' '{"address":"t12","state":"live"}'
 `)
 	env := append(os.Environ(), "HC_TEST_MARKER="+marker)
 
-	address, err := ensureHerdrNotificationBridge(context.Background(), env, "codex-acp")
+	address, err := ensureHerdrNotificationBridge(context.Background(), env, "codex-acp", "/tmp/test-agent.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +102,9 @@ printf '%s\n' '{"address":"t12","state":"live"}'
 	got := string(args)
 	if !strings.Contains(got, "run --bg --name "+herdrNotificationBridgeName+" --no-notify ccplant agent-provisioner hc-notification-bridge --agent-type codex-acp") {
 		t.Fatalf("hc run arguments missing from %q", got)
+	}
+	if !strings.Contains(got, "--agent-socket /tmp/test-agent.sock") {
+		t.Fatalf("hc run socket argument missing from %q", got)
 	}
 }
 

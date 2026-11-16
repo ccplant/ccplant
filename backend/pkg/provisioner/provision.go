@@ -509,7 +509,16 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	s.setPhase("provision:start-agent")
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
 	agentEnv := mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
-	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv, settings.Session.AgentType); err != nil {
+	agentPort := environmentValue(agentEnv, "AGENTAPI_PORT", "8080")
+	agentSocket := localAgentSocketPath()
+	stopLocalSocket, err := startLocalAgentSocketProxy(ctx, agentSocket, "http://127.0.0.1:"+agentPort)
+	if err != nil {
+		s.setStatus(StatusError, "failed to start local agent socket: "+err.Error())
+		return
+	}
+	defer stopLocalSocket()
+	agentEnv = mergeEnv(agentEnv, map[string]string{"AGENTAPI_LOCAL_SOCKET": agentSocket})
+	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv, settings.Session.AgentType, agentSocket); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to start herdr notification bridge: %v", err)
 	} else {
 		agentEnv = mergeEnv(agentEnv, map[string]string{"HC_TERMINAL_ID": parentID})
