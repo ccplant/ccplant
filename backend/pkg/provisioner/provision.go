@@ -509,7 +509,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	s.setPhase("provision:start-agent")
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
 	agentEnv := mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
-	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv); err != nil {
+	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv, settings.Session.AgentType); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to start herdr notification bridge: %v", err)
 	} else {
 		agentEnv = mergeEnv(agentEnv, map[string]string{"HC_TERMINAL_ID": parentID})

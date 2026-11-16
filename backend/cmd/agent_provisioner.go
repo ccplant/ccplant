@@ -51,6 +51,29 @@ func init() {
 	AgentProvisionerCmd.Flags().String("settings-file",
 		"/session-settings/settings.yaml",
 		"Path to the session settings YAML file used for auto-provisioning on Pod restart")
+	AgentProvisionerCmd.AddCommand(herdrNotificationBridgeCmd)
+}
+
+var herdrNotificationBridgeCmd = &cobra.Command{
+	Use:    "hc-notification-bridge",
+	Hidden: true,
+	Args:   cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		agentType, err := cmd.Flags().GetString("agent-type")
+		if err != nil {
+			return err
+		}
+		agentURL, err := cmd.Flags().GetString("agent-url")
+		if err != nil {
+			return err
+		}
+		return provisioner.RunHerdrNotificationBridge(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), agentType, agentURL)
+	},
+}
+
+func init() {
+	herdrNotificationBridgeCmd.Flags().String("agent-type", "", "session agent type")
+	herdrNotificationBridgeCmd.Flags().String("agent-url", "http://127.0.0.1:8080", "local agent API URL")
 }
 
 func runAgentProvisioner(cmd *cobra.Command, args []string) error {

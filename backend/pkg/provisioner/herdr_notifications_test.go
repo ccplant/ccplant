@@ -3,36 +3,49 @@ package provisioner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestHerdrNotificationBridgeNormalizesDirectRuntimeEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	marker := filepath.Join(dir, "args")
-	client := filepath.Join(dir, "ccplant")
-	if err := os.WriteFile(client, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$HC_TEST_MARKER\"\n"), 0o755); err != nil {
+func TestRunHerdrNotificationBridgeSendsACPPrompt(t *testing.T) {
+	var rpcBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case http.MethodGet + " /session":
+			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": "acp-session"})
+		case http.MethodPost + " /rpc":
+			if err := json.NewDecoder(r.Body).Decode(&rpcBody); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	if err := RunHerdrNotificationBridge(context.Background(), bytes.NewBufferString("<hc>child exited</hc>\n"), &output, "codex-acp", server.URL); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sh", "-c", herdrNotificationBridgeScript)
-	cmd.Env = append(os.Environ(),
-		"CCPLANT_BINARY_PATH="+client,
-		"AGENTAPI_PROXY_ENDPOINT=https://proxy.example/api/v1",
-		"HC_TEST_MARKER="+marker,
-	)
-	cmd.Stdin = bytes.NewBufferString("<hc>child exited</hc>\n")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("bridge failed: %v: %s", err, output)
+	if !strings.Contains(output.String(), "state=working:app=ccplant-hc-bridge") {
+		t.Fatalf("bridge status missing from %q", output.String())
 	}
-	args, err := os.ReadFile(marker)
-	if err != nil {
-		t.Fatal(err)
+	if rpcBody["method"] != "session/prompt" {
+		t.Fatalf("RPC method = %v, want session/prompt", rpcBody["method"])
 	}
-	if got, want := strings.TrimSpace(string(args)), "client send --endpoint https://proxy.example <hc>child exited</hc>"; got != want {
-		t.Fatalf("arguments = %q, want %q", got, want)
+	params := rpcBody["params"].(map[string]interface{})
+	if params["sessionId"] != "acp-session" {
+		t.Fatalf("session ID = %v, want acp-session", params["sessionId"])
+	}
+	prompt := params["prompt"].([]interface{})[0].(map[string]interface{})
+	if prompt["text"] != "<hc>child exited</hc>" {
+		t.Fatalf("prompt text = %v", prompt["text"])
 	}
 }
 
@@ -47,7 +60,7 @@ fi
 exit 1
 `)
 
-	address, err := ensureHerdrNotificationBridge(context.Background(), os.Environ())
+	address, err := ensureHerdrNotificationBridge(context.Background(), os.Environ(), "codex-acp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +82,7 @@ printf '%s\n' '{"address":"t12","state":"live"}'
 `)
 	env := append(os.Environ(), "HC_TEST_MARKER="+marker)
 
-	address, err := ensureHerdrNotificationBridge(context.Background(), env)
+	address, err := ensureHerdrNotificationBridge(context.Background(), env, "codex-acp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +94,7 @@ printf '%s\n' '{"address":"t12","state":"live"}'
 		t.Fatal(err)
 	}
 	got := string(args)
-	if !strings.Contains(got, "run --bg --name "+herdrNotificationBridgeName+" --no-notify sh -c") {
+	if !strings.Contains(got, "run --bg --name "+herdrNotificationBridgeName+" --no-notify ccplant agent-provisioner hc-notification-bridge --agent-type codex-acp") {
 		t.Fatalf("hc run arguments missing from %q", got)
 	}
 }
