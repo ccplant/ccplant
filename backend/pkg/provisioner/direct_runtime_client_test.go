@@ -93,6 +93,8 @@ func TestDirectRuntimeLocalStatusIncludesRunningHerdrTerminals(t *testing.T) {
 		{name: "working agent", terminal: `{"state":"live","status":{"state":"working"}}`, want: "running"},
 		{name: "blocked agent", terminal: `{"state":"live","status":{"state":"blocked"}}`, want: "running"},
 		{name: "plain program", terminal: `{"state":"live","status":null}`, want: "running"},
+		{name: "notification bridge", terminal: `{"state":"live","labels":{"ccplant.system":"notification-bridge"},"status":{"state":"working"}}`, want: "stable"},
+		{name: "notification bridge and user work", terminal: `{"state":"live","labels":{"ccplant.system":"notification-bridge"},"status":{"state":"working"}},{"state":"live","status":null}`, want: "running"},
 		{name: "idle agent", terminal: `{"state":"live","status":{"state":"idle"}}`, want: "stable"},
 		{name: "finished terminal", terminal: `{"state":"finished","status":null}`, want: "stable"},
 	}

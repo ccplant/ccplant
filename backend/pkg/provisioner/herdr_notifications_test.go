@@ -58,20 +58,29 @@ func TestRunHerdrNotificationBridgeSendsACPPrompt(t *testing.T) {
 func TestEnsureHerdrNotificationBridgeReusesLiveTerminal(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	marker := filepath.Join(dir, "args")
 	writeFakeHC(t, dir, `
 if [ "$2" = "get" ]; then
   printf '%s\n' '{"address":"t9","state":"live"}'
   exit 0
 fi
-exit 1
+printf '%s\n' "$*" >> "$HC_TEST_MARKER"
 `)
 
-	address, err := ensureHerdrNotificationBridge(context.Background(), os.Environ(), "codex-acp", "/tmp/test-agent.sock")
+	env := append(os.Environ(), "HC_TEST_MARKER="+marker)
+	address, err := ensureHerdrNotificationBridge(context.Background(), env, "codex-acp", "/tmp/test-agent.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if address != "t9" {
 		t.Fatalf("address = %q, want t9", address)
+	}
+	args, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(args)); got != "label t9 "+herdrNotificationBridgeLabel {
+		t.Fatalf("label arguments = %q", got)
 	}
 }
 
@@ -100,7 +109,7 @@ printf '%s\n' '{"address":"t12","state":"live"}'
 		t.Fatal(err)
 	}
 	got := string(args)
-	if !strings.Contains(got, "run --bg --name "+herdrNotificationBridgeName+" --no-notify ccplant agent-provisioner hc-notification-bridge --agent-type codex-acp") {
+	if !strings.Contains(got, "run --bg --name "+herdrNotificationBridgeName+" --label "+herdrNotificationBridgeLabel+" --no-notify ccplant agent-provisioner hc-notification-bridge --agent-type codex-acp") {
 		t.Fatalf("hc run arguments missing from %q", got)
 	}
 	if !strings.Contains(got, "--agent-socket /tmp/test-agent.sock") {

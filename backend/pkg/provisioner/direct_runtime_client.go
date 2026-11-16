@@ -139,7 +139,8 @@ func (w *directRuntimeWorker) hasRunningHerdrTerminal(ctx context.Context) bool 
 	var result struct {
 		Result struct {
 			Terminals []struct {
-				State  string `json:"state"`
+				State  string            `json:"state"`
+				Labels map[string]string `json:"labels"`
 				Status *struct {
 					State string `json:"state"`
 				} `json:"status"`
@@ -150,6 +151,9 @@ func (w *directRuntimeWorker) hasRunningHerdrTerminal(ctx context.Context) bool 
 		return false
 	}
 	for _, terminal := range result.Result.Terminals {
+		if terminal.Labels["ccplant.system"] == "notification-bridge" {
+			continue
+		}
 		if terminal.State != "" && terminal.State != "live" {
 			continue
 		}

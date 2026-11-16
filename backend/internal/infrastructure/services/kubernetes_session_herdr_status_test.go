@@ -17,6 +17,8 @@ func TestHerdrResponseHasRunningTerminal(t *testing.T) {
 		{name: "working agent", terminal: `{"state":"live","status":{"state":"working"}}`, want: true},
 		{name: "blocked agent", terminal: `{"state":"live","status":{"state":"blocked"}}`, want: true},
 		{name: "plain program", terminal: `{"state":"live","status":null}`, want: true},
+		{name: "notification bridge", terminal: `{"state":"live","labels":{"ccplant.system":"notification-bridge"},"status":{"state":"working"}}`, want: false},
+		{name: "notification bridge and user work", terminal: `{"state":"live","labels":{"ccplant.system":"notification-bridge"},"status":{"state":"working"}},{"state":"live","status":null}`, want: true},
 		{name: "idle agent", terminal: `{"state":"live","status":{"state":"idle"}}`, want: false},
 		{name: "done agent", terminal: `{"state":"live","status":{"state":"done"}}`, want: false},
 		{name: "finished program", terminal: `{"state":"finished","status":null}`, want: false},
