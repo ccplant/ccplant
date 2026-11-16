@@ -37,6 +37,7 @@ type KubernetesSession struct {
 
 	deploymentWatcherActive  atomic.Bool
 	agentStatusWatcherActive atomic.Bool
+	agentRuntimeStatusEpoch  atomic.Uint64
 
 	// statusChangeCallback is called by SetStatus when the status changes.
 	// Set by KubernetesSessionManager at session creation to enable proxy-wide pub/sub.

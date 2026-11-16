@@ -31,7 +31,11 @@ func TestHerdrResponseHasRunningTerminal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := herdrResponseHasRunningTerminal(server.Client(), req); got != tt.want {
+			got, ok := herdrResponseHasRunningTerminal(server.Client(), req)
+			if !ok {
+				t.Fatal("herdrResponseHasRunningTerminal() did not accept a valid response")
+			}
+			if got != tt.want {
 				t.Fatalf("herdrResponseHasRunningTerminal() = %v, want %v", got, tt.want)
 			}
 		})
