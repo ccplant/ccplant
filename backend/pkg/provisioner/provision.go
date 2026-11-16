@@ -516,7 +516,13 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		s.setStatus(StatusError, "failed to start local agent socket: "+err.Error())
 		return
 	}
-	defer stopLocalSocket()
+	localSocketSupervised := false
+	defer func() {
+		if !localSocketSupervised {
+			stopLocalSocket()
+		}
+	}()
+	log.Printf("[PROVISIONER] Local agent API socket is ready at %s", agentSocket)
 	agentEnv = mergeEnv(agentEnv, map[string]string{"AGENTAPI_LOCAL_SOCKET": agentSocket})
 	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv, settings.Session.AgentType, agentSocket); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to start herdr notification bridge: %v", err)
@@ -652,6 +658,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
 		err := <-agentDone
+		stopLocalSocket()
 		if ctx.Err() != nil {
 			return
 		}
@@ -661,6 +668,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+	localSocketSupervised = true
 }
 
 func shouldImplicitlyRestoreSessionState(settings *sessionsettings.SessionSettings) bool {
