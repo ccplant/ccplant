@@ -294,10 +294,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 			}
 		}, allocator.Stop)
 	} else {
-		// Runtime configuration is process-local. Every replica can serve lifecycle
-		// requests, so each one must apply the parent profile even though only the
-		// elected leader owns allocation polling and manager heartbeats.
-		go runSessionRunnerRuntimeProfilePoller(runtimeCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, manager)
+		// Runtime configuration is owned by this manager's command-line arguments
+		// and environment. The parent controls allocation, but must not replace the
+		// manager's image, sidecars, resources, or other workload settings.
 		instanceID, _ := os.Hostname()
 		if instanceID == "" {
 			instanceID = uuid.NewString()
@@ -342,25 +341,6 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
-}
-
-func runSessionRunnerRuntimeProfilePoller(ctx context.Context, upstream, managerID, token string, manager *services.KubernetesSessionManager) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	appliedRevision := ""
-	for {
-		if revision, err := syncSessionRunnerRuntimeProfile(ctx, client, upstream, managerID, token, appliedRevision, manager); err != nil {
-			log.Printf("[SESSION_MANAGER] Runner runtime profile sync failed: %v", err)
-		} else if revision != "" {
-			appliedRevision = revision
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 type leaderElectionRunner interface {
@@ -469,15 +449,7 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 	client := &http.Client{Timeout: 10 * time.Second}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	appliedRevision := ""
 	for {
-		assetImageError := ""
-		if revision, err := syncSessionRunnerRuntimeProfile(ctx, client, upstream, managerID, token, appliedRevision, manager); err != nil {
-			log.Printf("[SESSION_MANAGER] Runner runtime profile sync failed: %v", err)
-			assetImageError = err.Error()
-		} else if revision != "" {
-			appliedRevision = revision
-		}
 		localRunnerIDs, inventoryErr := manager.ListRunnerSessionIDs(ctx)
 		if inventoryErr != nil {
 			log.Printf("[SESSION_MANAGER] List local runner inventory: %v", inventoryErr)
@@ -494,10 +466,8 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 				}
 			}
 			payload, marshalErr := json.Marshal(map[string]any{
-				"local_runner_ids":    localRunnerIDs,
-				"session_statuses":    sessionStatuses,
-				"applied_asset_image": manager.AppliedSessionImage(),
-				"asset_image_error":   assetImageError,
+				"local_runner_ids": localRunnerIDs,
+				"session_statuses": sessionStatuses,
 			})
 			if marshalErr != nil {
 				log.Printf("[SESSION_MANAGER] Encode runner pool heartbeat: %v", marshalErr)
@@ -668,34 +638,6 @@ func sessionManagerUpgradeRequired(current, desired string) (bool, error) {
 		return false, fmt.Errorf("invalid current version %q: %w", current, err)
 	}
 	return currentVersion.LessThan(desiredVersion), nil
-}
-
-func syncSessionRunnerRuntimeProfile(ctx context.Context, client *http.Client, upstream, managerID, token, currentRevision string, manager *services.KubernetesSessionManager) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/runtime-profile", nil)
-	if err != nil {
-		return currentRevision, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return currentRevision, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return currentRevision, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	var snapshot coreallocation.RuntimeProfileSnapshot
-	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
-		return currentRevision, err
-	}
-	if snapshot.Revision == "" || snapshot.Profile == nil || snapshot.Revision == currentRevision {
-		return currentRevision, nil
-	}
-	if err := manager.ApplyRuntimeProfile(ctx, snapshot.Profile); err != nil {
-		return currentRevision, err
-	}
-	log.Printf("[SESSION_MANAGER] Applied runner runtime profile revision %s", snapshot.Revision)
-	return snapshot.Revision, nil
 }
 
 type sessionRunnerInfrastructure interface {

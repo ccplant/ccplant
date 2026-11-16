@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/distribution/reference"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
@@ -187,7 +186,7 @@ func (c *SessionPoolController) WithAllocationNotifier(notifier core.AllocationN
 }
 
 func (c *SessionPoolController) GetManagerRuntimeProfile(ctx echo.Context) error {
-	manager, err := c.authenticateManager(ctx)
+	_, err := c.authenticateManager(ctx)
 	if err != nil {
 		return err
 	}
@@ -198,7 +197,6 @@ func (c *SessionPoolController) GetManagerRuntimeProfile(ctx echo.Context) error
 	if profile == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "runtime profile is unavailable")
 	}
-	profile.Kubernetes.SessionImage = manager.AssetImage
 	raw, err := json.Marshal(profile)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "marshal runtime profile")
@@ -475,7 +473,6 @@ func (c *SessionPoolController) PatchManager(ctx echo.Context) error {
 		Capabilities []string          `json:"capabilities,omitempty"`
 		Enabled      *bool             `json:"enabled,omitempty"`
 		Draining     *bool             `json:"draining,omitempty"`
-		AssetImage   *string           `json:"asset_image,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -494,22 +491,6 @@ func (c *SessionPoolController) PatchManager(ctx echo.Context) error {
 	}
 	if patch.Draining != nil {
 		manager.Draining = *patch.Draining
-	}
-	if patch.AssetImage != nil {
-		image := strings.TrimSpace(*patch.AssetImage)
-		if image == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "asset_image must not be empty")
-		}
-		if _, err := reference.ParseNormalizedNamed(image); err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "asset_image must be a valid OCI image reference")
-		}
-		manager.AssetImage = image
-		manager.AssetImageError = ""
-		if manager.AppliedAssetImage == image {
-			manager.AssetImageStatus = "ready"
-		} else {
-			manager.AssetImageStatus = "pending"
-		}
 	}
 	if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
 		return sessionRunnerStoreError(err)
@@ -1250,10 +1231,8 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 		}
 	}
 	var heartbeat struct {
-		LocalRunnerIDs    *[]string         `json:"local_runner_ids"`
-		SessionStatuses   map[string]string `json:"session_statuses"`
-		AppliedAssetImage string            `json:"applied_asset_image"`
-		AssetImageError   string            `json:"asset_image_error"`
+		LocalRunnerIDs  *[]string         `json:"local_runner_ids"`
+		SessionStatuses map[string]string `json:"session_statuses"`
 	}
 	if ctx.Request().Body != nil && ctx.Request().Body != http.NoBody {
 		if err := ctx.Bind(&heartbeat); err != nil {
@@ -1281,25 +1260,6 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 	orphanedSessionIDs, err := c.orphanedManagerSessionIDs(requestCtx, manager.ID, heartbeat.SessionStatuses)
 	if err != nil {
 		return sessionRunnerStoreError(err)
-	}
-	if manager.AssetImage != "" && (heartbeat.AppliedAssetImage != "" || heartbeat.AssetImageError != "") {
-		if heartbeat.AppliedAssetImage != "" {
-			manager.AppliedAssetImage = heartbeat.AppliedAssetImage
-		}
-		manager.AssetImageError = heartbeat.AssetImageError
-		switch {
-		case heartbeat.AssetImageError != "":
-			manager.AssetImageStatus = "failed"
-		case manager.AssetImage == manager.AppliedAssetImage:
-			manager.AssetImageStatus = "ready"
-		default:
-			manager.AssetImageStatus = "reconciling"
-		}
-		if err := telemetry.LoggedOperationErr(requestCtx, "session_pool.heartbeat.update_asset_image_status", func(operationCtx context.Context) error {
-			return c.store.UpdateManager(operationCtx, manager)
-		}, telemetry.String("session_manager.id", manager.ID), telemetry.String("session_manager.asset_image_status", manager.AssetImageStatus)); err != nil {
-			return sessionRunnerStoreError(err)
-		}
 	}
 	pools, err := telemetry.LoggedOperation(requestCtx, "session_pool.heartbeat.list_pool_suppliers", func(operationCtx context.Context) ([]*core.PoolSupplier, error) {
 		return c.store.ListPoolSuppliers(operationCtx)

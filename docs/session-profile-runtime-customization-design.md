@@ -31,36 +31,27 @@ Source-profile inheritance treats an empty child wrapper as inherited from the s
 
 ## Asset image
 
-Each Session Manager selects one asset image. Operators can set the initial image in the deployment:
+Each Session Manager selects one asset image. Operators set the image in the
+manager deployment:
 
 ```yaml
 session:
   image: ghcr.io/example/ccplant-agent@sha256:...
 ```
 
-The standalone chart renders this as `AGENTAPI_K8S_SESSION_IMAGE`. The Manager owner can subsequently
-change the desired image without editing the deployment:
+The standalone chart renders this as `AGENTAPI_K8S_SESSION_IMAGE`. The same
+manager-owned configuration supplies the CLI init image, network filter,
+sidecars, resources, and other workload settings. Parent runtime settings do not
+replace them.
 
-```http
-PATCH /session-managers/{id}
-Content-Type: application/json
+The image applies to both pre-warmed stock workloads and on-demand workloads
+created by that manager. The parent API neither stores nor changes it.
 
-{"asset_image":"ghcr.io/example/ccplant-agent@sha256:..."}
-```
+Changing the asset image is a Session Manager deployment operation:
 
-The Manager resource reports `asset_image`, `applied_asset_image`, and an asynchronous
-`asset_image_status` (`pending`, `reconciling`, `ready`, or `failed`) and any
-`asset_image_error`. The image applies to both pre-warmed
-stock workloads and on-demand workloads created by that manager. The CLI init image, network filter,
-and other sidecars remain independently operator-managed.
-
-Changing the asset image is a Session Manager reconciliation operation:
-
-1. Patch the Manager's `asset_image` desired state through the API.
-2. The Manager obtains the changed authenticated runtime profile.
-3. It purges idle stock workloads using the previous image; allocated sessions remain untouched.
-4. It reconciles and registers fresh stock runners using the new image.
-5. Its heartbeat reports the applied image and moves `asset_image_status` to `ready`.
+1. Update the manager's `session.image` value or equivalent command environment.
+2. Roll out the manager Deployment.
+3. The manager creates new stock and on-demand workloads with that image.
 
 For reproducibility, production configuration should use an image digest. Registry credentials and admission policy remain cluster/operator concerns.
 
