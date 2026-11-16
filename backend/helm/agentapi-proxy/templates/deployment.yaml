@@ -4,6 +4,9 @@
 {{- $api := .Values.api | default dict }}
 {{- $apiAWSCredentials := $api.awsCredentials | default dict }}
 {{- $codexDeviceAuth := $api.codexDeviceAuth | default dict }}
+{{- $scheduleSessions := $api.scheduleSessions | default dict }}
+{{- $webhookSessions := $api.webhookSessions | default dict }}
+{{- $interactiveSessions := $api.interactiveSessions | default dict }}
 {{- $githubBroker := $api.githubBroker | default dict }}
 {{- $apiImage := $api.image | default .Values.image }}
 {{- $apiPodAnnotations := deepCopy ($api.podAnnotations | default .Values.podAnnotations | default dict) }}
@@ -143,6 +146,18 @@ spec:
             {{- end }}
             {{- with (dig "callbackBaseUrl" "" $codexDeviceAuth) }}
             - name: AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (dig "ttl" "" $scheduleSessions) }}
+            - name: AGENTAPI_SCHEDULE_SESSION_TTL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (dig "ttl" "" $webhookSessions) }}
+            - name: AGENTAPI_WEBHOOK_SESSION_TTL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (dig "ttl" "" $interactiveSessions) }}
+            - name: AGENTAPI_INTERACTIVE_SESSION_TTL
               value: {{ . | quote }}
             {{- end }}
             {{- if (dig "enabled" false $openTelemetry) }}

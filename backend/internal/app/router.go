@@ -187,6 +187,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSessionRunnerStore(server.sessionRunnerStore),
 		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),
 		controllers.WithGitHubBrokerBaseURL(server.config.GitHubBrokerBaseURL),
+		controllers.WithScheduleSessionTTL(server.config.ScheduleSessionTTL),
+		controllers.WithWebhookSessionTTL(server.config.WebhookSessionTTL),
+		controllers.WithInteractiveSessionTTL(server.config.InteractiveSessionTTL),
 		controllers.WithRouteStatusEventBus(server.routeStatusBus),
 	}
 	if githubConnectionsController != nil {
