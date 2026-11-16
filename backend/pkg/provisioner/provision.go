@@ -508,6 +508,28 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// ── Step 7: build and start the agent subprocess ──────────────────────────
 	s.setPhase("provision:start-agent")
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
+	agentEnv := mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
+	agentPort := environmentValue(agentEnv, "AGENTAPI_PORT", "8080")
+	agentSocket := localAgentSocketPath()
+	stopLocalSocket, err := startLocalAgentSocketProxy(ctx, agentSocket, "http://127.0.0.1:"+agentPort)
+	if err != nil {
+		s.setStatus(StatusError, "failed to start local agent socket: "+err.Error())
+		return
+	}
+	localSocketSupervised := false
+	defer func() {
+		if !localSocketSupervised {
+			stopLocalSocket()
+		}
+	}()
+	log.Printf("[PROVISIONER] Local agent API socket is ready at %s", agentSocket)
+	agentEnv = mergeEnv(agentEnv, map[string]string{"AGENTAPI_LOCAL_SOCKET": agentSocket})
+	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv, settings.Session.AgentType, agentSocket); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to start herdr notification bridge: %v", err)
+	} else {
+		agentEnv = mergeEnv(agentEnv, map[string]string{"HC_TERMINAL_ID": parentID})
+		log.Printf("[PROVISIONER] Herdr notifications will be delivered through parent terminal %s", parentID)
+	}
 	if shouldRequireConversationResume(settings) {
 		agentArgs = append([]string{agentArgs[0], "--require-resume"}, agentArgs[1:]...)
 	}
@@ -531,7 +553,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
-	cmd.Env = mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
+	cmd.Env = agentEnv
 	cmd.Stdout = os.Stdout
 	var agentStderr bytes.Buffer
 	cmd.Stderr = io.MultiWriter(os.Stderr, &agentStderr)
@@ -636,6 +658,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
 		err := <-agentDone
+		stopLocalSocket()
 		if ctx.Err() != nil {
 			return
 		}
@@ -645,6 +668,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+	localSocketSupervised = true
 }
 
 func shouldImplicitlyRestoreSessionState(settings *sessionsettings.SessionSettings) bool {
