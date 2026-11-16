@@ -15,9 +15,17 @@ const herdrNotificationBridgeName = "ccplant-session-agent"
 // the normal session message API so ACP and non-ACP agents receive them alike.
 const herdrNotificationBridgeScript = `printf '\033]7501;state=working:app=ccplant-hc-bridge\033\\'
 ccplant_binary="${CCPLANT_BINARY_PATH:-ccplant}"
+proxy_endpoint="${AGENTAPI_PROXY_ENDPOINT:-}"
+case "$proxy_endpoint" in
+  */api/v1) proxy_endpoint="${proxy_endpoint%/api/v1}" ;;
+esac
 while IFS= read -r message; do
   [ -n "$message" ] || continue
-  "$ccplant_binary" client send "$message"
+  if [ -n "$proxy_endpoint" ]; then
+    "$ccplant_binary" client send --endpoint "$proxy_endpoint" "$message"
+  else
+    "$ccplant_binary" client send "$message"
+  fi
 done`
 
 type herdrTerminal struct {

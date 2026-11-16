@@ -1,12 +1,40 @@
 package provisioner
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestHerdrNotificationBridgeNormalizesDirectRuntimeEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "args")
+	client := filepath.Join(dir, "ccplant")
+	if err := os.WriteFile(client, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$HC_TEST_MARKER\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", herdrNotificationBridgeScript)
+	cmd.Env = append(os.Environ(),
+		"CCPLANT_BINARY_PATH="+client,
+		"AGENTAPI_PROXY_ENDPOINT=https://proxy.example/api/v1",
+		"HC_TEST_MARKER="+marker,
+	)
+	cmd.Stdin = bytes.NewBufferString("<hc>child exited</hc>\n")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bridge failed: %v: %s", err, output)
+	}
+	args, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(args)), "client send --endpoint https://proxy.example <hc>child exited</hc>"; got != want {
+		t.Fatalf("arguments = %q, want %q", got, want)
+	}
+}
 
 func TestEnsureHerdrNotificationBridgeReusesLiveTerminal(t *testing.T) {
 	dir := t.TempDir()
