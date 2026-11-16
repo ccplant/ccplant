@@ -26,12 +26,20 @@ type githubConnectionURLResolverStub struct {
 	apiURL  string
 }
 
-type rejectingOrganizationResolver struct {
+type githubRoutingResolver struct {
 	githubConnectionURLResolverStub
+	token        string
+	connectionID string
+	matched      bool
+	err          error
 }
 
-func (rejectingOrganizationResolver) ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error) {
-	return "", "connection-1", true, errors.New("GitHub connection is not linked to this user")
+func (r githubRoutingResolver) ResolveAccessToken(context.Context, *entities.User, string) (string, error) {
+	return r.token, r.err
+}
+
+func (r githubRoutingResolver) ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error) {
+	return r.token, r.connectionID, r.matched, r.err
 }
 
 type githubRoutingProfileRepo struct {
@@ -113,6 +121,7 @@ func (quotaErrorSessionCreator) DeleteSessionByID(string) error { return nil }
 
 type previewSessionCreator struct {
 	createCalled bool
+	request      entities.StartRequest
 }
 
 func (p *previewSessionCreator) CreateSession(context.Context, string, entities.StartRequest, string, string, []string) (entities.Session, error) {
@@ -122,7 +131,8 @@ func (p *previewSessionCreator) CreateSession(context.Context, string, entities.
 
 func (*previewSessionCreator) DeleteSessionByID(string) error { return nil }
 
-func (*previewSessionCreator) PreviewSession(_ context.Context, _ string, req entities.StartRequest, _ string, _ string, _ []string) (*entities.SessionStartPreview, error) {
+func (p *previewSessionCreator) PreviewSession(_ context.Context, _ string, req entities.StartRequest, _ string, _ string, _ []string) (*entities.SessionStartPreview, error) {
+	p.request = req
 	return &entities.SessionStartPreview{
 		Placement: entities.SessionStartPlacement{Transport: repositories.SessionRouteTransportDirectRuntime, Pool: "linux", BindingID: "binding-alice"},
 		Settings: &sessionsettings.SessionSettings{
@@ -164,7 +174,7 @@ func TestStartSessionDryRunReturnsRedactedPlanWithoutCreatingSession(t *testing.
 	require.Equal(t, "<redacted>", settings["credentials"])
 }
 
-func TestStartSessionUsesBuiltInGitHubTokenBeforeUnlinkedOrganizationConnection(t *testing.T) {
+func TestStartSessionFallsBackToBuiltInGitHubTokenForUnlinkedOrganizationConnection(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","tags":{"repository":"acme/repo"}}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -177,14 +187,74 @@ func TestStartSessionUsesBuiltInGitHubTokenBeforeUnlinkedOrganizationConnection(
 	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "built-in-token"})
 
 	creator := &previewSessionCreator{}
-	controller := NewSessionController(nil, creator, WithGitHubTokenResolver(rejectingOrganizationResolver{}))
+	controller := NewSessionController(nil, creator, WithGitHubTokenResolver(githubRoutingResolver{}))
 
 	require.NoError(t, controller.StartSession(ctx))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var body map[string]interface{}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	effective := body["effective_request"].(map[string]interface{})
-	require.Equal(t, "<redacted>", effective["params"].(map[string]interface{})["github_token"])
+	require.Equal(t, "built-in-token", creator.request.Params.GithubToken)
+	require.Empty(t, creator.request.Params.ConnectionID)
+}
+
+func TestStartSessionUsesLinkedOrganizationConnectionBeforeBuiltInGitHubToken(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","tags":{"repository":"acme/repo"}}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "alice", CanCreate: true, CanRead: true},
+	})
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "built-in-token", ConnectionID: "built-in"})
+
+	creator := &previewSessionCreator{}
+	resolver := githubRoutingResolver{
+		githubConnectionURLResolverStub: githubConnectionURLResolverStub{baseURL: "https://github.com", apiURL: "https://api.github.com"},
+		token:                           "connection-token", connectionID: "organization-connection", matched: true,
+	}
+	controller := NewSessionController(nil, creator, WithGitHubTokenResolver(resolver))
+
+	require.NoError(t, controller.StartSession(ctx))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "connection-token", creator.request.Params.GithubToken)
+	require.Equal(t, "organization-connection", creator.request.Params.ConnectionID)
+	require.Equal(t, "https://github.com", creator.request.Environment["GITHUB_URL"])
+	require.Equal(t, "https://api.github.com", creator.request.Environment["GITHUB_API"])
+	require.Equal(t, "github.com", creator.request.Environment["GH_HOST"])
+}
+
+func TestStartSessionUsesProfileConnectionBeforeBuiltInGitHubToken(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "alice")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{ConnectionID: "profile-connection"})
+	profile.SetConfig(cfg)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","session_profile_id":"profile"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "alice", CanCreate: true, CanRead: true},
+	})
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "built-in-token", ConnectionID: "built-in"})
+
+	creator := &previewSessionCreator{}
+	resolver := githubRoutingResolver{
+		githubConnectionURLResolverStub: githubConnectionURLResolverStub{baseURL: "https://github.example.com", apiURL: "https://github.example.com/api/v3"},
+		token:                           "profile-token",
+	}
+	controller := NewSessionController(nil, creator,
+		WithGitHubTokenResolver(resolver),
+		WithSessionProfileRepository(githubRoutingProfileRepo{profile: profile}),
+	)
+
+	require.NoError(t, controller.StartSession(ctx))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "profile-token", creator.request.Params.GithubToken)
+	require.Equal(t, "profile-connection", creator.request.Params.ConnectionID)
+	require.Equal(t, "github.example.com", creator.request.Environment["GH_HOST"])
 }
 
 func TestStartSessionRejectsInvalidDryRun(t *testing.T) {
