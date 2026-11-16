@@ -40,6 +40,8 @@ var (
 
 var directRuntimeReadyPollInterval = time.Second
 
+const directRuntimeStatusRefreshInterval = 5 * time.Second
+
 func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string, provisionerPort int) {
 	if cfg == nil || !cfg.Enabled || cfg.Endpoint == "" || cfg.SessionID == "" || cfg.Token == "" || cfg.Generation <= 0 {
 		return
@@ -71,15 +73,20 @@ func newDirectRuntimeWorker(transport http.RoundTripper, cfg *sessionsettings.Pa
 
 func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
 	var previous string
+	var lastPostedAt time.Time
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		status := w.localStatus(ctx)
-		if status != "" && status != previous {
+		// Refresh unchanged status periodically. Manager heartbeats and proxied
+		// agent /status reads can race with the richer hc-aware runtime status;
+		// a refresh heals those coarser writes without waiting for another turn.
+		if status != "" && (status != previous || time.Since(lastPostedAt) >= directRuntimeStatusRefreshInterval) {
 			if err := w.postStatus(ctx, status); err != nil {
 				log.Printf("[DIRECT_RUNTIME] status push failed: %v", err)
 			} else {
 				previous = status
+				lastPostedAt = time.Now()
 			}
 		}
 		select {
