@@ -6899,6 +6899,10 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 				if jsonErr := json.Unmarshal([]byte(data), &body); jsonErr != nil {
 					continue
 				}
+				if body.Status == "stable" && kubernetesSessionHasRunningHerdrTerminal(ctx, session) {
+					applyAgentRuntimeStatus(session, "running")
+					continue
+				}
 				applyAgentRuntimeStatus(session, body.Status)
 				if body.Status == "stable" && session.Status() != "stopped" {
 					if scheduleErr := m.ScheduleSessionSuspend(ctx, session.ID()); scheduleErr != nil {
@@ -6912,6 +6916,54 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 		}
 	}
 	return scanner.Err()
+}
+
+func kubernetesSessionHasRunningHerdrTerminal(ctx context.Context, session *KubernetesSession) bool {
+	if session == nil {
+		return false
+	}
+	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{"all":false}}`)
+	requestCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, fmt.Sprintf("http://%s:%d/herdr/rpc", session.ServiceDNS(), ProvisionerPort), body)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return herdrResponseHasRunningTerminal(defaultPodStatusHTTPClient, req)
+}
+
+func herdrResponseHasRunningTerminal(client *http.Client, req *http.Request) bool {
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var result struct {
+		Result struct {
+			Terminals []struct {
+				State  string `json:"state"`
+				Status *struct {
+					State string `json:"state"`
+				} `json:"status"`
+			} `json:"terminals"`
+		} `json:"result"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return false
+	}
+	for _, terminal := range result.Result.Terminals {
+		if terminal.State != "" && terminal.State != "live" {
+			continue
+		}
+		if terminal.Status == nil || terminal.Status.State == "working" || terminal.Status.State == "blocked" {
+			return true
+		}
+	}
+	return false
 }
 
 func applyAgentRuntimeStatus(session *KubernetesSession, status string) {
