@@ -22,7 +22,7 @@ The verification used the intended ownership split:
 
 - the session profile supplied `command_wrapper_template`;
 - the Session Manager supplied `AGENTAPI_K8S_SESSION_IMAGE`;
-- the profile API did not persist or return the removed `asset_image` field.
+- the profile API did not persist an agent image.
 
 The Manager image setting was
 `ghcr.io/ccplant/ccplant-agent:assets-4b37a396b0634dac6b9a5dd6614af405`.
@@ -39,7 +39,7 @@ ghcr.io/ccplant/ccplant-agent@sha256:2d230b6c90a1e09c1ac54844cdb51655520bdf01be9
 | Check | Result |
 | --- | --- |
 | Initial API status | `pending` |
-| Heartbeat convergence | `ready` with matching `applied_asset_image` |
+| Manager heartbeat | Continued reporting healthy inventory |
 | Invalid image reference | HTTP 400 |
 | Old idle `fly-dev` stock | Both runners removed |
 | Replacement idle `fly-dev` stock | Two new runners, both using the digest reference |

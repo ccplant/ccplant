@@ -6,8 +6,10 @@ single upstream runner/control loop with a Kubernetes Lease. Idle runners
 atomically claim work from the parent; the manager is never pre-selected.
 
 The parent API remains the source of truth for allocations, routes, quotas and
-provision status. This chart keeps only Kubernetes workload resources and a
-cached runtime profile in the remote cluster.
+provision status. The manager's chart values are the source of truth for its
+Kubernetes workload configuration, including the agent image, sidecars and
+resources. The parent neither stores nor overrides the manager's agent image or
+other workload settings.
 
 Required values are `parent.url`, the parent connection/HMAC
 Secret references, `runner.managerId`, `runner.pool`, `internalApi.tokenSecretRef.name`, and

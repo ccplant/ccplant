@@ -52,5 +52,8 @@ and include `/opt/ccplant/bin` in PATH. Private registries must be accessible
 using the session Pod's imagePullSecrets/service account credentials.
 
 Manager auto-upgrades change the CLI source and manager image while preserving
-the agent asset reference. Already-running Pods keep their CLI. Nodes download
-new assets only when their hash changes or their cached image has been evicted.
+the agent asset reference selected by the manager deployment. A standalone
+manager does not expose that reference as parent-owned configuration or inherit
+a replacement from the parent runtime profile. Already-running Pods keep their
+CLI. Nodes download new assets only when their hash changes or their cached image
+has been evicted.

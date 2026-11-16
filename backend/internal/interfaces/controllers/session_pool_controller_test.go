@@ -74,7 +74,7 @@ func (t *statusTestTunnel) Do(_ context.Context, id, _, _ string, req *http.Requ
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}, nil
 }
 
-func TestOwnedManagerAssetImageRuntimeProfileAndHeartbeat(t *testing.T) {
+func TestManagerRuntimeProfileAndVersionAuthentication(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	token, tokenHash, err := newSessionRunnerToken()
 	requireNoError(t, err)
@@ -85,20 +85,6 @@ func TestOwnedManagerAssetImageRuntimeProfileAndHeartbeat(t *testing.T) {
 	requireNoError(t, store.CreateManager(context.Background(), manager))
 	provider := staticExternalRuntimeProfile{profile: &sessionsettings.RuntimeProfile{Version: 1}}
 	controller := NewSessionPoolController(store, nil, provider)
-	user := entities.NewUser("alice", entities.UserTypeRegular, "alice")
-
-	patched := callSessionPoolHandlerAs(t, controller.PatchOwnedManager, http.MethodPatch, "/session-managers/manager-a",
-		map[string]any{"asset_image": "ghcr.io/ccplant/ccplant-agent:assets-test"},
-		map[string]string{"id": "manager-a"}, nil, user)
-	if patched.Code != http.StatusOK {
-		t.Fatalf("patch status=%d body=%s", patched.Code, patched.Body.String())
-	}
-	var patchedManager core.Manager
-	decodeRecorder(t, patched, &patchedManager)
-	if patchedManager.AssetImage != "ghcr.io/ccplant/ccplant-agent:assets-test" || patchedManager.AssetImageStatus != "pending" {
-		t.Fatalf("patched manager=%+v", patchedManager)
-	}
-
 	profileResult := callSessionPoolHandler(t, controller.GetManagerRuntimeProfile, http.MethodGet,
 		"/internal/session-managers/manager-a/runtime-profile", nil,
 		map[string]string{"id": "manager-a"}, map[string]string{"Authorization": "Bearer " + token})
@@ -107,7 +93,7 @@ func TestOwnedManagerAssetImageRuntimeProfileAndHeartbeat(t *testing.T) {
 	}
 	var snapshot sessionallocation.RuntimeProfileSnapshot
 	decodeRecorder(t, profileResult, &snapshot)
-	if snapshot.Profile.Kubernetes.SessionImage != "ghcr.io/ccplant/ccplant-agent:assets-test" || snapshot.Revision == "" {
+	if snapshot.Revision == "" {
 		t.Fatalf("runtime profile=%+v", snapshot)
 	}
 	versionResult := callSessionPoolHandler(t, controller.GetManagerVersion, http.MethodGet,
@@ -123,18 +109,6 @@ func TestOwnedManagerAssetImageRuntimeProfileAndHeartbeat(t *testing.T) {
 		t.Fatalf("unauthorized version status=%d body=%s", unauthorizedVersion.Code, unauthorizedVersion.Body.String())
 	}
 
-	heartbeat := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost,
-		"/internal/session-managers/manager-a/heartbeat",
-		map[string]any{"applied_asset_image": "ghcr.io/ccplant/ccplant-agent:assets-test"},
-		map[string]string{"id": "manager-a"}, map[string]string{"Authorization": "Bearer " + token})
-	if heartbeat.Code != http.StatusOK {
-		t.Fatalf("heartbeat status=%d body=%s", heartbeat.Code, heartbeat.Body.String())
-	}
-	stored, err := store.GetManager(context.Background(), "manager-a")
-	requireNoError(t, err)
-	if stored.AppliedAssetImage != stored.AssetImage || stored.AssetImageStatus != "ready" {
-		t.Fatalf("stored manager=%+v", stored)
-	}
 }
 
 func TestSaveManagerManagedFilesPersistsInParentStore(t *testing.T) {
@@ -158,20 +132,6 @@ func TestSaveManagerManagedFilesPersistsInParentStore(t *testing.T) {
 	}
 	if files.owner != "alice" || len(files.files) != 1 {
 		t.Fatalf("persisted owner=%q files=%d", files.owner, len(files.files))
-	}
-}
-
-func TestOwnedManagerRejectsInvalidAssetImage(t *testing.T) {
-	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
-	requireNoError(t, store.CreateManager(context.Background(), &core.Manager{
-		ID: "manager-a", Scope: core.ManagerScopeUser, OwnerID: "alice", Enabled: true,
-	}))
-	controller := NewSessionPoolController(store, nil)
-	user := entities.NewUser("alice", entities.UserTypeRegular, "alice")
-	result := callSessionPoolHandlerAs(t, controller.PatchOwnedManager, http.MethodPatch, "/session-managers/manager-a",
-		map[string]any{"asset_image": "not a valid image"}, map[string]string{"id": "manager-a"}, nil, user)
-	if result.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d body=%s", result.Code, result.Body.String())
 	}
 }
 
