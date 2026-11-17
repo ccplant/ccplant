@@ -426,11 +426,10 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// ── Step 2.7: write managed Codex requirements ─────────────────────────
 	// Only proxy and organisation hooks belong in the managed layer. Remove
 	// duplicate user copies only after the requirements file is successfully written.
-	if settings.Session.AgentType == "codex-acp" {
-		if err := prepareCodexHooks(compileOpts.OutputDir, settings.Codex.ManagedHooksJSON); err != nil {
-			s.setStatus(StatusError, "failed to prepare Codex hooks: "+err.Error())
-			return
-		}
+	// A Claude/Pi parent can also start native Codex workers in this Pod.
+	if err := prepareCodexHooks(compileOpts.OutputDir, settings.Codex.ManagedHooksJSON); err != nil {
+		s.setStatus(StatusError, "failed to prepare Codex hooks: "+err.Error())
+		return
 	}
 
 	// Step 3: prepare the process-only session environment.

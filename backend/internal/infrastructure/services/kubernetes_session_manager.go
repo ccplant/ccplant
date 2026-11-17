@@ -8104,8 +8104,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	switch req.AgentType {
 	case "codex-acp":
 		settings.Codex = sessionsettings.CodexConfig{
-			HooksJSON:        codexUserHooks,
-			ManagedHooksJSON: managedCodexHooks,
+			HooksJSON: codexUserHooks,
 			// Bypass permission prompts and disable Codex's own sandbox.
 			// agentapi-proxy provides its own sandbox, so Codex's bubblewrap-based
 			// sandbox is redundant and causes spurious permission requests.
@@ -8114,6 +8113,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 		log.Printf("[K8S_SESSION] Injected Codex hooks and set INITIAL_AGENT_MODE=agent-full-access, approval_policy=never, sandbox_mode=danger-full-access, check_for_update_on_startup=false for session %s", session.id)
 	}
+	settings.Codex.ManagedHooksJSON = managedCodexHooks
 
 	// Repository info
 	if req.RepoInfo != nil && req.RepoInfo.FullName != "" {

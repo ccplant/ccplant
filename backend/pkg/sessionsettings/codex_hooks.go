@@ -1,8 +1,8 @@
 package sessionsettings
 
 import (
-	"encoding/json"
 	"math"
+	"reflect"
 )
 
 // Normalize the JSON-shaped hook data, including Go-created []map slices.
@@ -40,22 +40,18 @@ func cloneCodexHookValue(value interface{}) interface{} {
 	return value
 }
 
-func codexHookKey(value interface{}) string {
-	data, _ := json.Marshal(value)
-	return string(data)
-}
-
 func appendUniqueCodexHookEntries(existing, added []interface{}) []interface{} {
 	result := append([]interface{}(nil), existing...)
-	seen := map[string]bool{}
-	for _, entry := range existing {
-		seen[codexHookKey(entry)] = true
-	}
 	for _, entry := range added {
-		key := codexHookKey(entry)
-		if !seen[key] {
+		found := false
+		for _, previous := range result {
+			if reflect.DeepEqual(previous, entry) {
+				found = true
+				break
+			}
+		}
+		if !found {
 			result = append(result, entry)
-			seen[key] = true
 		}
 	}
 	return result
@@ -70,7 +66,13 @@ func MergeCodexHooks(base, added map[string]interface{}) map[string]interface{} 
 	}
 	addHooks, _ := RemoveManagedCodexHooks(added, base)["hooks"].(map[string]interface{})
 	for event, raw := range addHooks {
-		entries, _ := raw.([]interface{})
+		entries, ok := raw.([]interface{})
+		if !ok {
+			if _, exists := hooks[event]; !exists {
+				hooks[event] = raw
+			}
+			continue
+		}
 		existing, _ := hooks[event].([]interface{})
 		hooks[event] = appendUniqueCodexHookEntries(existing, entries)
 	}
@@ -87,7 +89,10 @@ func RemoveManagedCodexHooks(user, managed map[string]interface{}) map[string]in
 	managedEvents, _ := normalizedCodexHooks(managed)["hooks"].(map[string]interface{})
 	for event, raw := range userEvents {
 		managedEntries, _ := managedEvents[event].([]interface{})
-		identities := map[string]bool{}
+		var identities []struct {
+			group map[string]interface{}
+			hook  interface{}
+		}
 		for _, rawEntry := range managedEntries {
 			entry, ok := rawEntry.(map[string]interface{})
 			if !ok {
@@ -96,7 +101,10 @@ func RemoveManagedCodexHooks(user, managed map[string]interface{}) map[string]in
 			hooks, _ := entry["hooks"].([]interface{})
 			delete(entry, "hooks")
 			for _, hook := range hooks {
-				identities[codexHookKey(entry)+":"+codexHookKey(hook)] = true
+				identities = append(identities, struct {
+					group map[string]interface{}
+					hook  interface{}
+				}{entry, hook})
 			}
 		}
 		entries, ok := raw.([]interface{})
@@ -116,10 +124,16 @@ func RemoveManagedCodexHooks(user, managed map[string]interface{}) map[string]in
 				continue
 			}
 			delete(entry, "hooks")
-			prefix := codexHookKey(entry) + ":"
 			kept := []interface{}{}
 			for _, hook := range hooks {
-				if !identities[prefix+codexHookKey(hook)] {
+				managed := false
+				for _, identity := range identities {
+					if reflect.DeepEqual(identity.group, entry) && reflect.DeepEqual(identity.hook, hook) {
+						managed = true
+						break
+					}
+				}
+				if !managed {
 					kept = append(kept, hook)
 				}
 			}
