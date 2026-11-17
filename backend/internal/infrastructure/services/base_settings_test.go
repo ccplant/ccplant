@@ -2,12 +2,14 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/pkg/authzscope"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -102,5 +104,39 @@ func TestResolveSettingsReadsLegacyMCPBaseFromLibSQL(t *testing.T) {
 	manager.SetSettingsSecretClient(persistence, namespace)
 
 	settings := manager.resolveSettings(ctx, nil, &entities.RunServerRequest{})
+	require.Contains(t, settings.MCPServers, "global")
+}
+
+func TestResolveSettingsReadsEncryptedBaseFromLibSQLAsNonAdmin(t *testing.T) {
+	ctx := context.Background()
+	const namespace = "app"
+	backend, err := kvstore.NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "settings.db"), "")
+	require.NoError(t, err)
+	keyring, err := kvstore.NewLocalKeyring("current", map[string]string{
+		"current": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+	})
+	require.NoError(t, err)
+	store, err := kvstore.NewEncryptedStore(backend, keyring)
+	require.NoError(t, err)
+	persistence := kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), store)
+	_, err = persistence.CoreV1().Secrets(namespace).Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "agentapi-settings-base",
+			Namespace: namespace,
+			Labels:    map[string]string{"resource": "settings", "agentapi.proxy/settings-name": "base"},
+		},
+		Data: map[string][]byte{"settings.json": []byte(`{"mcp_servers":{"global":{"type":"http","url":"https://global.example/mcp"}}}`)},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	manager := &KubernetesSessionManager{
+		client:    fake.NewSimpleClientset(),
+		namespace: "workloads",
+		k8sConfig: &config.KubernetesSessionConfig{SettingsBaseSecret: "agentapi-settings-base"},
+	}
+	manager.SetSettingsSecretClient(persistence, namespace)
+	userCtx := authzscope.WithPrincipal(ctx, authzscope.Principal{ActorID: "alice", UserID: "alice"})
+
+	settings := manager.resolveSettings(userCtx, nil, &entities.RunServerRequest{UserID: "alice"})
 	require.Contains(t, settings.MCPServers, "global")
 }

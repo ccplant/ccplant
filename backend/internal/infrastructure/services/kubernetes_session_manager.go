@@ -8920,11 +8920,6 @@ func (m *KubernetesSessionManager) resolveSettings(
 		layers = append(layers, m.configProvider.AgentDefaults())
 	}
 
-	appendIfExists := func(secretName string) {
-		if p := m.readSettingsPatch(ctx, secretName); p != nil {
-			layers = append(layers, *p)
-		}
-	}
 	appendSettingsIfExists := func(settingsName string) {
 		if p := m.readSettingsPatchByName(ctx, settingsName); p != nil {
 			layers = append(layers, *p)
@@ -8936,7 +8931,11 @@ func (m *KubernetesSessionManager) resolveSettings(
 		layers = append(layers, *p)
 	}
 	if m.k8sConfig.SettingsBaseSecret != "" {
-		appendIfExists(m.k8sConfig.SettingsBaseSecret)
+		if base := m.readSettingsPatch(ctx, m.k8sConfig.SettingsBaseSecret); base != nil {
+			layers = append(layers, *base)
+		} else {
+			log.Printf("[K8S_SESSION] Warning: base settings secret %s could not be read", m.k8sConfig.SettingsBaseSecret)
+		}
 	}
 
 	// 2. teams (in order)
