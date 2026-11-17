@@ -108,6 +108,32 @@ func TestEncryptedStoreAllowsExplicitDelegatedUser(t *testing.T) {
 	}
 }
 
+func TestEncryptedStoreAllowsBaseSettingsReadButRejectsMutation(t *testing.T) {
+	backend := newMemoryStore()
+	store := encryptedTestStore(t, backend, "current", map[string]string{"current": randomEncodedKey(t)})
+	labels := map[string]string{"resource": "settings", "agentapi.proxy/settings-name": "base"}
+	value := secretDocument(t, "base", labels, "base-secret")
+	created, err := store.Create(context.Background(), Record{
+		Kind: KindSecret, Namespace: "ns", Key: "base", Labels: labels, Value: value,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	user := authzscope.WithPrincipal(context.Background(), authzscope.Principal{ActorID: "alice", UserID: "alice"})
+	if _, err := store.Get(user, KindSecret, "ns", "base"); err != nil {
+		t.Fatalf("base settings Get: %v", err)
+	}
+	if err := store.Delete(user, KindSecret, "ns", "base", created.Version); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("base settings Delete error = %v, want not found", err)
+	}
+	if _, err := store.Update(user, Record{
+		Kind: KindSecret, Namespace: "ns", Key: "base", Labels: labels, Value: value, Version: created.Version,
+	}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("base settings Update error = %v, want not found", err)
+	}
+}
+
 func hashIdentity(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])

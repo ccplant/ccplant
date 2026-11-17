@@ -52,6 +52,13 @@ func authorizeRecord(ctx context.Context, record Record, operation string) bool 
 	if !restricted {
 		return true
 	}
+	// Base settings are system-wide inputs used to assemble every session. They
+	// must be readable even when startup runs as a non-admin principal. Keep all
+	// mutations behind the normal owner check; the settings controller separately
+	// restricts base updates and deletes to administrators.
+	if operation == "decrypt" && record.Labels["agentapi.proxy/settings-name"] == "base" {
+		return true
+	}
 	scope, scoped := recordOwnerScope(record)
 	if !scoped {
 		return true
