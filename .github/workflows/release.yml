@@ -121,6 +121,7 @@ jobs:
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
           security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -k "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
           signing_identity="$(security find-identity -v -p codesigning "$keychain_path" | awk '/Developer ID Application/ { print $2; exit }')"
           test -n "$signing_identity"
 
