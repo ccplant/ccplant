@@ -8931,7 +8931,13 @@ func (m *KubernetesSessionManager) resolveSettings(
 		layers = append(layers, *p)
 	}
 	if m.k8sConfig.SettingsBaseSecret != "" {
-		if base := m.readSettingsPatch(ctx, m.k8sConfig.SettingsBaseSecret); base != nil {
+		var base *settingspatch.SettingsPatch
+		if m.k8sConfig.SettingsBaseSecret == "agentapi-settings-base" {
+			base = m.readSettingsPatchByName(ctx, "base")
+		} else {
+			base = m.readSettingsPatch(ctx, m.k8sConfig.SettingsBaseSecret)
+		}
+		if base != nil {
 			layers = append(layers, *base)
 		} else {
 			log.Printf("[K8S_SESSION] Warning: base settings secret %s could not be read", m.k8sConfig.SettingsBaseSecret)

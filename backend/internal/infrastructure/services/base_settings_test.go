@@ -140,3 +140,22 @@ func TestResolveSettingsReadsEncryptedBaseFromLibSQLAsNonAdmin(t *testing.T) {
 	settings := manager.resolveSettings(userCtx, nil, &entities.RunServerRequest{UserID: "alice"})
 	require.Contains(t, settings.MCPServers, "global")
 }
+
+func TestResolveSettingsReadsCanonicalBaseFromRepository(t *testing.T) {
+	server := entities.NewMCPServer("global", "http")
+	server.SetURL("https://global.example/mcp")
+	servers := entities.NewMCPServersSettings()
+	servers.SetServer("global", server)
+	base := entities.NewSettings("base")
+	base.SetMCPServers(servers)
+
+	manager := &KubernetesSessionManager{
+		client:       fake.NewSimpleClientset(),
+		namespace:    "workloads",
+		k8sConfig:    &config.KubernetesSessionConfig{SettingsBaseSecret: "agentapi-settings-base"},
+		settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"base": base}},
+	}
+
+	settings := manager.resolveSettings(context.Background(), nil, &entities.RunServerRequest{})
+	require.Contains(t, settings.MCPServers, "global")
+}
