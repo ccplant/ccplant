@@ -41,6 +41,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
@@ -680,6 +681,9 @@ type Config struct {
 	// Access) is not necessarily reachable from them. Defaults to the
 	// request-derived URL when empty.
 	CodexDeviceAuthCallbackBaseURL string `json:"codex_device_auth_callback_base_url" mapstructure:"codex_device_auth_callback_base_url"`
+	ScheduleSessionTTL             string `json:"schedule_session_ttl" mapstructure:"schedule_session_ttl"`
+	WebhookSessionTTL              string `json:"webhook_session_ttl" mapstructure:"webhook_session_ttl"`
+	InteractiveSessionTTL          string `json:"interactive_session_ttl" mapstructure:"interactive_session_ttl"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -743,6 +747,14 @@ func LoadConfig(filename string) (*Config, error) {
 	decodeHook := mapstructure.ComposeDecodeHookFunc(stockInventoryPoolsDecodeHook(), teamDiscoveryDecodeHook(), stringMapJSONDecodeHook())
 	if err := v.Unmarshal(&config, viper.DecodeHook(decodeHook)); err != nil {
 		return nil, err
+	}
+	for name, value := range map[string]string{"schedule_session_ttl": config.ScheduleSessionTTL, "webhook_session_ttl": config.WebhookSessionTTL, "interactive_session_ttl": config.InteractiveSessionTTL} {
+		if value == "" {
+			continue
+		}
+		if ttl, err := time.ParseDuration(value); err != nil || ttl <= 0 {
+			return nil, fmt.Errorf("invalid %s %q: must be a positive duration", name, value)
+		}
 	}
 
 	// Apply defaults for any fields that weren't set in config file
@@ -1162,6 +1174,9 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("team_discovery", "AGENTAPI_TEAM_DISCOVERY")
 	_ = v.BindEnv("session_token_debug", "AGENTAPI_SESSION_TOKEN_DEBUG_ENABLED")
 	_ = v.BindEnv("github_broker_base_url", "AGENTAPI_GITHUB_BROKER_BASE_URL")
+	_ = v.BindEnv("schedule_session_ttl", "AGENTAPI_SCHEDULE_SESSION_TTL")
+	_ = v.BindEnv("webhook_session_ttl", "AGENTAPI_WEBHOOK_SESSION_TTL")
+	_ = v.BindEnv("interactive_session_ttl", "AGENTAPI_INTERACTIVE_SESSION_TTL")
 	_ = v.BindEnv("codex_device_auth_callback_base_url", "AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL")
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
 	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")

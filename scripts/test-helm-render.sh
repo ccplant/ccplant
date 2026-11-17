@@ -212,6 +212,19 @@ assert_not_contains 'AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL' "$TMP_DIR/bac
   >"$TMP_DIR/codex-auth-callback.yaml"
 assert_contains 'name: AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL' "$TMP_DIR/codex-auth-callback.yaml"
 assert_contains 'value: "https://api.example.test"' "$TMP_DIR/codex-auth-callback.yaml"
+assert_not_contains 'AGENTAPI_SCHEDULE_SESSION_TTL' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'AGENTAPI_WEBHOOK_SESSION_TTL' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'AGENTAPI_INTERACTIVE_SESSION_TTL' "$TMP_DIR/backend-default.yaml"
+"$HELM_BIN" template session-ttl-defaults "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/deployment.yaml \
+  --set api.scheduleSessions.ttl=24h --set api.webhookSessions.ttl=48h --set api.interactiveSessions.ttl=168h \
+  >"$TMP_DIR/session-ttl-defaults.yaml"
+assert_contains 'name: AGENTAPI_SCHEDULE_SESSION_TTL' "$TMP_DIR/session-ttl-defaults.yaml"
+assert_contains 'value: "24h"' "$TMP_DIR/session-ttl-defaults.yaml"
+assert_contains 'name: AGENTAPI_WEBHOOK_SESSION_TTL' "$TMP_DIR/session-ttl-defaults.yaml"
+assert_contains 'value: "48h"' "$TMP_DIR/session-ttl-defaults.yaml"
+assert_contains 'name: AGENTAPI_INTERACTIVE_SESSION_TTL' "$TMP_DIR/session-ttl-defaults.yaml"
+assert_contains 'value: "168h"' "$TMP_DIR/session-ttl-defaults.yaml"
 "$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" \
   --namespace broker-test --set backend.api.githubBroker.inCluster=true \
   --set backend.fullnameOverride=broker-api --set backend.service.port=9090 \

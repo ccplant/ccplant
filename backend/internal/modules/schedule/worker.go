@@ -291,6 +291,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string, execut
 		SessionProfileID:         schedule.SessionConfig.SessionProfileID,
 		ReuseMatchTags:           tags,
 		ReuseMessage:             schedule.SessionConfig.EffectiveReuseMessage(),
+		ReuseSession:             schedule.SessionConfig.ReuseSession,
 		DeferReuseToStart:        true,
 	}
 }

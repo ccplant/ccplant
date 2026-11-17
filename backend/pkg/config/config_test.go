@@ -99,6 +99,41 @@ func TestLoadConfigSessionPersistenceS3DedicatedCredentials(t *testing.T) {
 	}
 }
 
+func TestLoadConfigSessionTTLDefaults(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.Empty(t, loadedConfig.ScheduleSessionTTL)
+	assert.Empty(t, loadedConfig.WebhookSessionTTL)
+	assert.Empty(t, loadedConfig.InteractiveSessionTTL)
+
+	valid := map[string]string{
+		"AGENTAPI_SCHEDULE_SESSION_TTL":    "24h",
+		"AGENTAPI_WEBHOOK_SESSION_TTL":     "48h",
+		"AGENTAPI_INTERACTIVE_SESSION_TTL": "168h",
+	}
+	for name, value := range valid {
+		t.Setenv(name, value)
+	}
+	loadedConfig, err = LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, "24h", loadedConfig.ScheduleSessionTTL)
+	assert.Equal(t, "48h", loadedConfig.WebhookSessionTTL)
+	assert.Equal(t, "168h", loadedConfig.InteractiveSessionTTL)
+
+	for name := range valid {
+		for _, invalid := range []string{"1d", "0s", "-1h"} {
+			for other, value := range valid {
+				t.Setenv(other, value)
+			}
+			t.Setenv(name, invalid)
+			_, err = LoadConfig("")
+			assert.Error(t, err, name+"="+invalid)
+		}
+	}
+}
+
 func TestLoadConfigKubernetesSessionIsolationFromEnv(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 	t.Setenv("AGENTAPI_K8S_SESSION_DISABLE_SERVICE_LINKS", "true")

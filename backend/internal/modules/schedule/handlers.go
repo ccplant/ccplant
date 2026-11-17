@@ -586,6 +586,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		SessionProfileID:         schedule.SessionConfig.SessionProfileID,
 		ReuseMatchTags:           tags,
 		ReuseMessage:             schedule.SessionConfig.EffectiveReuseMessage(),
+		ReuseSession:             schedule.SessionConfig.ReuseSession,
 		DeferReuseToStart:        true,
 	})
 	if err != nil {

@@ -42,6 +42,12 @@ api:
     # browser request. Set this when the browser-facing URL is not directly
     # reachable by the session manager (for example, behind an auth proxy).
     callbackBaseUrl: ""
+  scheduleSessions:
+    ttl: ""
+  webhookSessions:
+    ttl: ""
+  interactiveSessions:
+    ttl: ""
   githubBroker:
     # Route session GitHub credentials directly to this release's API Service.
     # Enable only when sessions can reach the API's Kubernetes cluster network.

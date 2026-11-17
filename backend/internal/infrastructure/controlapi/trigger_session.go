@@ -86,7 +86,7 @@ func (m *SessionManager) triggerStartRequest(id string, req *entities.RunServerR
 	start := entities.StartRequest{
 		Environment: req.Environment, Tags: tags, Params: params, Scope: req.Scope, TeamID: req.TeamID,
 		SessionProfileID: req.ResolvedSessionProfileID,
-		WebhookPayload:   webhookPayload, ReuseMatchTags: req.ReuseMatchTags, ReuseMessage: req.ReuseMessage,
+		WebhookPayload:   webhookPayload, ReuseMatchTags: req.ReuseMatchTags, ReuseMessage: req.ReuseMessage, ReuseSession: req.ReuseSession,
 		StopBeforeReuse: req.StopBeforeReuse,
 		LimitMatchTags:  req.LimitMatchTags, MaxSessions: req.MaxSessions,
 	}

@@ -224,6 +224,7 @@ type StartRequest struct {
 	// ReuseMessage is queued to that session instead of creating a new one.
 	ReuseMatchTags map[string]string `json:"reuse_match_tags,omitempty"`
 	ReuseMessage   string            `json:"reuse_message,omitempty"`
+	ReuseSession   bool              `json:"reuse_session,omitempty"`
 	// StopBeforeReuse interrupts a running reusable session before delivering ReuseMessage.
 	StopBeforeReuse bool              `json:"stop_before_reuse,omitempty"`
 	LimitMatchTags  map[string]string `json:"limit_match_tags,omitempty"`
@@ -262,6 +263,7 @@ type RunServerRequest struct {
 	InitialMessage           string
 	ReuseMatchTags           map[string]string
 	ReuseMessage             string
+	ReuseSession             bool
 	StopBeforeReuse          bool
 	LimitMatchTags           map[string]string
 	MaxSessions              int

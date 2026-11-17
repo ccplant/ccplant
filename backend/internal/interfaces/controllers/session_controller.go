@@ -137,8 +137,11 @@ type SessionController struct {
 		ResolveConnectionURLs(context.Context, string) (string, string, error)
 		RevokeBrokerLeases(context.Context, string) error
 	}
-	sessionTokenDebug   bool
-	githubBrokerBaseURL string
+	sessionTokenDebug     bool
+	githubBrokerBaseURL   string
+	scheduleSessionTTL    string
+	webhookSessionTTL     string
+	interactiveSessionTTL string
 }
 
 func WithGitHubTokenResolver(resolver interface {
@@ -160,6 +163,31 @@ func WithSessionTokenDebug(enabled bool) SessionControllerOption {
 // WithGitHubBrokerBaseURL sets the session-reachable broker base URL, including any API prefix.
 func WithGitHubBrokerBaseURL(baseURL string) SessionControllerOption {
 	return func(c *SessionController) { c.githubBrokerBaseURL = baseURL }
+}
+
+func WithScheduleSessionTTL(ttl string) SessionControllerOption {
+	return func(c *SessionController) { c.scheduleSessionTTL = ttl }
+}
+
+func WithWebhookSessionTTL(ttl string) SessionControllerOption {
+	return func(c *SessionController) { c.webhookSessionTTL = ttl }
+}
+
+func WithInteractiveSessionTTL(ttl string) SessionControllerOption {
+	return func(c *SessionController) { c.interactiveSessionTTL = ttl }
+}
+
+func applySessionTTLDefault(req *entities.StartRequest, defaultTTL string, reuseSession bool) {
+	if defaultTTL == "" || reuseSession {
+		return
+	}
+	if sessionuc.ResolveSessionTTL(req.Params) != "" {
+		return
+	}
+	if req.Params == nil {
+		req.Params = &entities.SessionParams{}
+	}
+	req.Params.SessionTTL = defaultTTL
 }
 
 func (c *SessionController) githubRepositoriesForSession(ctx context.Context, req entities.StartRequest, userID string, authzCtx *auth.AuthorizationContext) ([]string, error) {
@@ -365,7 +393,16 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	if err := ctx.Bind(&startReq); err != nil {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
 	}
+	sessionTTLDefault := c.interactiveSessionTTL
 	if claims, ok := ctx.Get("trigger_execution_claims").(executiontoken.ExecutionClaims); ok {
+		switch {
+		case claims.ScheduleID != "":
+			sessionTTLDefault = c.scheduleSessionTTL
+		case claims.WebhookID != "":
+			sessionTTLDefault = c.webhookSessionTTL
+		default:
+			sessionTTLDefault = ""
+		}
 		// Bind worker-triggered identity and ownership to the signed claims.
 		startReq.Scope = claims.Scope
 		startReq.TeamID = claims.TeamID
@@ -589,9 +626,11 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	if startReq.MaxSessions > 0 && len(c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.LimitMatchTags})) >= startReq.MaxSessions {
 		return echo.NewHTTPError(http.StatusTooManyRequests, fmt.Sprintf("session limit reached: maximum %d sessions", startReq.MaxSessions))
 	}
+	reuseSession := startReq.ReuseSession
 	// Reuse and limit controls belong to this /start invocation and must not be
 	// persisted as part of the session's restart configuration.
 	startReq.ReuseMatchTags, startReq.ReuseMessage, startReq.StopBeforeReuse = nil, "", false
+	startReq.ReuseSession = false
 	startReq.LimitMatchTags, startReq.MaxSessions = nil, 0
 
 	// Persist the explicit input before profile defaults are merged.
@@ -634,6 +673,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		applySessionProfile(&startReq, profile, profileCfg, explicitSandbox, explicitDocker)
 	}
+	applySessionTTLDefault(&startReq, sessionTTLDefault, reuseSession)
 	if !dryRun {
 		if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
 			config := &sessionrunnercore.Configuration{SessionID: sessionID, TriggeredUserID: startReq.TriggeredUserID, Input: startInput, ProfileID: startReq.ResolvedSessionProfileID, UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Teams: teams}

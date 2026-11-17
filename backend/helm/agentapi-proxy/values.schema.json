@@ -57,6 +57,24 @@
             "callbackBaseUrl": { "type": "string" }
           }
         },
+        "scheduleSessions": {
+          "type": "object",
+          "properties": {
+            "ttl": { "type": "string" }
+          }
+        },
+        "webhookSessions": {
+          "type": "object",
+          "properties": {
+            "ttl": { "type": "string" }
+          }
+        },
+        "interactiveSessions": {
+          "type": "object",
+          "properties": {
+            "ttl": { "type": "string" }
+          }
+        },
         "image": { "$ref": "#/definitions/image" },
         "resources": { "$ref": "#/definitions/resourceRequirements" },
         "imagePullSecrets": { "type": "array" },
