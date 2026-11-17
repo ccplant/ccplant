@@ -47,19 +47,14 @@ var (
 )
 
 // resolveClient creates a client using flags if provided, otherwise falling back
-// to environment variables (AGENTAPI_PROXY_SERVICE_HOST, AGENTAPI_PROXY_SERVICE_PORT_HTTP,
-// AGENTAPI_SESSION_ID, AGENTAPI_KEY).
+// to environment variables and the user CLI config. Session ID can be provided
+// only by flag or AGENTAPI_SESSION_ID.
 // Returns the client and the resolved session ID.
 func resolveClient() (*client.Client, string, error) {
-	resolvedEndpoint := endpoint
 	resolvedSessionID := sessionID
-
-	if resolvedEndpoint == "" {
-		envEndpoint, err := client.EndpointFromEnv()
-		if err != nil {
-			return nil, "", fmt.Errorf("--endpoint not specified and %w", err)
-		}
-		resolvedEndpoint = envEndpoint
+	resolvedEndpoint, apiKey, err := resolveCLIConnection(context.Background(), endpoint, "")
+	if err != nil {
+		return nil, "", err
 	}
 
 	if resolvedSessionID == "" {
@@ -69,7 +64,6 @@ func resolveClient() (*client.Client, string, error) {
 		}
 	}
 
-	apiKey := os.Getenv("AGENTAPI_KEY")
 	c := client.NewClient(resolvedEndpoint, client.WithAPIKeyAuth(apiKey))
 	return c, resolvedSessionID, nil
 }
@@ -659,22 +653,19 @@ const endpointHint = `
 Hint: configure the endpoint using one of the following methods:
   1. Flag:    --endpoint http://<host>:<port>
   2. Env vars: AGENTAPI_PROXY_SERVICE_HOST=<host> AGENTAPI_PROXY_SERVICE_PORT_HTTP=<port>
+  3. Config:  ~/.ccplant/config.yaml (api_endpoint)
 
 Optional authentication:
-  AGENTAPI_KEY=<api-key>`
+  AGENTAPI_KEY=<api-key> or config api_token/api_token_helper`
 
-// resolveBaseClient creates a client using flags or environment variables.
+// resolveBaseClient creates a client using flags, environment variables, or the
+// user CLI config.
 // Unlike resolveClient, no session-id is required.
 func resolveBaseClient() (*client.Client, error) {
-	resolvedEndpoint := endpoint
-	if resolvedEndpoint == "" {
-		envEndpoint, err := client.EndpointFromEnv()
-		if err != nil {
-			return nil, fmt.Errorf("--endpoint not specified and %w", err)
-		}
-		resolvedEndpoint = envEndpoint
+	resolvedEndpoint, apiKey, err := resolveCLIConnection(context.Background(), endpoint, "")
+	if err != nil {
+		return nil, err
 	}
-	apiKey := os.Getenv("AGENTAPI_KEY")
 	return client.NewClient(resolvedEndpoint, client.WithAPIKeyAuth(apiKey)), nil
 }
 

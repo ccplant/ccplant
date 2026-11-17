@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -63,11 +62,11 @@ func newAdminCommand() *cobra.Command {
 		Short: "Inspect runners, sessions, and operational logs",
 		Long: `Administrative inspection commands for ccplant.
 
-The endpoint is read from --endpoint or AGENTAPI_PROXY_ENDPOINT. Authentication
-uses --api-key or AGENTAPI_KEY. The API key must have admin permission.`,
+The endpoint and authentication token are read from flags, environment variables,
+or ~/.ccplant/config.yaml. The API token must have admin permission.`,
 	}
-	root.PersistentFlags().StringVarP(&opts.endpoint, "endpoint", "e", "", "AgentAPI proxy endpoint (defaults to AGENTAPI_PROXY_ENDPOINT)")
-	root.PersistentFlags().StringVar(&opts.apiKey, "api-key", "", "admin API key (defaults to AGENTAPI_KEY)")
+	root.PersistentFlags().StringVarP(&opts.endpoint, "endpoint", "e", "", "AgentAPI proxy endpoint")
+	root.PersistentFlags().StringVar(&opts.apiKey, "api-key", "", "admin API token")
 	root.PersistentFlags().BoolVar(&opts.json, "json", false, "print JSON output")
 
 	runners := &cobra.Command{Use: "runners", Short: "List and clean up runners", Args: cobra.NoArgs}
@@ -314,20 +313,11 @@ type adminAPI struct {
 }
 
 func (opts *adminOptions) api() (*adminAPI, error) {
-	endpoint := strings.TrimRight(strings.TrimSpace(opts.endpoint), "/")
-	if endpoint == "" {
-		var err error
-		endpoint, err = client.EndpointFromEnv()
-		if err != nil {
-			return nil, fmt.Errorf("--endpoint not specified and %w", err)
-		}
-		endpoint = strings.TrimRight(endpoint, "/")
+	endpoint, apiKey, err := resolveCLIConnection(context.Background(), opts.endpoint, opts.apiKey)
+	if err != nil {
+		return nil, err
 	}
-	apiKey := opts.apiKey
-	if apiKey == "" {
-		apiKey = os.Getenv("AGENTAPI_KEY")
-	}
-	return &adminAPI{baseURL: endpoint, apiKey: apiKey, client: http.DefaultClient}, nil
+	return &adminAPI{baseURL: strings.TrimRight(endpoint, "/"), apiKey: apiKey, client: http.DefaultClient}, nil
 }
 
 func (a *adminAPI) get(ctx context.Context, path string, query url.Values, out any) error {
