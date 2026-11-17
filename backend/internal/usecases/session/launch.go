@@ -55,6 +55,7 @@ type LaunchRequest struct {
 	ProfileFiles              []sessionsettings.ManagedFile
 	ProfileRepositories       []sessionsettings.RepositoryConfig
 	ProfileSecretIDs          []string
+	DisableTeamSettings       bool `json:"-"`
 	SettingsTeamID            string
 	ProfileMCPServers         *entities.MCPServersSettings
 	ProfileSkills             []string
@@ -190,7 +191,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 				return LaunchResult{}, err
 			}
 			applyProfileToLaunchRequest(cfg, &req)
-			if profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam && req.SettingsTeamID == "" {
+			if !req.DisableTeamSettings && profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam && req.SettingsTeamID == "" {
 				req.SettingsTeamID = profile.TeamID()
 			}
 			req.ResolvedSessionProfileID = profile.ID()
@@ -244,6 +245,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		ProfileRepositories:      req.ProfileRepositories,
 		ProfileSecretIDs:         req.ProfileSecretIDs,
 		SettingsTeamID:           req.SettingsTeamID,
+		DisableTeamSettings:      req.DisableTeamSettings,
 		Tags:                     req.Tags,
 		Scope:                    req.Scope,
 		TeamID:                   req.TeamID,
@@ -582,7 +584,8 @@ func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]st
 func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchRequest) {
 	req.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
 	req.ProfileSystemPrompt = cfg.SystemPrompt()
-	if cfg.SettingsTeamID() != "" {
+	req.DisableTeamSettings = !cfg.InheritTeamSettings()
+	if !req.DisableTeamSettings && cfg.SettingsTeamID() != "" {
 		req.SettingsTeamID = cfg.SettingsTeamID()
 	}
 	if cfg.MCPServers() != nil {

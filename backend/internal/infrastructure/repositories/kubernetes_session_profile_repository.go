@@ -52,6 +52,7 @@ type sessionProfileJSON struct {
 }
 
 type sessionProfileConfigJSON struct {
+	InheritTeamSettings    *bool                        `json:"inherit_team_settings,omitempty"`
 	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
 	CodexConnection        *connectionJSON              `json:"codex_connection,omitempty"`
 	ClaudeConnection       *connectionJSON              `json:"claude_connection,omitempty"`
@@ -378,6 +379,9 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetTags(pj.Config.Tags)
 	cfg.SetPool(pj.Config.Pool)
 	cfg.SetSettingsTeamID(pj.Config.SettingsTeamID)
+	if pj.Config.InheritTeamSettings != nil {
+		cfg.SetInheritTeamSettings(*pj.Config.InheritTeamSettings)
+	}
 	cfg.SetInitialMessageTemplate(pj.Config.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(pj.Config.ReuseMessageTemplate)
 	cfg.SetCommandWrapperTemplate(pj.Config.CommandWrapperTemplate)
@@ -419,6 +423,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 
 func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.SessionProfile) *sessionProfileJSON {
 	cfg := profile.Config()
+	inherit := cfg.InheritTeamSettings()
 	mcpServers := make(map[string]*mcpServerJSON)
 	if cfg.MCPServers() != nil {
 		for name, server := range cfg.MCPServers().Servers() {
@@ -439,6 +444,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
 			Pool:                   cfg.Pool(),
+			InheritTeamSettings:    &inherit,
 			SettingsTeamID:         cfg.SettingsTeamID(),
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),

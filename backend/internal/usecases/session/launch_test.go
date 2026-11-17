@@ -326,6 +326,27 @@ func TestLaunchPropagatesProfileSecretReferences(t *testing.T) {
 	}
 }
 
+func TestLaunchPropagatesTeamInheritanceOff(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "Personal", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetInheritTeamSettings(false)
+	cfg.SetSettingsTeamID("org/team")
+	cfg.SetSystemPrompt("Explicit profile instructions")
+	profile.SetConfig(cfg)
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+	if _, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{UserID: "user-1", Scope: entities.ScopeUser}); err != nil {
+		t.Fatal(err)
+	}
+	if !sessionManager.req.DisableTeamSettings || sessionManager.req.SettingsTeamID != "" {
+		t.Fatal("profile OFF did not reach the session manager")
+	}
+	if sessionManager.req.ProfileSystemPrompt != "Explicit profile instructions" {
+		t.Fatal("explicit profile instructions changed")
+	}
+}
+
 func TestLaunchKeepsProfileEnvironmentSeparateFromExplicitEnvironment(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "environment", "user-1")

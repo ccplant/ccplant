@@ -24,6 +24,7 @@ type SessionProfile struct {
 
 // SessionProfileConfig contains the reusable session configuration fields
 type SessionProfileConfig struct {
+	disableTeamSettings    bool
 	settingsTeamID         string
 	codexConnection        *modelprovider.Connection
 	claudeConnection       *modelprovider.Connection
@@ -513,3 +514,8 @@ func (c *SessionProfileConfig) SetPiConnection(v *modelprovider.Connection) {
 
 func (c *SessionProfileConfig) SettingsTeamID() string      { return c.settingsTeamID }
 func (c *SessionProfileConfig) SetSettingsTeamID(id string) { c.settingsTeamID = id }
+
+// InheritTeamSettings defaults to true, including for profiles saved before this option existed.
+func (c *SessionProfileConfig) InheritTeamSettings() bool { return !c.disableTeamSettings }
+
+func (c *SessionProfileConfig) SetInheritTeamSettings(inherit bool) { c.disableTeamSettings = !inherit }

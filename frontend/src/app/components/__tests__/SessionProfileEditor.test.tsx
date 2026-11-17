@@ -22,6 +22,28 @@ vi.mock('../../../lib/agentapi-proxy-client', () => ({ createAgentAPIProxyClient
 vi.mock('../../../components/settings/MCPServerSettings', () => ({ MCPServerSettings: () => null }))
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
+describe('SessionProfileEditor team inheritance', () => {
+  it('defaults to inheritance and saves an explicit OFF without clearing the selected team', async () => {
+    render(<SessionProfileEditor section="inheritance" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Personal', created_at: '', updated_at: '', config: { settings_team_id: 'org/team' } }} />)
+    expect(screen.getByLabelText('チーム設定を継承する')).toBeChecked()
+    fireEvent.click(screen.getByLabelText('チーム設定を継承する'))
+    expect(screen.getByLabelText('ベースにする設定')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config).toMatchObject({ inherit_team_settings: false, settings_team_id: 'org/team' })
+    await waitFor(() => expect(mocks.client.listSettingsSecrets).toHaveBeenLastCalledWith('user-1'))
+  })
+
+  it('loads OFF and can restore inheritance', async () => {
+    render(<SessionProfileEditor section="inheritance" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Personal', created_at: '', updated_at: '', config: { inherit_team_settings: false } }} />)
+    expect(screen.getByLabelText('チーム設定を継承する')).not.toBeChecked()
+    fireEvent.click(screen.getByLabelText('チーム設定を継承する'))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config.inherit_team_settings).toBe(true)
+  })
+})
+
 describe('SessionProfileEditor storage', () => {
   it('selects session state components and agents', async () => {
     render(<SessionProfileEditor section="storages" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'State', scope: 'user', created_at: '', updated_at: '', config: {} }} />)

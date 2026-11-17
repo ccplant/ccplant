@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,15 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+func TestLegacyProfileDefaultsToTeamInheritance(t *testing.T) {
+	var stored sessionProfileJSON
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"old","name":"Old","user_id":"user","config":{}}`), &stored))
+	repo := NewKubernetesSessionProfileRepository(fake.NewSimpleClientset(), "test")
+	profile := repo.jsonToEntity(&stored)
+	cfg := profile.Config()
+	require.True(t, cfg.InheritTeamSettings())
+}
+
 func TestProfileConnectionsEncryptedRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "key")
@@ -25,6 +35,7 @@ func TestProfileConnectionsEncryptedRoundTrip(t *testing.T) {
 	repo := NewKubernetesSessionProfileRepository(client, "test", services.NewEncryptionServiceRegistry(enc))
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetSettingsTeamID("org/team")
+	cfg.SetInheritTeamSettings(false)
 	cfg.SetSecretIDs([]string{"secret-a", "secret-b"})
 	cfg.SetSkills([]string{"org/profile-skills"})
 	cfg.SetPiPackages([]string{"git:github.com/org/pi-harness@v1"})
@@ -47,6 +58,7 @@ func TestProfileConnectionsEncryptedRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	loadedCfg := loaded.Config()
 	require.Equal(t, "org/team", loadedCfg.SettingsTeamID())
+	require.False(t, loadedCfg.InheritTeamSettings())
 	require.Equal(t, []string{"secret-a", "secret-b"}, loadedCfg.SecretIDs())
 	require.Equal(t, []string{"org/profile-skills"}, loadedCfg.Skills())
 	require.Equal(t, []string{"git:github.com/org/pi-harness@v1"}, loadedCfg.PiPackages())
@@ -62,6 +74,7 @@ func TestProfileConnectionsEncryptedRoundTrip(t *testing.T) {
 	require.Len(t, listed, 1)
 	listedCfg := listed[0].Config()
 	require.Equal(t, "profile-claude-secret", listedCfg.ClaudeConnection().APIKey)
+	require.False(t, listedCfg.InheritTeamSettings())
 	repo.connections.encryptionRegistry = nil
 	_, err = repo.Get(ctx, "profile")
 	require.Error(t, err)

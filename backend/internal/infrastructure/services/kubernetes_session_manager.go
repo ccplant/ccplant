@@ -3980,6 +3980,12 @@ func supportedAgentTypeOrDefault(agentType string) string {
 }
 
 func credentialOwnersForRequest(req *entities.RunServerRequest) []string {
+	if req.DisableTeamSettings {
+		if req.CredentialSource == "none" {
+			return nil
+		}
+		return []string{req.UserID}
+	}
 	if req.SettingsTeamID != "" {
 		return []string{req.SettingsTeamID}
 	}
@@ -4041,9 +4047,9 @@ func (m *KubernetesSessionManager) resolveAutoAgentType(ctx context.Context, req
 
 func (m *KubernetesSessionManager) defaultAgentTypeForRequest(ctx context.Context, req *entities.RunServerRequest) string {
 	settingsName := ""
-	if req.SettingsTeamID != "" {
+	if !req.DisableTeamSettings && req.SettingsTeamID != "" {
 		settingsName = req.SettingsTeamID
-	} else if req.Scope == entities.ScopeTeam {
+	} else if !req.DisableTeamSettings && req.Scope == entities.ScopeTeam {
 		settingsName = req.TeamID
 	} else {
 		settingsName = req.UserID
@@ -4963,7 +4969,13 @@ func buildCodexHooksJSON(settingsJSON map[string]interface{}) map[string]interfa
 	if !ok || len(hooksMap) == 0 {
 		return nil
 	}
-	return map[string]interface{}{"hooks": hooksMap}
+	// Copy the event map before the proxy appends its lifecycle hooks. Those
+	// belong in Codex's managed layer and must not enter the user hook file.
+	userHooks := make(map[string]interface{}, len(hooksMap))
+	for event, entries := range hooksMap {
+		userHooks[event] = entries
+	}
+	return map[string]interface{}{"hooks": userHooks}
 }
 
 // createOneshotSettingsSecret creates a Secret containing settings.json with Stop hook
@@ -7954,7 +7966,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	// Expand personal API key directly from repository for user-scoped sessions
 	// Treat empty scope as user scope (default behavior)
-	if (req.Scope == entities.ScopeUser || req.Scope == "") && m.personalAPIKeyRepo != nil {
+	if (req.DisableTeamSettings || req.Scope == entities.ScopeUser || req.Scope == "") && m.personalAPIKeyRepo != nil {
 		apiKey := m.ensurePersonalAPIKey(ctx, req.UserID)
 		if apiKey != nil {
 			env["AGENTAPI_KEY"] = apiKey.APIKey()
@@ -7963,7 +7975,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// Expand team env vars directly from repository for team-scoped sessions
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.teamConfigRepo != nil {
+	if !req.DisableTeamSettings && req.Scope == entities.ScopeTeam && req.TeamID != "" && m.teamConfigRepo != nil {
 		teamConfig, err := m.teamConfigRepo.FindByTeamID(ctx, req.TeamID)
 		if err != nil {
 			log.Printf("[K8S_SESSION] Team config not found for team %s in session settings: %v", req.TeamID, err)
@@ -8030,7 +8042,9 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	// Claude config
 	settingsJSON := materialized.SettingsJSON
+	codexUserHooks := buildCodexHooksJSON(settingsJSON)
 
+	var managedCodexHooks map[string]interface{}
 	// Always inject a cycle Stop hook so that writing /tmp/check/CYCLE_ENABLED at
 	// any point activates cycling without requiring a session restart.
 	// The hook is a no-op when CYCLE_ENABLED does not exist (the cycle command exits
@@ -8072,6 +8086,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			hooksMap["Stop"] = []interface{}{cycleHookEntry}
 		}
 
+		managedCodexHooks = map[string]interface{}{"hooks": map[string]interface{}{"Stop": []interface{}{cycleHookEntry}}}
 		settingsJSON["hooks"] = hooksMap
 		log.Printf("[K8S_SESSION] Injected cycle Stop hook for session %s (max-count=%d)", session.id, req.CycleMaxCount)
 	}
@@ -8089,14 +8104,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	switch req.AgentType {
 	case "codex-acp":
 		settings.Codex = sessionsettings.CodexConfig{
-			HooksJSON: buildCodexHooksJSON(settingsJSON),
+			HooksJSON:        codexUserHooks,
+			ManagedHooksJSON: managedCodexHooks,
 			// Bypass permission prompts and disable Codex's own sandbox.
 			// agentapi-proxy provides its own sandbox, so Codex's bubblewrap-based
 			// sandbox is redundant and causes spurious permission requests.
-			ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\ncheck_for_update_on_startup = false\n",
+			ConfigTOML: "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\ncheck_for_update_on_startup = false\n",
 			MCPServers: materialized.MCPServers,
 		}
-		log.Printf("[K8S_SESSION] Injected Codex hooks and set INITIAL_AGENT_MODE=agent-full-access, approval-mode=full-auto, sandbox_mode=danger-full-access, check_for_update_on_startup=false for session %s", session.id)
+		log.Printf("[K8S_SESSION] Injected Codex hooks and set INITIAL_AGENT_MODE=agent-full-access, approval_policy=never, sandbox_mode=danger-full-access, check_for_update_on_startup=false for session %s", session.id)
 	}
 
 	// Repository info
@@ -8478,7 +8494,7 @@ func (m *KubernetesSessionManager) setTeamGitHubInstallationToken(
 	req *entities.RunServerRequest,
 	env map[string]string,
 ) {
-	if req.Scope != entities.ScopeTeam || req.TeamID == "" || m.settingsRepo == nil {
+	if req.DisableTeamSettings || req.Scope != entities.ScopeTeam || req.TeamID == "" || m.settingsRepo == nil {
 		return
 	}
 
@@ -8642,9 +8658,9 @@ func (m *KubernetesSessionManager) resolveProjectedSecrets(ctx context.Context, 
 		return env, nil
 	}
 	settingsName := req.UserID
-	if req.SettingsTeamID != "" {
+	if !req.DisableTeamSettings && req.SettingsTeamID != "" {
 		settingsName = req.SettingsTeamID
-	} else if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+	} else if !req.DisableTeamSettings && req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		settingsName = req.TeamID
 	}
 	if settingsName == "" {
@@ -8944,8 +8960,12 @@ func (m *KubernetesSessionManager) resolveSettings(
 		}
 	}
 
-	// 2. teams (in order)
-	if req.SettingsTeamID != "" {
+	// 2. teams (in order), unless explicitly disabled by the profile.
+	if req.DisableTeamSettings {
+		if req.UserID != "" {
+			appendSettingsIfExists(req.UserID)
+		}
+	} else if req.SettingsTeamID != "" {
 		appendSettingsIfExists(req.SettingsTeamID)
 	} else if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
