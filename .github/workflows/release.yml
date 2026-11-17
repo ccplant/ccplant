@@ -53,7 +53,8 @@ jobs:
 
   binaries:
     needs: [metadata, release-draft]
-    runs-on: ubuntu-latest
+    environment: macos-signing
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,12 +62,15 @@ jobs:
           - goos: linux
             goarch: amd64
             archive: ccplant_Linux_x86_64.tar.gz
+            runner: ubuntu-latest
           - goos: linux
             goarch: arm64
             archive: ccplant_Linux_arm64.tar.gz
+            runner: ubuntu-latest
           - goos: darwin
             goarch: arm64
             archive: ccplant_Darwin_arm64.tar.gz
+            runner: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -91,6 +95,42 @@ jobs:
             -o ../dist/ccplant \
             ./main.go
         working-directory: backend
+      - name: Sign and notarize macOS binary
+        if: matrix.goos == 'darwin'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          certificate_path="${RUNNER_TEMP}/developer-id.p12"
+          api_key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY}.p8"
+          keychain_path="${RUNNER_TEMP}/ccplant-signing.keychain-db"
+          notary_archive="${RUNNER_TEMP}/ccplant-notary.zip"
+          keychain_password="$(openssl rand -base64 24)"
+
+          printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A -out "$certificate_path"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" | openssl base64 -d -A -out "$api_key_path"
+          chmod 600 "$certificate_path" "$api_key_path"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          trap 'security delete-keychain "$keychain_path"' EXIT
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+
+          codesign --force --options runtime --timestamp --keychain "$keychain_path" --sign "$APPLE_SIGNING_IDENTITY" dist/ccplant
+          codesign --verify --strict --verbose=2 dist/ccplant
+          ditto -c -k --keepParent dist/ccplant "$notary_archive"
+          xcrun notarytool submit "$notary_archive" \
+            --key "$api_key_path" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
       - name: Create release archive
         env:
           ARCHIVE: ${{ matrix.archive }}
@@ -136,6 +176,7 @@ jobs:
 
   native-app:
     needs: [metadata, release-draft]
+    environment: macos-signing
     # macOS 14 GitHub-hosted runners were retired on 2026-11-02.
     runs-on: macos-15
     env:
@@ -163,13 +204,13 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           configured=0
           missing=0
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_PRIVATE_KEY APPLE_API_KEY APPLE_API_ISSUER; do
             if [ -z "${!name}" ]; then
               missing=$((missing + 1))
             else
@@ -187,6 +228,15 @@ jobs:
             echo "Apple credentials are configured; bundles will be signed and notarized"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Prepare App Store Connect API key
+        if: steps.apple.outputs.signed == 'true'
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          key_path="${RUNNER_TEMP}/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" | openssl base64 -d -A -out "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
       - name: Set native app version
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -229,9 +279,8 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         with:
           projectPath: native
           releaseId: ${{ steps.release.outputs.id }}
