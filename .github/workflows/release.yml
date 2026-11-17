@@ -121,7 +121,6 @@ jobs:
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
           security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -k "$keychain_path"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
 
           codesign --force --options runtime --timestamp --keychain "$keychain_path" --sign "$APPLE_SIGNING_IDENTITY" dist/ccplant
           codesign --verify --strict --verbose=2 dist/ccplant
