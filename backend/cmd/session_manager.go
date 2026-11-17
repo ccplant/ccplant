@@ -11,6 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	prommetrics "github.com/takutakahashi/agentapi-proxy/pkg/metrics"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
@@ -54,6 +56,7 @@ func runSessionManager(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	setSessionManagerCurrentVersion(cfg)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	runtime, err := app.NewSessionManagerRuntime(ctx, cfg, sessionManagerVerbose)
@@ -79,4 +82,10 @@ func runSessionManager(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	return runtime.Shutdown(25 * time.Second)
+}
+
+func setSessionManagerCurrentVersion(cfg *config.Config) {
+	if cfg != nil && cfg.SessionManager.CurrentVersion == "" {
+		cfg.SessionManager.CurrentVersion = buildinfo.Version
+	}
 }
