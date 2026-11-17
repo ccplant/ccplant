@@ -6899,6 +6899,15 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 				if jsonErr := json.Unmarshal([]byte(data), &body); jsonErr != nil {
 					continue
 				}
+				epoch := session.agentRuntimeStatusEpoch.Add(1)
+				if body.Status == "stable" {
+					herdrRunning, _ := kubernetesSessionHerdrRunning(ctx, session)
+					if herdrRunning {
+						applyAgentRuntimeStatus(session, "running")
+						go m.waitForKubernetesSessionHerdr(ctx, session, epoch)
+						continue
+					}
+				}
 				applyAgentRuntimeStatus(session, body.Status)
 				if body.Status == "stable" && session.Status() != "stopped" {
 					if scheduleErr := m.ScheduleSessionSuspend(ctx, session.ID()); scheduleErr != nil {
@@ -6912,6 +6921,87 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 		}
 	}
 	return scanner.Err()
+}
+
+func (m *KubernetesSessionManager) waitForKubernetesSessionHerdr(ctx context.Context, session *KubernetesSession, epoch uint64) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if session.agentRuntimeStatusEpoch.Load() != epoch || statusWatcherTerminal(session.Status()) {
+			return
+		}
+		running, ok := kubernetesSessionHerdrRunning(ctx, session)
+		if !ok || running {
+			continue
+		}
+		if session.agentRuntimeStatusEpoch.Load() != epoch {
+			return
+		}
+		applyAgentRuntimeStatus(session, "stable")
+		if session.Status() != "stopped" {
+			if err := m.ScheduleSessionSuspend(ctx, session.ID()); err != nil {
+				log.Printf("[AGENT_STATUS] Failed to schedule suspend after herdr completion for stable session %s: %v", session.id, err)
+			}
+		}
+		return
+	}
+}
+
+func kubernetesSessionHerdrRunning(ctx context.Context, session *KubernetesSession) (bool, bool) {
+	if session == nil {
+		return false, false
+	}
+	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{"all":false}}`)
+	requestCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, fmt.Sprintf("http://%s:%d/herdr/rpc", session.ServiceDNS(), ProvisionerPort), body)
+	if err != nil {
+		return false, false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return herdrResponseHasRunningTerminal(defaultPodStatusHTTPClient, req)
+}
+
+func herdrResponseHasRunningTerminal(client *http.Client, req *http.Request) (bool, bool) {
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return false, false
+	}
+	var result struct {
+		Result struct {
+			Terminals []struct {
+				State  string            `json:"state"`
+				Labels map[string]string `json:"labels"`
+				Status *struct {
+					State string `json:"state"`
+				} `json:"status"`
+			} `json:"terminals"`
+		} `json:"result"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return false, false
+	}
+	for _, terminal := range result.Result.Terminals {
+		if terminal.Labels["ccplant.system"] == "notification-bridge" {
+			continue
+		}
+		if terminal.State != "" && terminal.State != "live" {
+			continue
+		}
+		if terminal.Status == nil || terminal.Status.State == "working" || terminal.Status.State == "blocked" {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 func applyAgentRuntimeStatus(session *KubernetesSession, status string) {

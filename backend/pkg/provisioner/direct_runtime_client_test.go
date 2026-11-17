@@ -84,6 +84,46 @@ func TestDirectRuntimeLocalStatusUsesAgentStatusAfterProvisioning(t *testing.T) 
 	}
 }
 
+func TestDirectRuntimeLocalStatusIncludesRunningHerdrTerminals(t *testing.T) {
+	tests := []struct {
+		name     string
+		terminal string
+		want     string
+	}{
+		{name: "working agent", terminal: `{"state":"live","status":{"state":"working"}}`, want: "running"},
+		{name: "blocked agent", terminal: `{"state":"live","status":{"state":"blocked"}}`, want: "running"},
+		{name: "plain program", terminal: `{"state":"live","status":null}`, want: "running"},
+		{name: "notification bridge", terminal: `{"state":"live","labels":{"ccplant.system":"notification-bridge"},"status":{"state":"working"}}`, want: "stable"},
+		{name: "notification bridge and user work", terminal: `{"state":"live","labels":{"ccplant.system":"notification-bridge"},"status":{"state":"working"}},{"state":"live","status":null}`, want: "running"},
+		{name: "idle agent", terminal: `{"state":"live","status":{"state":"idle"}}`, want: "stable"},
+		{name: "finished terminal", terminal: `{"state":"finished","status":null}`, want: "stable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provisioner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/status":
+					_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusReady})
+				case "/herdr/rpc":
+					_ = json.NewEncoder(w).Encode(json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"terminals":[` + tt.terminal + `]}}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer provisioner.Close()
+			agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]string{"status": "stable"})
+			}))
+			defer agent.Close()
+
+			worker := &directRuntimeWorker{client: provisioner.Client(), provisionerURL: provisioner.URL, agentURL: agent.URL}
+			if got := worker.localStatus(context.Background()); got != tt.want {
+				t.Fatalf("localStatus() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDirectRuntimeLocalStatusDoesNotDowngradeToReadyWhenAgentUnavailable(t *testing.T) {
 	provisioner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusReady})

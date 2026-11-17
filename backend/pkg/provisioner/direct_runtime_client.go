@@ -40,6 +40,8 @@ var (
 
 var directRuntimeReadyPollInterval = time.Second
 
+const directRuntimeStatusRefreshInterval = 5 * time.Second
+
 func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string, provisionerPort int) {
 	if cfg == nil || !cfg.Enabled || cfg.Endpoint == "" || cfg.SessionID == "" || cfg.Token == "" || cfg.Generation <= 0 {
 		return
@@ -71,15 +73,20 @@ func newDirectRuntimeWorker(transport http.RoundTripper, cfg *sessionsettings.Pa
 
 func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
 	var previous string
+	var lastPostedAt time.Time
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		status := w.localStatus(ctx)
-		if status != "" && status != previous {
+		// Refresh unchanged status periodically. Manager heartbeats and proxied
+		// agent /status reads can race with the richer hc-aware runtime status;
+		// a refresh heals those coarser writes without waiting for another turn.
+		if status != "" && (status != previous || time.Since(lastPostedAt) >= directRuntimeStatusRefreshInterval) {
 			if err := w.postStatus(ctx, status); err != nil {
 				log.Printf("[DIRECT_RUNTIME] status push failed: %v", err)
 			} else {
 				previous = status
+				lastPostedAt = time.Now()
 			}
 		}
 		select {
@@ -101,7 +108,60 @@ func (w *directRuntimeWorker) localStatus(ctx context.Context) string {
 	// from agentapi, which changes between "running" and "stable" for each turn.
 	// If agentapi is briefly unavailable, do not replace the last known runtime
 	// status with the coarser provisioner state; the next one-second poll retries.
-	return w.readLocalStatus(ctx, w.agentURL+"/status", false)
+	status := w.readLocalStatus(ctx, w.agentURL+"/status", false)
+	if status == "stable" && w.hasRunningHerdrTerminal(ctx) {
+		return "running"
+	}
+	return status
+}
+
+// hasRunningHerdrTerminal keeps the public session busy while work delegated
+// through hc is still in progress. terminal.list with all=false only returns
+// live terminals. Plain programs do not publish an agent status, while coding
+// agents explicitly report idle/done once their turn has finished.
+func (w *directRuntimeWorker) hasRunningHerdrTerminal(ctx context.Context) bool {
+	body := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{"all":false}}`)
+	reqCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, w.provisionerURL+"/herdr/rpc", body)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var result struct {
+		Result struct {
+			Terminals []struct {
+				State  string            `json:"state"`
+				Labels map[string]string `json:"labels"`
+				Status *struct {
+					State string `json:"state"`
+				} `json:"status"`
+			} `json:"terminals"`
+		} `json:"result"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return false
+	}
+	for _, terminal := range result.Result.Terminals {
+		if terminal.Labels["ccplant.system"] == "notification-bridge" {
+			continue
+		}
+		if terminal.State != "" && terminal.State != "live" {
+			continue
+		}
+		if terminal.Status == nil || terminal.Status.State == "working" || terminal.Status.State == "blocked" {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *directRuntimeWorker) readLocalStatus(ctx context.Context, endpoint string, allowStructuredError bool) string {

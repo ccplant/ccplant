@@ -12,6 +12,7 @@ import (
 )
 
 const herdrNotificationBridgeName = "ccplant-session-agent"
+const herdrNotificationBridgeLabel = "ccplant.system=notification-bridge"
 const localAgentRequestTimeout = 30 * time.Second
 
 type herdrTerminal struct {
@@ -22,6 +23,11 @@ type herdrTerminal struct {
 func ensureHerdrNotificationBridge(ctx context.Context, env []string, agentType, agentSocket string) (string, error) {
 	if terminal, err := getHerdrNotificationBridge(ctx, env); err == nil {
 		if terminal.State == "live" && strings.TrimSpace(terminal.Address) != "" {
+			label := exec.CommandContext(ctx, "hc", "label", terminal.Address, herdrNotificationBridgeLabel)
+			label.Env = env
+			if output, err := label.CombinedOutput(); err != nil {
+				return "", fmt.Errorf("label existing hc notification bridge: %w: %s", err, strings.TrimSpace(string(output)))
+			}
 			return terminal.Address, nil
 		}
 		// Finished terminals retain their names until removed. Clear a stale
@@ -36,6 +42,7 @@ func ensureHerdrNotificationBridge(ctx context.Context, env []string, agentType,
 	cmd := exec.CommandContext(ctx,
 		"hc", "--json", "run", "--bg",
 		"--name", herdrNotificationBridgeName,
+		"--label", herdrNotificationBridgeLabel,
 		"--no-notify",
 		environmentValue(env, "CCPLANT_BINARY_PATH", "ccplant"),
 		"agent-provisioner", "hc-notification-bridge",
