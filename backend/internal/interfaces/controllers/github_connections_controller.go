@@ -1997,12 +1997,12 @@ func (c *GitHubConnectionsController) mintGitHubAppToken(ctx context.Context, co
 // IssueBrokerLeaseForOrganization selects the existing organization-mapped
 // connection and grants one session renewable access to that repository token.
 func (c *GitHubConnectionsController) IssueBrokerLeaseForOrganization(ctx context.Context, sessionID, organization, repository string) (string, string, bool, error) {
-	return c.IssueBrokerLeaseForRepositories(ctx, sessionID, organization, repository, nil)
+	return c.IssueBrokerLeaseForRepositories(ctx, sessionID, "", organization, repository, nil)
 }
 
 // IssueBrokerLeaseForRepositories grants one session renewable access to the
 // working repository and explicitly configured additional repositories.
-func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx context.Context, sessionID, organization, repository string, additional []string) (string, string, bool, error) {
+func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx context.Context, sessionID, connectionID, organization, repository string, additional []string) (string, string, bool, error) {
 	patterns, err := normalizeRepositoryPatterns(additional)
 	if err != nil {
 		return "", "", true, err
@@ -2011,12 +2011,18 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx contex
 		if len(patterns) == 0 {
 			return "", "", false, nil
 		}
+		if connectionID != "" {
+			connection, _, _, loadErr := c.loadConnection(ctx, connectionID)
+			if loadErr != nil || !connection.Enabled || connection.GitHubApp == nil || connection.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, connection.ID) {
+				return "", connectionID, false, nil
+			}
+		}
 		leaseToken := uuid.NewString() + uuid.NewString()
-		lease := githubBrokerLease{SessionID: sessionID, Repositories: prefixedRepositoryPatterns(patterns), ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
+		lease := githubBrokerLease{SessionID: sessionID, ConnectionID: connectionID, Repositories: prefixedRepositoryPatterns(patterns), ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
 		if err := c.createObject(ctx, brokerLeaseSecretName(leaseToken), githubBrokerLeaseLabel, lease, map[string]string{"agentapi.ccplant.io/session-id-hash": shortHash(sessionID)}); err != nil {
 			return "", "", true, fmt.Errorf("store GitHub broker lease: %w", err)
 		}
-		return leaseToken, "", true, nil
+		return leaseToken, connectionID, true, nil
 	}
 	connections, err := c.listConnections(ctx)
 	if err != nil {

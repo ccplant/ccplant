@@ -133,7 +133,7 @@ type SessionController struct {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 		IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
-		IssueBrokerLeaseForRepositories(context.Context, string, string, string, []string) (string, string, bool, error)
+		IssueBrokerLeaseForRepositories(context.Context, string, string, string, string, []string) (string, string, bool, error)
 		ResolveConnectionURLs(context.Context, string) (string, string, error)
 		RevokeBrokerLeases(context.Context, string) error
 	}
@@ -148,7 +148,7 @@ func WithGitHubTokenResolver(resolver interface {
 	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 	IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
-	IssueBrokerLeaseForRepositories(context.Context, string, string, string, []string) (string, string, bool, error)
+	IssueBrokerLeaseForRepositories(context.Context, string, string, string, string, []string) (string, string, bool, error)
 	ResolveConnectionURLs(context.Context, string) (string, string, error)
 	RevokeBrokerLeases(context.Context, string) error
 }) SessionControllerOption {
@@ -472,7 +472,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	brokerConfigured := false
 	useBroker := shouldUseGitHubBroker(startReq, repository)
 	var allowedRepositories []string
-	if !useBroker && startReq.Scope == entities.ScopeTeam && repository == "" && startReq.Params != nil && startReq.Params.GithubToken == "" && startReq.Params.ConnectionID == "" && c.githubTokenResolver != nil {
+	if !useBroker && startReq.Scope == entities.ScopeTeam && repository == "" && (startReq.Params == nil || startReq.Params.GithubToken == "") && c.githubTokenResolver != nil {
 		allowedRepositories, err = c.githubRepositoriesForSession(ctx.Request().Context(), startReq, userID, authzCtx)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -486,9 +486,14 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		var lease, connectionID string
 		var matched bool
 		var err error
+		preferredConnectionID := ""
+		if startReq.Params != nil {
+			preferredConnectionID = startReq.Params.ConnectionID
+		}
 		if dryRun {
 			if repository == "" {
 				matched = len(allowedRepositories) > 0
+				connectionID = preferredConnectionID
 			} else {
 				_, connectionID, matched, err = c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(repository))
 			}
@@ -500,7 +505,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 					return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 				}
 			}
-			lease, connectionID, matched, err = c.githubTokenResolver.IssueBrokerLeaseForRepositories(ctx.Request().Context(), sessionID, repositoryOwner(repository), repository, allowedRepositories)
+			lease, connectionID, matched, err = c.githubTokenResolver.IssueBrokerLeaseForRepositories(ctx.Request().Context(), sessionID, preferredConnectionID, repositoryOwner(repository), repository, allowedRepositories)
 		}
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
