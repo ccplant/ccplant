@@ -126,6 +126,29 @@ func TestCopySkillDirRecursivelyCopiesResources(t *testing.T) {
 	}
 }
 
+func TestSyncAntigravitySkillsCopiesUniversalGlobalInstall(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, ".agents", "skills", "demo")
+	if err := os.MkdirAll(filepath.Join(source, "references"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte("demo"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "references", "guide.md"), []byte("guide"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncAntigravitySkills(dir); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(dir, ".gemini", "antigravity-cli", "skills", "demo")
+	got, err := os.ReadFile(filepath.Join(destination, "references", "guide.md"))
+	if err != nil || string(got) != "guide" {
+		t.Fatalf("copied resource = %q, err=%v", string(got), err)
+	}
+}
+
 func TestSyncCodexSkillsCopiesOnlyEnabledPlugins(t *testing.T) {
 	dir := t.TempDir()
 	marketplacesDir := filepath.Join(dir, "marketplaces")
