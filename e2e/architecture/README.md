@@ -5,11 +5,19 @@ start, external-pool placement, message observation, search, and TTL cleanup.
 Frontend scenarios are scored separately by their own toolchain and are not
 part of this backend-facing boundary.
 
-Run from the repository root with the pinned analyzer source used by CI:
+Run from the `e2e` directory. The analyzer is fetched directly from the
+private `github.com/takutakahashi/archscore` repository and pinned to the
+commit used to produce the baseline. GitHub authentication must already be
+configured for Git:
 
 ```bash
-archscore -root e2e -config e2e/architecture/archscore.json > current.json
-archscore compare -baseline e2e/architecture/baseline.json -current current.json -fail-on-regression
+export GOPRIVATE=github.com/takutakahashi/archscore
+export GONOSUMDB=github.com/takutakahashi/archscore
+go run github.com/takutakahashi/archscore/cmd/archscore@5996adf42a447be66472461182d7442edc6e3df2 \
+  -root . -config architecture/archscore.json > current.json
+go run github.com/takutakahashi/archscore/cmd/archscore@5996adf42a447be66472461182d7442edc6e3df2 \
+  compare -baseline architecture/baseline.json -current current.json \
+  -fail-on-regression
 ```
 
 The committed baseline records the score before the first architecture
