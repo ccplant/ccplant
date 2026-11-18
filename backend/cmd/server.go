@@ -715,7 +715,13 @@ func registerMCPHandler(proxyServer *app.Server, port string) {
 	log.Printf("[MCP_HANDLER] Registering MCP handler...")
 
 	// Create and register MCP handler with server dependencies
-	mcpHandler := mcpiface.NewMCPHandler(proxyServer)
+	mcpHandler := mcpiface.NewMCPHandler(
+		proxyServer.GetEcho(),
+		proxyServer.GetSessionManager(),
+		proxyServer,
+		proxyServer.GetShareRepository(),
+		proxyServer.GetContainer().AuthService,
+	)
 	proxyServer.AddCustomHandler(mcpHandler)
 
 	log.Printf("[MCP_HANDLER] MCP handler registered successfully at /mcp")

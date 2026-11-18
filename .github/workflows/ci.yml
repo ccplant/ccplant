@@ -119,6 +119,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
@@ -127,6 +129,25 @@ jobs:
         working-directory: backend
       - run: go build ./...
         working-directory: backend
+      - name: Check architecture regressions
+        working-directory: backend
+        shell: bash
+        run: |
+          go install github.com/takutakahashi/archscore/cmd/archscore@5996adf42a447be66472461182d7442edc6e3df2
+          set +e
+          "$(go env GOPATH)/bin/archscore" \
+            -root . \
+            -config architecture/archscore.json \
+            > architecture-current.json
+          analyze_status=$?
+          set -e
+          if [[ $analyze_status -ne 0 && $analyze_status -ne 2 ]]; then
+            exit "$analyze_status"
+          fi
+          "$(go env GOPATH)/bin/archscore" compare \
+            -baseline architecture/baseline.json \
+            -current architecture-current.json \
+            -fail-on-regression
 
   frontend:
     needs: changes

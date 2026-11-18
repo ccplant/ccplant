@@ -1,0 +1,73 @@
+{
+  "maxFanOut": 5,
+  "maxCouplingLoad": 5,
+  "historyCommits": 300,
+  "minModuleChanges": 5,
+  "minCochange": 3,
+  "minLocalityRatio": 0.8,
+  "includeTests": false,
+  "policyMode": "observational",
+  "modules": [
+    {
+      "name": "commands",
+      "paths": ["cmd/**", "*.go"],
+      "role": "composition-root",
+      "mayDependOn": ["app", "core", "domain", "usecases", "interfaces", "infrastructure", "modules", "runtime", "updater", "packages", "misc"]
+    },
+    {
+      "name": "app",
+      "paths": ["internal/app/**", "internal/di/**"],
+      "mayDependOn": ["core", "domain", "usecases", "interfaces", "infrastructure", "modules", "runtime", "updater", "packages", "misc"]
+    },
+    {
+      "name": "core",
+      "paths": ["internal/core/**", "internal/buildinfo/**"],
+      "mayDependOn": ["domain", "packages"]
+    },
+    {
+      "name": "domain",
+      "paths": ["internal/domain/**"],
+      "mayDependOn": ["packages"]
+    },
+    {
+      "name": "usecases",
+      "paths": ["internal/usecases/**"],
+      "mayDependOn": ["core", "domain", "packages"]
+    },
+    {
+      "name": "interfaces",
+      "paths": ["internal/interfaces/**"],
+      "mayDependOn": ["core", "domain", "usecases", "modules", "packages"]
+    },
+    {
+      "name": "infrastructure",
+      "paths": ["internal/infrastructure/**"],
+      "mayDependOn": ["core", "domain", "usecases", "modules", "runtime", "packages"]
+    },
+    {
+      "name": "modules",
+      "paths": ["internal/modules/**"],
+      "mayDependOn": ["core", "domain", "usecases", "interfaces", "infrastructure", "packages"]
+    },
+    {
+      "name": "runtime",
+      "paths": ["internal/runtimeconfig/**"],
+      "mayDependOn": ["packages"]
+    },
+    {
+      "name": "updater",
+      "paths": ["internal/updater/**"],
+      "mayDependOn": ["packages"]
+    },
+    {
+      "name": "packages",
+      "paths": ["pkg/**"],
+      "mayDependOn": []
+    },
+    {
+      "name": "misc",
+      "paths": ["misc/**", "spec/**", "netlify/**"],
+      "mayDependOn": ["packages"]
+    }
+  ]
+}

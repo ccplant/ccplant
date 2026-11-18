@@ -9,7 +9,6 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	mcpusecases "github.com/takutakahashi/agentapi-proxy/internal/usecases/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -31,12 +30,14 @@ type MCPHandler struct {
 	httpHandler    http.Handler
 }
 
-// NewMCPHandler creates a new MCP handler for the /mcp endpoint
-func NewMCPHandler(server *app.Server) *MCPHandler {
-	// Get dependencies from server
-	sessionManager := server.GetSessionManager()
-	shareRepo := server.GetShareRepository()
-
+// NewMCPHandler creates a new MCP handler for the /mcp endpoint.
+func NewMCPHandler(
+	e *echo.Echo,
+	sessionManager repositories.SessionManager,
+	sessionCreator mcpusecases.SessionCreator,
+	shareRepo repositories.ShareRepository,
+	authService portservices.AuthService,
+) *MCPHandler {
 	// Create HTTP handler using go-sdk's streamable HTTP handler
 	// Use stateless mode for simpler session management
 	httpOpts := &mcp.StreamableHTTPOptions{
@@ -46,9 +47,9 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 
 	handler := &MCPHandler{
 		sessionManager: sessionManager,
-		sessionCreator: server,
+		sessionCreator: sessionCreator,
 		shareRepo:      shareRepo,
-		authService:    server.GetContainer().AuthService,
+		authService:    authService,
 	}
 
 	// Create factory function that creates a new MCP server per request with authenticated user
@@ -88,7 +89,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 
 		// Create new MCP server instance with authenticated user and repositories
 		mcpServer := NewMCPServer(sessionManager, handler.sessionCreator, shareRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, opts)
-		mcpServer.resourceRequester = newEchoResourceRequester(server.GetEcho(), req.Header, getUserFromContext(req.Context()))
+		mcpServer.resourceRequester = newEchoResourceRequester(e, req.Header, getUserFromContext(req.Context()))
 
 		// Register all tools
 		mcpServer.RegisterTools()
