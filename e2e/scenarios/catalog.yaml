@@ -39,6 +39,17 @@ scenarios:
     package: ./scenarios/api
     test: TestSessionSearch
     timeout: 1m
+  - id: api.session.oneshot-lifecycle
+    category: session
+    description: Fly poolのoneshotセッションが応答後に自動削除される
+    kind: go-test
+    package: ./scenarios/api
+    test: TestOneshotLifecycle
+    timeout: 6m
+    capabilities: [external-session-manager, billable-agent]
+    parameters:
+      live_session: true
+      pool: fly-dev
   - id: api.session.schedule-suspend-resume
     category: session
     description: 再利用スケジュールのセッションを停止し同じセッションとして再開できる

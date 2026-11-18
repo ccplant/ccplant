@@ -74,6 +74,8 @@ CRUDはランダムな`e2e-`接頭辞を持つ専用リソースだけを作成�
 
 `api.session.persistence-suspend-resume`も実セッションを起動する永続化E2Eです。Session Managerが2 replica以上、`sessionPersistence.backend: volume`、指定したACP agentが利用可能な環境を対象にします。実セッションを起動して課金されるチャットを1回行い、同時suspend、resume、会話履歴の復元を検証します。E2Eコンソールから単独実行すると自動的に有効になります。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`を指定してください。`agent_type`の既定値は`claude-acp`です。
 
+`api.session.oneshot-lifecycle`はFly開発pool上で隔離profileを使い、期待応答とTTLによる自動削除だけを検証します。health、認証、検索、dry-runは既存の個別シナリオを組み合わせてください。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`と`E2E_PARAM_SESSION_PROFILE_ID`が必須で、`E2E_PARAM_POOL`の既定値は`fly-dev`です。
+
 workerを介さず直接実行する場合は、実セッションの起動を明示的に許可します。
 
 ```bash
