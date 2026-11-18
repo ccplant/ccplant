@@ -15,7 +15,7 @@ func TestInjectUsageReportingHook(t *testing.T) {
 	injectUsageReportingHook(settings)
 	for name, hooks := range map[string]map[string]interface{}{
 		"claude": settings.Claude.SettingsJSON,
-		"codex":  settings.Codex.HooksJSON,
+		"codex":  settings.Codex.ManagedHooksJSON,
 	} {
 		hookMap, ok := hooks["hooks"].(map[string]interface{})
 		if !ok {

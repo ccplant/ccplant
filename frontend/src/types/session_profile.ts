@@ -43,6 +43,7 @@ export interface ProfileRepository {
 
 // Session profile config
 export interface SessionProfileConfig {
+  inherit_team_settings?: boolean;
   settings_team_id?: string;
   codex_connection?: ModelConnection | null;
   claude_connection?: ModelConnection | null;

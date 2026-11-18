@@ -42,6 +42,21 @@ bun run dev
 `main`ブランチへ反映されたドキュメントはGitHub Actionsにより
 [GitHub Pages](https://ccplant.github.io/ccplant/)へデプロイされます。
 
+## Session profile team inheritance
+
+Session profiles support `config.inherit_team_settings` (default: `true`).
+Set it to `false` in the profile's inheritance settings to skip team-derived MCP
+servers, plugins, environment and authentication. Personal settings and
+credentials, common defaults and explicit profile settings remain available.
+This also disables `settings_team_id` and the personal `preferred_team_id` for
+that session; it does not edit either setting or any team's configuration.
+Omitting the option preserves existing behavior. Explicit source-profile
+settings and profile instructions continue to apply.
+
+Organisation and proxy Codex hooks run from the managed requirements layer.
+Identical copies are removed from user hooks only after that layer is written;
+custom user hooks keep their normal Codex approval requirements.
+
 ## Release
 
 `vX.Y.Z` タグから、1つのGitHub Releaseとして以下を発行します。

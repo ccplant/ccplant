@@ -313,6 +313,9 @@ type RunServerRequest struct {
 	// on the resolved session profile. Empty preserves legacy all-secret behavior.
 	ProfileSecretIDs         []string
 	ResolvedSessionProfileID string
+	// DisableTeamSettings is resolved from the profile; team membership and
+	// session access control remain unchanged.
+	DisableTeamSettings bool `json:"-"`
 	// SettingsTeamID is authorized and resolved from the profile at launch.
 	SettingsTeamID string `json:"-"`
 	// Storages contains authorized and placement-checked persistent mounts.

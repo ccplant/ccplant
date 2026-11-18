@@ -61,11 +61,12 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 			return fmt.Errorf("failed to load session profile connection")
 		}
 		profileConfig = profile.Config()
+		req.DisableTeamSettings = !profileConfig.InheritTeamSettings()
 		team := profileConfig.SettingsTeamID()
 		if team == "" && profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam {
 			team = profile.TeamID()
 		}
-		if team != "" {
+		if team != "" && !req.DisableTeamSettings {
 			allowed := false
 			if req.Scope == entities.ScopeTeam {
 				allowed = req.TeamID == team
@@ -95,7 +96,7 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	owners := credentialOwnersForRequest(req)
 	// Team-scoped API connections default to the team's settings. Legacy auth
 	// file mounting keeps its existing credential_source behavior.
-	if req.SettingsTeamID == "" && req.CredentialSource == "" && req.Scope == entities.ScopeTeam && req.TeamID != "" {
+	if !req.DisableTeamSettings && req.SettingsTeamID == "" && req.CredentialSource == "" && req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		owners = []string{req.TeamID}
 	}
 	for _, owner := range owners {

@@ -39,6 +39,7 @@ func (c *SessionProfileController) GetName() string {
 
 // SessionProfileConfigRequest represents session profile config in requests
 type SessionProfileConfigRequest struct {
+	InheritTeamSettings    *bool                        `json:"inherit_team_settings,omitempty"`
 	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
 	CodexConnection        json.RawMessage              `json:"codex_connection,omitempty"`
 	ClaudeConnection       json.RawMessage              `json:"claude_connection,omitempty"`
@@ -108,6 +109,7 @@ type SessionProfileResponse struct {
 
 // SessionProfileConfigResponse represents session profile config in responses
 type SessionProfileConfigResponse struct {
+	InheritTeamSettings    bool                         `json:"inherit_team_settings"`
 	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
 	CodexConnection        *modelprovider.Connection    `json:"codex_connection,omitempty"`
 	ClaudeConnection       *modelprovider.Connection    `json:"claude_connection,omitempty"`
@@ -709,6 +711,9 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	}
 	cfg.SetPool(req.Pool)
 	cfg.SetSettingsTeamID(req.SettingsTeamID)
+	if req.InheritTeamSettings != nil {
+		cfg.SetInheritTeamSettings(*req.InheritTeamSettings)
+	}
 	cfg.SetInitialMessageTemplate(req.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(req.ReuseMessageTemplate)
 	cfg.SetCommandWrapperTemplate(req.CommandWrapperTemplate)
@@ -775,6 +780,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		SelectorTags:         p.SelectorTags(),
 		SelectorRepositories: p.SelectorRepositories(),
 		Config: SessionProfileConfigResponse{
+			InheritTeamSettings:    cfg.InheritTeamSettings(),
 			CodexConnection:        cfg.CodexConnection(),
 			ClaudeConnection:       cfg.ClaudeConnection(),
 			PiConnection:           cfg.PiConnection(),
@@ -809,7 +815,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 
 func validateProfileSettingsTeam(user *entities.User, profile *entities.SessionProfile, cfg entities.SessionProfileConfig) error {
 	team := cfg.SettingsTeamID()
-	if team == "" {
+	if !cfg.InheritTeamSettings() || team == "" {
 		return nil
 	}
 	if profile.Scope() == entities.ScopeTeam && profile.TeamID() != team {
@@ -827,6 +833,9 @@ func (c *SessionProfileController) validateProfileSecrets(ctx context.Context, p
 		return nil
 	}
 	settingsName := cfg.SettingsTeamID()
+	if !cfg.InheritTeamSettings() {
+		settingsName = profile.UserID()
+	}
 	if settingsName == "" {
 		if profile.Scope() == entities.ScopeTeam {
 			settingsName = profile.TeamID()

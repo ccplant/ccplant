@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ccplant client send-notification --title=\"Claude Code 完了\" --body=\"セッションが正常に完了しました。お疲れ様でした！\" --notify-session-id \"$AGENTAPI_SESSION_ID\""
+            "command": "ccplant client send-notification --title=\"Agent 完了\" --body=\"セッションが正常に完了しました。お疲れ様でした！\" --notify-session-id \"$AGENTAPI_SESSION_ID\""
           }
         ]
       }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ccplant client send-notification --title=\"Claude Code 通知\" --body=\"応答が必要です。確認をお願いします。\" --notify-session-id \"$AGENTAPI_SESSION_ID\""
+            "command": "ccplant client send-notification --title=\"Agent 通知\" --body=\"応答が必要です。確認をお願いします。\" --notify-session-id \"$AGENTAPI_SESSION_ID\""
           }
         ]
       }

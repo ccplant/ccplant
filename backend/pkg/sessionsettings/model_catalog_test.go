@@ -191,14 +191,14 @@ func TestGenerateCodexConfigTOMLRegistersCatalog(t *testing.T) {
 		CodexModelOptionsEnv: `["glm-5.3"]`,
 		"OPENAI_BASE_URL":    "https://ollama.example/v1",
 	}
-	require.NoError(t, generateCodexConfigTOML(outputDir, "approval-mode = \"full-auto\"\n", env, env))
+	require.NoError(t, generateCodexConfigTOML(outputDir, "approval_policy = \"never\"\n", env, env))
 
 	encoded, err := os.ReadFile(filepath.Join(outputDir, ".codex", "config.toml"))
 	require.NoError(t, err)
 	content := string(encoded)
 	require.Contains(t, content, "model_catalog_json")
 	require.Contains(t, content, CodexModelCatalogFile)
-	require.Contains(t, content, "approval-mode")
+	require.Contains(t, content, "approval_policy")
 	require.Contains(t, content, "agentapi_openai_compatible")
 }
 
@@ -226,11 +226,11 @@ func TestAppendCodexModelCatalogConfig(t *testing.T) {
 		require.Equal(t, "model_catalog_json = \"/tmp/catalog.json\"\n", appendCodexModelCatalogConfig("", "/tmp/catalog.json"))
 	})
 	t.Run("replaces existing key", func(t *testing.T) {
-		content := "model_catalog_json = \"/old.json\"\napproval-mode = \"full-auto\"\n"
+		content := "model_catalog_json = \"/old.json\"\napproval_policy = \"never\"\n"
 		result := appendCodexModelCatalogConfig(content, "/new catalog.json")
 		require.Equal(t, 1, strings.Count(result, "model_catalog_json"))
 		require.Contains(t, result, "\"/new catalog.json\"")
-		require.Contains(t, result, "approval-mode = \"full-auto\"")
+		require.Contains(t, result, "approval_policy = \"never\"")
 	})
 	t.Run("does not touch nested keys", func(t *testing.T) {
 		content := "[model_providers.x]\nmodel_catalog_json = \"/nested.json\"\n"

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
@@ -1066,4 +1067,24 @@ func TestBuildSessionSettings_ProfileSelectsTeamSettings(t *testing.T) {
 	if settings.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "team-oauth" || settings.Env["SHARED"] != "team" || settings.Env["PERSONAL_ONLY"] != "" {
 		t.Fatal("personal settings overrode selected team")
 	}
+}
+
+func TestRemoteCodexProvisionSettingsSeparateManagedHooks(t *testing.T) {
+	manager := newTestManagerForPersonalAPIKey(t)
+	_, err := manager.client.CoreV1().Secrets("test-ns").Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-settings-user"},
+		Data:       map[string][]byte{"settings.json": []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"user-custom-hook"}]}]}}`)},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+	settings, err := manager.BuildRemoteProvisionSettings(context.Background(), "fresh-session", &entities.RunServerRequest{UserID: "user", AgentType: "codex-acp"})
+	require.NoError(t, err)
+	user, err := json.Marshal(settings.Codex.HooksJSON)
+	require.NoError(t, err)
+	require.Contains(t, string(user), "user-custom-hook")
+	require.NotContains(t, string(user), "client cycle")
+	managed, err := json.Marshal(settings.Codex.ManagedHooksJSON)
+	require.NoError(t, err)
+	require.Contains(t, string(managed), "client cycle")
+	require.NotContains(t, string(managed), "user-custom-hook")
+	require.Contains(t, settings.Codex.ConfigTOML, `approval_policy = "never"`)
 }

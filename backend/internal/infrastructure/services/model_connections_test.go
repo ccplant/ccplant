@@ -56,12 +56,12 @@ func TestResolveConnectionsAndProfileModel(t *testing.T) {
 func TestGenericModelOverrideUsesSelectedAgent(t *testing.T) {
 	connection := &modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://example.com/v1", Model: "connection-default", Authentication: "api_key", APIKey: "secret"}
 
-	codex := &sessionsettings.SessionSettings{Codex: sessionsettings.CodexConfig{ConfigTOML: "approval-mode = \"full-auto\"\n"}}
+	codex := &sessionsettings.SessionSettings{Codex: sessionsettings.CodexConfig{ConfigTOML: "approval_policy = \"never\"\n"}}
 	applyModelConnections(codex, &entities.RunServerRequest{AgentType: "codex-acp", Model: "profile-model", CodexConnection: connection})
 	require.Equal(t, "profile-model", codex.CodexConnection.Model)
 	require.Equal(t, "connection-default", connection.Model)
 
-	accountCodex := &sessionsettings.SessionSettings{Codex: sessionsettings.CodexConfig{ConfigTOML: "approval-mode = \"full-auto\"\n"}}
+	accountCodex := &sessionsettings.SessionSettings{Codex: sessionsettings.CodexConfig{ConfigTOML: "approval_policy = \"never\"\n"}}
 	applyModelConnections(accountCodex, &entities.RunServerRequest{AgentType: "codex-acp", Model: "account-model"})
 	require.Contains(t, accountCodex.Codex.ConfigTOML, "model =")
 	require.Contains(t, accountCodex.Codex.ConfigTOML, "account-model")
@@ -303,6 +303,14 @@ func TestProfileTeamSettingsInheritance(t *testing.T) {
 	require.Equal(t, "team-key", req.CodexConnection.APIKey)
 	require.Equal(t, "team-model", req.CodexConnection.Model)
 	require.Equal(t, []string{"org/team"}, credentialOwnersForRequest(req))
+	cfg.SetInheritTeamSettings(false)
+	profile.SetConfig(cfg)
+	req = &entities.RunServerRequest{UserID: "user", ResolvedSessionProfileID: "profile"}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "personal-key", req.CodexConnection.APIKey)
+	require.Equal(t, []string{"user"}, credentialOwnersForRequest(req))
+	require.Empty(t, req.SettingsTeamID)
+	cfg.SetInheritTeamSettings(true)
 	cfg.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://profile.example/v1", Authentication: "api_key", APIKey: "profile-key"})
 	profile.SetConfig(cfg)
 	req = &entities.RunServerRequest{UserID: "user", Teams: []string{"org/team"}, ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "override-model"}}

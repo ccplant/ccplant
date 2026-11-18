@@ -349,10 +349,12 @@ type ClaudeConfig struct {
 
 // CodexConfig holds Codex CLI-specific configuration data.
 type CodexConfig struct {
+	// ManagedHooksJSON contains only proxy-injected hooks, never user hooks.
+	ManagedHooksJSON map[string]interface{} `yaml:"managed_hooks_json,omitempty" json:"managed_hooks_json,omitempty"`
 	// HooksJSON is written to ~/.codex/hooks.json (codex-acp sessions only).
 	HooksJSON map[string]interface{} `yaml:"hooks_json,omitempty"  json:"hooks_json,omitempty"`
 	// ConfigTOML is written to ~/.codex/config.toml (codex-acp sessions only).
-	// Use it to set approval-mode and other Codex CLI settings that bypass permission prompts.
+	// Use it to set approval_policy and other Codex CLI settings that bypass permission prompts.
 	ConfigTOML string `yaml:"config_toml,omitempty" json:"config_toml,omitempty"`
 	// InstructionsMD is written to ~/.codex/AGENTS.md.
 	// It provides user-level instructions to the Codex CLI, equivalent to
@@ -360,8 +362,8 @@ type CodexConfig struct {
 	// default instructions baked into the Docker image.
 	InstructionsMD string `yaml:"instructions_md,omitempty" json:"instructions_md,omitempty"`
 	// MCPServers holds MCP server configurations keyed by server name.
-	// Each entry is appended to ~/.codex/config.toml as a [[mcp_servers]] TOML
-	// array-of-tables entry so the Codex CLI can read them natively.
+	// Each entry is appended to ~/.codex/config.toml as a [mcp_servers.<name>] TOML
+	// table so the Codex CLI can read them natively.
 	// The map format mirrors ClaudeConfig.MCPServers for consistency.
 	MCPServers map[string]interface{} `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 }

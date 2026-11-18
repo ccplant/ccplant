@@ -424,11 +424,12 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	}
 
 	// ── Step 2.7: write managed Codex requirements ─────────────────────────
-	// Codex only auto-trusts hooks from the managed requirements layer.  The
-	// user-layer ~/.codex/hooks.json is still generated for visibility, but
-	// /etc/codex/requirements.toml is what makes hooks run without approval.
-	if err := writeCodexRequirements(settings.Codex.HooksJSON); err != nil {
-		log.Printf("[PROVISIONER] Warning: failed to write Codex managed requirements: %v", err)
+	// Only proxy and organisation hooks belong in the managed layer. Remove
+	// duplicate user copies only after the requirements file is successfully written.
+	// A Claude/Pi parent can also start native Codex workers in this Pod.
+	if err := prepareCodexHooks(compileOpts.OutputDir, settings.Codex.ManagedHooksJSON); err != nil {
+		s.setStatus(StatusError, "failed to prepare Codex hooks: "+err.Error())
+		return
 	}
 
 	// Step 3: prepare the process-only session environment.
@@ -700,7 +701,7 @@ func injectUsageReportingHook(settings *sessionsettings.SessionSettings) {
 		return root
 	}
 	settings.Claude.SettingsJSON = appendStop(settings.Claude.SettingsJSON)
-	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
+	settings.Codex.ManagedHooksJSON = appendStop(settings.Codex.ManagedHooksJSON)
 }
 
 func shellQuote(value string) string {
@@ -1025,21 +1026,6 @@ func writeFiles(files []sessionsettings.ManagedFile) error {
 	return firstErr
 }
 
-func writeCodexRequirements(hooksJSON map[string]interface{}) error {
-	if len(hooksJSON) == 0 {
-		return nil
-	}
-
-	content, err := buildCodexRequirementsTOML(sessionsettings.MergeCodexManagedHooks(hooksJSON))
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(content) == "" {
-		return nil
-	}
-	return writeCodexRequirementsToPath(codexRequirementsPath, content)
-}
-
 func writeCodexRequirementsToPath(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("failed to create %s: %w", filepath.Dir(path), err)
@@ -1049,81 +1035,6 @@ func writeCodexRequirementsToPath(path, content string) error {
 	}
 	log.Printf("[PROVISIONER] Wrote Codex managed requirements to %s", path)
 	return nil
-}
-
-func buildCodexRequirementsTOML(hooksJSON map[string]interface{}) (string, error) {
-	rawHooks, ok := hooksJSON["hooks"]
-	if !ok {
-		return "", nil
-	}
-	hooksMap, ok := rawHooks.(map[string]interface{})
-	if !ok || len(hooksMap) == 0 {
-		return "", nil
-	}
-
-	var events []string
-	for event := range hooksMap {
-		// Codex does not support Claude Code's Notification hook event.
-		if event == "Notification" {
-			continue
-		}
-		entries := asInterfaceSlice(hooksMap[event])
-		if len(entries) == 0 {
-			continue
-		}
-		events = append(events, event)
-	}
-	sort.Strings(events)
-	if len(events) == 0 {
-		return "", nil
-	}
-
-	var b strings.Builder
-	b.WriteString("[hooks]\n")
-	b.WriteString("managed_dir = \"/etc/codex\"\n")
-
-	for _, event := range events {
-		entries := asInterfaceSlice(hooksMap[event])
-		for _, entry := range entries {
-			entryMap := asStringMap(entry)
-			if len(entryMap) == 0 {
-				continue
-			}
-			hookEntries := asInterfaceSlice(entryMap["hooks"])
-			if len(hookEntries) == 0 {
-				continue
-			}
-
-			b.WriteString("\n")
-			b.WriteString("[[hooks.")
-			b.WriteString(event)
-			b.WriteString("]]\n")
-
-			for _, hook := range hookEntries {
-				hookMap := asStringMap(hook)
-				if len(hookMap) == 0 {
-					continue
-				}
-				hookType, _ := hookMap["type"].(string)
-				command, _ := hookMap["command"].(string)
-				if hookType == "" || command == "" {
-					continue
-				}
-				b.WriteString("\n")
-				b.WriteString("[[hooks.")
-				b.WriteString(event)
-				b.WriteString(".hooks]]\n")
-				b.WriteString("type = ")
-				b.WriteString(tomlQuote(hookType))
-				b.WriteString("\n")
-				b.WriteString("command = ")
-				b.WriteString(tomlQuote(command))
-				b.WriteString("\n")
-			}
-		}
-	}
-
-	return b.String(), nil
 }
 
 func asInterfaceSlice(v interface{}) []interface{} {
@@ -1139,17 +1050,6 @@ func asInterfaceSlice(v interface{}) []interface{} {
 	default:
 		return nil
 	}
-}
-
-func asStringMap(v interface{}) map[string]interface{} {
-	if typed, ok := v.(map[string]interface{}); ok {
-		return typed
-	}
-	return nil
-}
-
-func tomlQuote(s string) string {
-	return strconv.Quote(s)
 }
 
 // mergeHooksIntoSettingsFile reads the Claude Code settings.json at path, merges

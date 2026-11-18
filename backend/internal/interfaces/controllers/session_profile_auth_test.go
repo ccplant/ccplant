@@ -9,6 +9,29 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
+func TestProfileTeamInheritanceAPI(t *testing.T) {
+	controller := &SessionProfileController{}
+	for _, body := range []string{`{}`, `{"inherit_team_settings":true}`, `{"inherit_team_settings":false,"settings_team_id":"org/team"}`} {
+		var req SessionProfileConfigRequest
+		require.NoError(t, json.Unmarshal([]byte(body), &req))
+		cfg := controller.requestToConfig(req)
+		want := req.InheritTeamSettings == nil || *req.InheritTeamSettings
+		require.Equal(t, want, cfg.InheritTeamSettings())
+		profile := entities.NewSessionProfile("profile", "Profile", "user")
+		profile.SetConfig(cfg)
+		response := controller.toResponse(profile)
+		require.Equal(t, want, response.Config.InheritTeamSettings)
+		encoded, err := json.Marshal(response)
+		require.NoError(t, err)
+		var roundTrip struct {
+			Config SessionProfileConfigRequest `json:"config"`
+		}
+		require.NoError(t, json.Unmarshal(encoded, &roundTrip))
+		require.NotNil(t, roundTrip.Config.InheritTeamSettings)
+		require.Equal(t, want, *roundTrip.Config.InheritTeamSettings)
+	}
+}
+
 func TestApplySessionProfileDoesNotMaterializePiConnectionAsEnvironment(t *testing.T) {
 	profile := entities.NewSessionProfile("profile", "Pi", "user")
 	cfg := entities.NewSessionProfileConfig()

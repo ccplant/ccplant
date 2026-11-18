@@ -498,7 +498,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 				AgentType: "codex-acp",
 			},
 			Codex: CodexConfig{
-				ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
+				ConfigTOML: "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n",
 			},
 		}
 
@@ -524,7 +524,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 
 		data, err := os.ReadFile(configPath)
 		require.NoError(t, err)
-		assert.Equal(t, "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n", string(data))
+		assert.Equal(t, "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n", string(data))
 	})
 
 	t.Run("skips config.toml when CodexConfigTOML is empty", func(t *testing.T) {
@@ -633,7 +633,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 				"CODEX_MODEL_SUPPORTS_REASONING_SUMMARIES": "false",
 			},
 			Codex: CodexConfig{
-				ConfigTOML: "approval-mode = \"full-auto\"\nmodel = \"gpt-5.5\"\nmodel_context_window = 128000\nmodel_auto_compact_token_limit = 64000\nmodel_supports_reasoning_summaries = true\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
+				ConfigTOML: "approval_policy = \"never\"\nmodel = \"gpt-5.5\"\nmodel_context_window = 128000\nmodel_auto_compact_token_limit = 64000\nmodel_supports_reasoning_summaries = true\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
 			},
 		}
 
@@ -659,7 +659,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 		require.NoError(t, err)
 		content := string(data)
 
-		assert.Contains(t, content, "approval-mode")
+		assert.Contains(t, content, "approval_policy")
 		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
 		assert.Contains(t, content, `model = "qwen3-coder-next"`)
 		assert.Contains(t, content, `model_context_window = 65536`)
@@ -782,10 +782,10 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 
 		// Both servers should appear as [mcp_servers.<name>] nested-table entries.
 		assert.Contains(t, content, "[mcp_servers.github]")
-		assert.Contains(t, content, `type = "stdio"`)
+		assert.NotContains(t, content, `type = `)
 		assert.Contains(t, content, `command = "npx"`)
 		assert.Contains(t, content, "[mcp_servers.slack]")
-		assert.Contains(t, content, `type = "http"`)
+		assert.NotContains(t, content, `type = `)
 		assert.Contains(t, content, `url = "https://mcp.example.com/slack"`)
 		assert.Contains(t, content, `http_headers = {"Authorization" = "Bearer token", "X-Custom" = "value"}`)
 		assert.Contains(t, content, "GITHUB_TOKEN")
@@ -841,7 +841,7 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		content := string(data)
 
 		assert.Contains(t, content, "[mcp_servers.github]")
-		assert.Contains(t, content, `type = "streamable_http"`)
+		assert.NotContains(t, content, `type = `)
 		assert.Contains(t, content, `url = "https://api.githubcopilot.com/mcp"`)
 		assert.Contains(t, content, `http_headers = {"Authorization" = "Bearer token"}`)
 		assert.NotContains(t, content, "GITHUB_TOKEN")
@@ -976,7 +976,7 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 				AgentType: "codex-acp",
 			},
 			Codex: CodexConfig{
-				ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
+				ConfigTOML: "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n",
 				MCPServers: map[string]interface{}{
 					"myhub": map[string]interface{}{
 						"type": "http",
@@ -1009,13 +1009,13 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		content := string(data)
 
 		// Base config should be present.
-		assert.Contains(t, content, "approval-mode")
+		assert.Contains(t, content, "approval_policy")
 		assert.Contains(t, content, "sandbox_mode")
 		// MCP server should be appended after the base config.
 		assert.Contains(t, content, "[mcp_servers.myhub]")
 		assert.Contains(t, content, `url = "https://myhub.example.com/mcp"`)
 		// The base config should appear BEFORE the mcp_servers section.
-		assert.Less(t, strings.Index(content, "approval-mode"), strings.Index(content, "[mcp_servers."))
+		assert.Less(t, strings.Index(content, "approval_policy"), strings.Index(content, "[mcp_servers."))
 	})
 
 	t.Run("skips when MCPServers is empty", func(t *testing.T) {

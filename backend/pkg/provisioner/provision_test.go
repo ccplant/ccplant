@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -462,55 +461,6 @@ func TestMergeHooksIntoSettingsFile_NoHooksInCompiled(t *testing.T) {
 	got, _ := os.ReadFile(path)
 	if string(got) != original {
 		t.Errorf("expected file unchanged, got %q", string(got))
-	}
-}
-
-func TestBuildCodexRequirementsTOML(t *testing.T) {
-	hooksJSON := map[string]interface{}{
-		"hooks": map[string]interface{}{
-			"Stop": []interface{}{
-				map[string]interface{}{
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "command",
-							"command": "agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1",
-						},
-					},
-				},
-			},
-			"Notification": []interface{}{
-				map[string]interface{}{
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "command",
-							"command": "ccplant client send-notification",
-						},
-					},
-				},
-			},
-		},
-	}
-
-	got, err := buildCodexRequirementsTOML(hooksJSON)
-	if err != nil {
-		t.Fatalf("buildCodexRequirementsTOML: %v", err)
-	}
-
-	mustContain := []string{
-		"[hooks]",
-		"managed_dir = \"/etc/codex\"",
-		"[[hooks.Stop]]",
-		"[[hooks.Stop.hooks]]",
-		"type = \"command\"",
-		"command = \"agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1\"",
-	}
-	for _, want := range mustContain {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected TOML to contain %q, got:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "Notification") {
-		t.Fatalf("Notification hooks should not be written for Codex, got:\n%s", got)
 	}
 }
 

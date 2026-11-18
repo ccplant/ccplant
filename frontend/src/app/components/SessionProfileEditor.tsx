@@ -137,6 +137,7 @@ export default function SessionProfileEditor({
   // Session TTL
   const [sessionTTL, setSessionTTL] = useState('')
   const [unsyncedFilePaths, setUnsyncedFilePaths] = useState('')
+  const [inheritTeamSettings, setInheritTeamSettings] = useState(true)
   const [settingsTeamId, setSettingsTeamId] = useState('')
   const [codexConnection, setCodexConnection] = useState<ModelConnection | null>(null)
   const [claudeConnection, setClaudeConnection] = useState<ModelConnection | null>(null)
@@ -192,12 +193,12 @@ export default function SessionProfileEditor({
     const loadSecrets = async () => {
       try {
         const client = createAgentAPIProxyClientFromStorage()
-        const owner = settingsTeamId || (scope === 'team' ? teamId : (await client.getUserInfo()).principal_id)
+        const owner = inheritTeamSettings ? settingsTeamId || (scope === 'team' ? teamId : (await client.getUserInfo()).principal_id) : (await client.getUserInfo()).principal_id
         setAvailableSecrets(owner ? await client.listSettingsSecrets(owner) : [])
       } catch { setAvailableSecrets([]) }
     }
     void loadSecrets()
-  }, [scope, teamId, settingsTeamId])
+  }, [scope, teamId, settingsTeamId, inheritTeamSettings])
 
   // Initialize form when editing
   useEffect(() => {
@@ -288,6 +289,7 @@ export default function SessionProfileEditor({
       setStorages(cfg?.params?.storages ?? [])
       setSessionState(cfg?.session_state ?? { enabled: false, components: ['agent_state'], agents: ['claude'] })
 
+      setInheritTeamSettings(cfg?.inherit_team_settings ?? true)
       setSettingsTeamId(cfg?.settings_team_id ?? '')
       setCodexConnection(cfg?.codex_connection ?? null)
       setClaudeConnection(cfg?.claude_connection ?? null)
@@ -329,6 +331,7 @@ export default function SessionProfileEditor({
       setProfileRepositories([])
       setStorages([])
       setSessionState({ enabled: false, components: ['agent_state'], agents: ['claude'] })
+      setInheritTeamSettings(true)
       setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
       setCodexConnection(null)
       setClaudeConnection(null)
@@ -536,10 +539,11 @@ export default function SessionProfileEditor({
       }
       const extraConfig = { ...editingProfile?.config }
       const parsedPiPackages = piPackages.split('\n').map(value => value.trim()).filter(Boolean)
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'pi_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'pi_packages', 'files', 'repositories', 'command_wrapper_template', 'system_prompt', 'system_prompt_mode', 'session_state'] as const) delete extraConfig[key]
+      for (const key of ['inherit_team_settings', 'settings_team_id', 'codex_connection', 'claude_connection', 'pi_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'pi_packages', 'files', 'repositories', 'command_wrapper_template', 'system_prompt', 'system_prompt_mode', 'session_state'] as const) delete extraConfig[key]
       const parsedGitHubRepositories = githubRepositories.split('\n').map(value => value.trim()).filter(Boolean)
       const config = {
         ...extraConfig,
+        inherit_team_settings: inheritTeamSettings,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
         codex_connection: connectionPayload(codexConnection),
         claude_connection: connectionPayload(claudeConnection),
@@ -624,7 +628,7 @@ export default function SessionProfileEditor({
           <aside className="hidden md:block">{nav}</aside>
           <form onSubmit={handleSubmit} onChange={() => setDirty(true)} className="min-w-0 flex-1">
             <SettingsPageHeader title={active.label} description="ベースの設定に、このプロファイルで指定した内容を上書きします。各項目の変更はまとめて保存されます。" />
-            <p className="mb-5 text-sm text-gray-500">ベース: {settingsTeamId ? `チーム ${settingsTeamId}` : '既定の個人・チーム設定'}。未指定の認証方法・モデル・環境変数・MCP はベースの設定を使用します。</p>
+            <p className="mb-5 text-sm text-gray-500">ベース: {!inheritTeamSettings ? '個人・共通設定' : settingsTeamId ? `チーム ${settingsTeamId}` : '既定の個人・チーム設定'}。未指定の認証方法・モデル・環境変数・MCP はベースの設定を使用します。</p>
             {error && <p role="alert" className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">{error}</p>}
             <fieldset disabled={isSubmitting} className="space-y-5">
             {active.slug === 'basic' && <div className="space-y-5">
@@ -717,8 +721,15 @@ export default function SessionProfileEditor({
             </div>}
             {active.slug === 'inheritance' && <div className="space-y-5">
             <div>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={inheritTeamSettings} onChange={e => { setInheritTeamSettings(e.target.checked); setDirty(true) }} />
+                チーム設定を継承する
+              </label>
+              <p className="text-xs text-gray-500 mt-2">OFF にするとチーム由来の認証・環境変数・MCP・プラグインを継承しません。個人設定・共通設定と、このプロファイルの指定は維持します。</p>
+            </div>
+            <div>
               <label htmlFor="profile-settings-team" className="block text-sm font-medium mb-1">ベースにする設定</label>
-              <select id="profile-settings-team" value={settingsTeamId} onChange={e => setSettingsTeamId(e.target.value)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
+              <select id="profile-settings-team" disabled={!inheritTeamSettings} value={settingsTeamId} onChange={e => setSettingsTeamId(e.target.value)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
                 <option value="">既定の個人・チーム設定</option>
                 {[...new Set([...availableTeams, ...(settingsTeamId ? [settingsTeamId] : [])])].filter(team => {
                   const scope = editingProfile ?? createScope ?? getScopeParams()
