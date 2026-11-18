@@ -1,7 +1,7 @@
 # Agent image lifecycle
 
 Kubernetes session Pods run `ghcr.io/ccplant/ccplant-agent:assets-<hash>` with
-`IfNotPresent`. This image contains the Claude Agent SDK, Codex, Pi, Cursor,
+`IfNotPresent`. This image contains the Claude Agent SDK, Codex, Pi, Cursor, Antigravity,
 ACP adapters, MCP tools, a real Node.js runtime, configuration and startup scripts.
 It contains no ccplant application binary.
 

@@ -8443,7 +8443,7 @@
           },
           "agent_type": {
             "type": "string",
-            "description": "Agent type for the session. Supported values include 'auto', 'claude-acp', 'codex-acp', and 'cursor'. 'auto' selects codex-acp when Codex auth.json is available, otherwise claude-acp. If not specified, uses default agentapi.",
+            "description": "Agent type for the session. Supported values include 'auto', 'claude-acp', 'codex-acp', 'cursor', and 'antigravity-acp'. 'auto' selects codex-acp when Codex auth.json is available, otherwise claude-acp. If not specified, uses default agentapi.",
             "example": "claude-acp"
           },
           "model": {
@@ -10035,7 +10035,8 @@
               "claude-acp",
               "codex-acp",
               "pi",
-              "cursor"
+              "cursor",
+              "antigravity-acp"
             ],
             "description": "Default agent type for sessions in this settings scope. Team sessions use this value when agent_type is omitted; empty string uses auto."
           },
@@ -10253,7 +10254,8 @@
               "claude-acp",
               "codex-acp",
               "pi",
-              "cursor"
+              "cursor",
+              "antigravity-acp"
             ],
             "description": "Default agent type for sessions in this settings scope."
           },
@@ -11091,7 +11093,7 @@
       "properties": {
         "agent_type": {
           "type": "string",
-          "description": "Agent type to use. Supported values include 'auto', 'claude-acp', 'codex-acp', and 'cursor'. 'auto' selects codex-acp when Codex auth.json is available, otherwise claude-acp. If omitted, the default agentapi is used.",
+          "description": "Agent type to use. Supported values include 'auto', 'claude-acp', 'codex-acp', 'cursor', and 'antigravity-acp'. 'auto' selects codex-acp when Codex auth.json is available, otherwise claude-acp. If omitted, the default agentapi is used.",
           "example": "claude-acp"
         },
         "model": {

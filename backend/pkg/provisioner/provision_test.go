@@ -131,6 +131,22 @@ func TestBuildAgentCommandPi(t *testing.T) {
 	}
 }
 
+func TestBuildAgentCommandAntigravity(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+
+	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "antigravity-acp"},
+	}, map[string]string{})
+
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
+	}
+	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "agy", "acp"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestBuildAgentCommandPiPreservesExplicitModel(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
 	env := map[string]string{

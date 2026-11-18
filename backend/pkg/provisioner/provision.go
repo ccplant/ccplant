@@ -1588,6 +1588,16 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"agent", "acp",
 		}
 
+	case "antigravity-acp":
+		// Start the bridge around Antigravity CLI's native ACP v1 server.
+		return agentapiProxyBinary, []string{
+			"acp-server",
+			"--port", agentapiPort,
+			"--auto-approve",
+			"--",
+			"agy", "acp",
+		}
+
 	default:
 		// Default: agentapi server wrapping claude
 		claudeCmd := "claude"
@@ -1826,7 +1836,7 @@ type acpMessagesResponse struct {
 // started, replicating the logic of initialMessageSenderScript.
 func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int, restored bool, markerPath string) {
 	// ACP sessions use a different transport (JSON-RPC 2.0 over POST /rpc).
-	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi" || agentType == "cursor" {
+	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi" || agentType == "cursor" || agentType == "antigravity-acp" {
 		sendACPInitialMessage(ctx, agentapiURL, message, waitSec, restored, markerPath)
 		return
 	}

@@ -305,7 +305,7 @@ func resolveSkillsAgent(agentType string) (string, error) {
 		return "claude-code", nil
 	case "codex", "codex-acp":
 		return "codex", nil
-	case "pi", "cursor":
+	case "pi", "cursor", "antigravity-acp":
 		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported agent type for skills: %s", agentType)

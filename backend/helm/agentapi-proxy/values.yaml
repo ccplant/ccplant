@@ -535,7 +535,7 @@ sessionManager:
     serviceAccountName: agentapi-proxy-session
     rbac:
       create: true
-    image: "ghcr.io/ccplant/ccplant-agent:assets-a702425c0ef59e4933fed0fb939ec667"
+    image: "ghcr.io/ccplant/ccplant-agent:assets-3c5b315d598484015f494ab2a659b287"
     # Source image for the ccplant binary injected into session Pods.
     # Empty follows the session-manager image.
     cliImage: ""
@@ -1170,7 +1170,7 @@ kubernetesSession:
   # Container image for session pods
   # Independent asset image; use an immutable tag or digest.
   # Outside Helm the equivalent runtime override is AGENTAPI_K8S_SESSION_IMAGE.
-  image: "ghcr.io/ccplant/ccplant-agent:assets-a702425c0ef59e4933fed0fb939ec667"
+  image: "ghcr.io/ccplant/ccplant-agent:assets-3c5b315d598484015f494ab2a659b287"
   # CLI source follows the manager release; override for a custom registry.
   cliImage: ""
 
