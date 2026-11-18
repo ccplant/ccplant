@@ -1,0 +1,24 @@
+{
+  "version": "2",
+  "score": 96,
+  "nominalScore": 85,
+  "confidence": 0.78,
+  "scoreLowerBound": 75,
+  "scoreUpperBound": 97,
+  "files": 21,
+  "edges": 26,
+  "violations": [],
+  "cycles": [],
+  "unknown": [],
+  "modules": [
+    { "name": "commands", "publicSymbols": 0 },
+    { "name": "api", "publicSymbols": 0 },
+    { "name": "catalog", "publicSymbols": 0 },
+    { "name": "domain", "publicSymbols": 0 },
+    { "name": "mcpserver", "publicSymbols": 0 },
+    { "name": "store", "publicSymbols": 0 },
+    { "name": "worker", "publicSymbols": 0 },
+    { "name": "apitest", "publicSymbols": 0 },
+    { "name": "api-scenarios", "publicSymbols": 0 }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "includeTests": true,
+  "policyMode": "enforced",
+  "historyCommits": 200,
+  "minModuleChanges": 3,
+  "minCochange": 2,
+  "minLocalityRatio": 0.8,
+  "maxFanOut": 4,
+  "maxCouplingLoad": 4,
+  "exclude": ["frontend/**", "scenarios/frontend/**"],
+  "modules": [
+    {
+      "name": "commands",
+      "paths": ["cmd/**"],
+      "role": "composition-root",
+      "mayDependOn": ["api", "catalog", "domain", "mcpserver", "store", "worker"]
+    },
+    {
+      "name": "api",
+      "paths": ["internal/api/**"],
+      "mayDependOn": ["catalog", "domain", "store"]
+    },
+    {
+      "name": "catalog",
+      "paths": ["internal/catalog/**"],
+      "mayDependOn": ["domain"]
+    },
+    {
+      "name": "domain",
+      "paths": ["internal/domain/**"],
+      "mayDependOn": []
+    },
+    {
+      "name": "mcpserver",
+      "paths": ["internal/mcpserver/**"],
+      "mayDependOn": ["api", "catalog", "domain", "store"]
+    },
+    {
+      "name": "store",
+      "paths": ["internal/store/**"],
+      "mayDependOn": ["domain"]
+    },
+    {
+      "name": "worker",
+      "paths": ["internal/worker/**"],
+      "mayDependOn": ["domain", "store"]
+    },
+    {
+      "name": "apitest",
+      "paths": ["pkg/apitest/**"],
+      "mayDependOn": []
+    },
+    {
+      "name": "api-scenarios",
+      "paths": ["scenarios/api/**"],
+      "mayDependOn": ["apitest"]
+    }
+  ]
+}
