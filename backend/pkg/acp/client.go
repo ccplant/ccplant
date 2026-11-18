@@ -214,7 +214,9 @@ func pickEnvVarAuthMethod(methods []AuthMethod) string {
 	}
 	available := make(map[string]bool, len(methods))
 	for _, m := range methods {
-		if m.Type == "env_var" {
+		// Antigravity currently advertises its Gemini key flow as a terminal
+		// method even though it consumes GEMINI_API_KEY non-interactively.
+		if m.Type == "env_var" || m.ID == "gemini-api-key" {
 			available[m.ID] = true
 		}
 	}
