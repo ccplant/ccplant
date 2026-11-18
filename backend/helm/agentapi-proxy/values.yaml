@@ -560,7 +560,7 @@ sessionManager:
         limits: {cpu: "2", memory: "4Gi"}
     moli:
       enabled: false
-      image: ghcr.io/ccplant/ccplant-browser:moli-1.1.24
+      image: ghcr.io/ccplant/ccplant-browser:moli-1.1.24-r1
       port: 9222
       layout: true
       resources:
@@ -1225,7 +1225,7 @@ kubernetesSession:
         memory: "4Gi"
   moli:
     enabled: false
-    image: ghcr.io/ccplant/ccplant-browser:moli-1.1.24
+    image: ghcr.io/ccplant/ccplant-browser:moli-1.1.24-r1
     port: 9222
     layout: true
     resources:

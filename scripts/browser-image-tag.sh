@@ -10,4 +10,10 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 
-printf 'moli-%s\n' "$version"
+revision=$(sed -n 's/^ARG IMAGE_REVISION=//p' "$dockerfile" | head -n 1)
+if [[ ! "$revision" =~ ^[1-9][0-9]*$ ]]; then
+  echo "invalid or missing IMAGE_REVISION in browser/Dockerfile: $revision" >&2
+  exit 1
+fi
+
+printf 'moli-%s-r%s\n' "$version" "$revision"

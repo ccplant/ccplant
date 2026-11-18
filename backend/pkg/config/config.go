@@ -283,7 +283,7 @@ type SciaConfig struct {
 // the session-manager image independently.
 const DefaultKubernetesSessionImage = "ghcr.io/ccplant/ccplant-agent:assets-a702425c0ef59e4933fed0fb939ec667"
 
-const DefaultMoliImage = "ghcr.io/ccplant/ccplant-browser:moli-1.1.24"
+const DefaultMoliImage = "ghcr.io/ccplant/ccplant-browser:moli-1.1.24-r1"
 
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {

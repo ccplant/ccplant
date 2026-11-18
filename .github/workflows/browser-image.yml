@@ -68,6 +68,8 @@ jobs:
         run: |
           docker pull "$IMAGE"
           docker run --rm "$IMAGE" --version
+          docker run --rm --entrypoint fc-match "$IMAGE" \
+            -f '%{family}\n' ':lang=ja' | grep -F 'Noto Sans CJK JP'
           container=$(docker run -d --read-only --tmpfs /tmp:uid=999,gid=999 \
             -p 127.0.0.1::9222 "$IMAGE" serve --host 0.0.0.0 --port 9222)
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
