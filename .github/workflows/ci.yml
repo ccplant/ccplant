@@ -133,20 +133,22 @@ jobs:
         working-directory: backend
         shell: bash
         run: |
-          go install github.com/takutakahashi/archscore/cmd/archscore@5996adf42a447be66472461182d7442edc6e3df2
+          cd tools/archscore
+          go build -o "$RUNNER_TEMP/archscore" ./cmd/archscore
+          archscore="$RUNNER_TEMP/archscore"
           set +e
-          "$(go env GOPATH)/bin/archscore" \
-            -root . \
-            -config architecture/archscore.json \
-            > architecture-current.json
+          "$archscore" \
+            -root ../.. \
+            -config ../../architecture/archscore.json \
+            > "$RUNNER_TEMP/architecture-current.json"
           analyze_status=$?
           set -e
           if [[ $analyze_status -ne 0 && $analyze_status -ne 2 ]]; then
             exit "$analyze_status"
           fi
-          "$(go env GOPATH)/bin/archscore" compare \
-            -baseline architecture/baseline.json \
-            -current architecture-current.json \
+          "$archscore" compare \
+            -baseline ../../architecture/baseline.json \
+            -current "$RUNNER_TEMP/architecture-current.json" \
             -fail-on-regression
 
   frontend:
