@@ -31,6 +31,8 @@ jobs:
       - name: Smoke-test browser image
         run: |
           docker run --rm ccplant-browser:test --version
+          docker run --rm --entrypoint fc-match ccplant-browser:test \
+            -f '%{family}\n' ':lang=ja' | grep -F 'Noto Sans CJK JP'
           container=$(docker run -d --read-only --tmpfs /tmp:uid=999,gid=999 \
             -p 127.0.0.1::9222 ccplant-browser:test \
             serve --host 0.0.0.0 --port 9222)

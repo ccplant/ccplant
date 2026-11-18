@@ -4,6 +4,7 @@ FROM debian:bookworm-slim AS download
 
 ARG TARGETARCH
 ARG MOLI_VERSION=1.1.24
+ARG IMAGE_REVISION=1
 ARG MOLI_SHA256_AMD64=09e54e48be914df9596e8b9046cd2e1c67d5911761a09b0445488dd5d39c56d6
 ARG MOLI_SHA256_ARM64=b4d59ad9e6f9b45cabbe6fe923f3dfc35691f191959d950b95c6570adb617326
 
@@ -47,7 +48,9 @@ RUN apt-get update \
       ca-certificates \
       fontconfig \
       fonts-dejavu-core \
+      fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
+    && fc-match -f '%{family}\n' ':lang=ja' | grep -F 'Noto Sans CJK JP' \
     && groupadd --gid 999 browser \
     && useradd --uid 999 --gid 999 --no-create-home --home-dir /nonexistent \
       --shell /usr/sbin/nologin browser
