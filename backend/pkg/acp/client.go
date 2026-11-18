@@ -161,7 +161,7 @@ func (c *Client) Listen(ctx context.Context) error {
 
 // Initialize performs the ACP handshake. Must be called before any other method.
 // For ACP v1 agents that advertise authMethods, this automatically calls Authenticate
-// using env-var credentials (OPENAI_API_KEY or CODEX_API_KEY) when available.
+// using an advertised env-var credential when available.
 func (c *Client) Initialize(ctx context.Context) error {
 	params := InitializeParams{
 		ProtocolVersion: ProtocolVersion,
@@ -201,15 +201,16 @@ func (c *Client) Initialize(ctx context.Context) error {
 }
 
 // pickEnvVarAuthMethod returns the first env-var auth method whose environment
-// variable is present, preferring OPENAI_API_KEY over CODEX_API_KEY.
+// variable is present. The order preserves the existing Codex preference and
+// then includes the Gemini API-key method advertised by Antigravity.
 func pickEnvVarAuthMethod(methods []AuthMethod) string {
-	// Priority order: openai-api-key first, then codex-api-key.
 	priority := []struct {
 		id  string
 		env string
 	}{
 		{"openai-api-key", "OPENAI_API_KEY"},
 		{"codex-api-key", "CODEX_API_KEY"},
+		{"gemini-api-key", "GEMINI_API_KEY"},
 	}
 	available := make(map[string]bool, len(methods))
 	for _, m := range methods {
