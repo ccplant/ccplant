@@ -209,15 +209,22 @@ func (c *SessionController) githubRepositoriesForSession(ctx context.Context, re
 			repositories = append(repositories, "^"+regexp.QuoteMeta(repository.Repository)+"$")
 		}
 	}
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" && c.settingsRepo != nil {
-		exists, err := c.settingsRepo.Exists(ctx, req.TeamID)
+	settingsName := ""
+	switch req.Scope {
+	case entities.ScopeTeam:
+		settingsName = req.TeamID
+	case entities.ScopeUser:
+		settingsName = userID
+	}
+	if settingsName != "" && c.settingsRepo != nil {
+		exists, err := c.settingsRepo.Exists(ctx, settingsName)
 		if err != nil {
-			return nil, fmt.Errorf("check team GitHub repositories: %w", err)
+			return nil, fmt.Errorf("check scoped GitHub repositories: %w", err)
 		}
 		if exists {
-			settings, err := c.settingsRepo.FindByName(ctx, req.TeamID)
+			settings, err := c.settingsRepo.FindByName(ctx, settingsName)
 			if err != nil {
-				return nil, fmt.Errorf("load team GitHub repositories: %w", err)
+				return nil, fmt.Errorf("load scoped GitHub repositories: %w", err)
 			}
 			if settings != nil {
 				repositories = append(repositories, settings.GitHubRepositories()...)
@@ -472,7 +479,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	brokerConfigured := false
 	useBroker := shouldUseGitHubBroker(startReq, repository)
 	var allowedRepositories []string
-	if !useBroker && startReq.Scope == entities.ScopeTeam && repository == "" && (startReq.Params == nil || startReq.Params.GithubToken == "") && c.githubTokenResolver != nil {
+	if !useBroker && (startReq.Scope == entities.ScopeTeam || startReq.Scope == entities.ScopeUser) && repository == "" && (startReq.Params == nil || startReq.Params.GithubToken == "") && c.githubTokenResolver != nil {
 		allowedRepositories, err = c.githubRepositoriesForSession(ctx.Request().Context(), startReq, userID, authzCtx)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -480,8 +487,8 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		useBroker = len(allowedRepositories) > 0
 	}
 	if useBroker && c.githubTokenResolver != nil {
-		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
-			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))
+		if !authzCtx.CanCreateResource(string(startReq.Scope), startReq.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, "user cannot create sessions in the requested scope")
 		}
 		var lease, connectionID string
 		var matched bool
@@ -493,6 +500,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		if dryRun {
 			if repository == "" {
 				matched = len(allowedRepositories) > 0
+				connectionID = preferredConnectionID
+			} else if preferredConnectionID != "" {
+				matched = true
 				connectionID = preferredConnectionID
 			} else {
 				_, connectionID, matched, err = c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(repository))
@@ -940,10 +950,20 @@ func terminalReuseStatus(status string) bool {
 }
 
 func shouldUseGitHubBroker(startReq entities.StartRequest, repository string) bool {
-	if startReq.Scope != entities.ScopeTeam || repository == "" {
+	if repository == "" {
 		return false
 	}
-	return startReq.Params == nil || (startReq.Params.GithubToken == "" && startReq.Params.ConnectionID == "")
+	if startReq.Params != nil && startReq.Params.GithubToken != "" {
+		return false
+	}
+	switch startReq.Scope {
+	case entities.ScopeUser:
+		return true
+	case entities.ScopeTeam:
+		return startReq.Params == nil || startReq.Params.ConnectionID == ""
+	default:
+		return false
+	}
 }
 
 func githubBrokerURL(ctx echo.Context, sessionID, baseURL string) (string, error) {

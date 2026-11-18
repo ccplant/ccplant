@@ -2002,7 +2002,7 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForOrganization(ctx contex
 
 // IssueBrokerLeaseForRepositories grants one session renewable access to the
 // working repository and explicitly configured additional repositories.
-func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx context.Context, sessionID, connectionID, organization, repository string, additional []string) (string, string, bool, error) {
+func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx context.Context, sessionID, requestedConnectionID, organization, repository string, additional []string) (string, string, bool, error) {
 	patterns, err := normalizeRepositoryPatterns(additional)
 	if err != nil {
 		return "", "", true, err
@@ -2011,31 +2011,39 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx contex
 		if len(patterns) == 0 {
 			return "", "", false, nil
 		}
-		if connectionID != "" {
-			connection, _, _, loadErr := c.loadConnection(ctx, connectionID)
+		if requestedConnectionID != "" {
+			connection, _, _, loadErr := c.loadConnection(ctx, requestedConnectionID)
 			if loadErr != nil || !connection.Enabled || connection.GitHubApp == nil || connection.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, connection.ID) {
-				return "", connectionID, false, nil
+				return "", requestedConnectionID, false, nil
 			}
 		}
 		leaseToken := uuid.NewString() + uuid.NewString()
-		lease := githubBrokerLease{SessionID: sessionID, ConnectionID: connectionID, Repositories: prefixedRepositoryPatterns(patterns), ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
+		lease := githubBrokerLease{SessionID: sessionID, ConnectionID: requestedConnectionID, Repositories: prefixedRepositoryPatterns(patterns), ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
 		if err := c.createObject(ctx, brokerLeaseSecretName(leaseToken), githubBrokerLeaseLabel, lease, map[string]string{"agentapi.ccplant.io/session-id-hash": shortHash(sessionID)}); err != nil {
 			return "", "", true, fmt.Errorf("store GitHub broker lease: %w", err)
 		}
-		return leaseToken, connectionID, true, nil
-	}
-	connections, err := c.listConnections(ctx)
-	if err != nil {
-		return "", "", false, err
+		return leaseToken, requestedConnectionID, true, nil
 	}
 	var selected *githubConnection
-	for i := range connections {
-		if connections[i].Enabled && containsOrganization(connections[i].Organizations, organization) {
-			if selected != nil {
-				return "", "", false, errors.New("multiple GitHub connections match the repository organization")
+	if requestedConnectionID != "" {
+		connection, _, _, loadErr := c.loadConnection(ctx, requestedConnectionID)
+		if loadErr != nil || !connection.Enabled {
+			return "", requestedConnectionID, false, nil
+		}
+		selected = &connection
+	} else {
+		connections, listErr := c.listConnections(ctx)
+		if listErr != nil {
+			return "", "", false, listErr
+		}
+		for i := range connections {
+			if connections[i].Enabled && containsOrganization(connections[i].Organizations, organization) {
+				if selected != nil {
+					return "", "", false, errors.New("multiple GitHub connections match the repository organization")
+				}
+				copy := connections[i]
+				selected = &copy
 			}
-			copy := connections[i]
-			selected = &copy
 		}
 	}
 	if selected == nil {

@@ -199,6 +199,12 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, controller.BrokerCredentials(boundCtx))
 	require.Equal(t, http.StatusOK, boundRecorder.Code)
 
+	boundPrimaryLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-bound-primary", connection.ID, "acme", "acme/payments", nil)
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Equal(t, connection.ID, connectionID)
+	require.NotEmpty(t, boundPrimaryLease)
+
 	dynamicDeniedReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-dynamic/github-credentials?repository=acme%2Fsecret", nil)
 	dynamicDeniedReq.Header.Set("Authorization", "Bearer "+dynamicLease)
 	dynamicDeniedCtx := e.NewContext(dynamicDeniedReq, httptest.NewRecorder())

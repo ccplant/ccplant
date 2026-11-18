@@ -170,7 +170,7 @@ type Settings struct {
 	envVars                 map[string]string // Custom environment variables
 	preferredTeamID         string            // "org/team-slug" format; if set, only this team's settings are used
 	githubAppInstallationID string            // GitHub App installation ID used for team sessions
-	githubRepositories      []string          // Additional repositories available to team sessions through the GitHub App broker
+	githubRepositories      []string          // Additional repositories available to scoped sessions through the GitHub App broker
 	slackUserID             string            // Slack DM notification user ID
 	notificationChannels    []string          // Active notification channels (e.g. "web", "slack")
 	externalSessionManagers []ExternalSessionManagerEntry
@@ -496,7 +496,7 @@ func (s *Settings) SetEnabledTeamSessionProfileIDs(ids []string) {
 	s.updatedAt = time.Now()
 }
 
-// GitHubRepositories returns repositories that team sessions may access through the GitHub App broker.
+// GitHubRepositories returns repositories that sessions in this settings scope may access through the GitHub App broker.
 func (s *Settings) GitHubRepositories() []string {
 	return append([]string(nil), s.githubRepositories...)
 }
