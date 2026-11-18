@@ -146,7 +146,9 @@ jobs:
 
   native:
     needs: changes
-    if: needs.changes.outputs.native == 'true'
+    # Release builds cover macOS packaging for every tag. Keep the expensive
+    # platform build off pull requests and use it only as a post-merge check.
+    if: github.event_name == 'push' && needs.changes.outputs.native == 'true'
     # macOS 14 GitHub-hosted runners were retired on 2026-11-02.
     runs-on: macos-15
     steps:
@@ -168,7 +170,10 @@ jobs:
         working-directory: native
       - run: bun run sidecar:build
         working-directory: native
-      - run: bun run tauri build --no-bundle
+      # A debug build is sufficient for the post-merge compile check and avoids
+      # the release profile's LTO/codegen cost. Releases still use the optimized
+      # profile below in release.yml.
+      - run: bun run tauri build --debug --no-bundle
         working-directory: native
 
   charts:
