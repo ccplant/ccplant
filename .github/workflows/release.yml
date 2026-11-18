@@ -53,8 +53,7 @@ jobs:
 
   binaries:
     needs: [metadata, release-draft]
-    environment: macos-signing
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -62,15 +61,9 @@ jobs:
           - goos: linux
             goarch: amd64
             archive: ccplant_Linux_x86_64.tar.gz
-            runner: ubuntu-latest
           - goos: linux
             goarch: arm64
             archive: ccplant_Linux_arm64.tar.gz
-            runner: ubuntu-latest
-          - goos: darwin
-            goarch: arm64
-            archive: ccplant_Darwin_arm64.tar.gz
-            runner: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -95,44 +88,6 @@ jobs:
             -o ../dist/ccplant \
             ./main.go
         working-directory: backend
-      - name: Sign and notarize macOS binary
-        if: matrix.goos == 'darwin'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: |
-          set -euo pipefail
-          certificate_path="${RUNNER_TEMP}/developer-id.p12"
-          api_key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY}.p8"
-          keychain_path="${RUNNER_TEMP}/ccplant-signing.keychain-db"
-          notary_archive="${RUNNER_TEMP}/ccplant-notary.zip"
-          keychain_password="$(openssl rand -base64 24)"
-
-          printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A -out "$certificate_path"
-          printf '%s' "$APPLE_API_PRIVATE_KEY" | openssl base64 -d -A -out "$api_key_path"
-          chmod 600 "$certificate_path" "$api_key_path"
-
-          security create-keychain -p "$keychain_password" "$keychain_path"
-          trap 'security delete-keychain "$keychain_path"' EXIT
-          security set-keychain-settings -lut 21600 "$keychain_path"
-          security unlock-keychain -p "$keychain_password" "$keychain_path"
-          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -k "$keychain_path"
-          security list-keychains -d user -s "$keychain_path"
-          signing_identity="$(security find-identity -v -p codesigning "$keychain_path" | awk '/Developer ID Application/ { print $2; exit }')"
-          test -n "$signing_identity"
-
-          codesign --force --options runtime --timestamp --keychain "$keychain_path" --sign "$signing_identity" dist/ccplant
-          codesign --verify --strict --verbose=2 dist/ccplant
-          ditto -c -k --keepParent dist/ccplant "$notary_archive"
-          xcrun notarytool submit "$notary_archive" \
-            --key "$api_key_path" \
-            --key-id "$APPLE_API_KEY" \
-            --issuer "$APPLE_API_ISSUER" \
-            --wait
       - name: Create release archive
         env:
           ARCHIVE: ${{ matrix.archive }}
@@ -147,7 +102,7 @@ jobs:
           retention-days: 1
 
   publish-binaries:
-    needs: [metadata, binaries]
+    needs: [metadata, binaries, macos-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -176,8 +131,48 @@ jobs:
           TAG: ${{ needs.metadata.outputs.tag }}
         run: gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
 
-  native-app:
+  macos-binaries:
     needs: [metadata, release-draft]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Generate source files
+        run: go generate ./...
+        working-directory: backend
+      - name: Cross-build Darwin CLI and native sidecar
+        env:
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          UPDATE_PUBLIC_KEY: ${{ secrets.CCPLANT_UPDATE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${UPDATE_PUBLIC_KEY}"
+          mkdir -p ../dist ../native/src-tauri/binaries
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
+            -trimpath \
+            -ldflags="-s -w -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Version=${RELEASE_TAG} -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Distribution=github-release -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.UpdatePublicKey=${UPDATE_PUBLIC_KEY}" \
+            -o ../dist/ccplant \
+            ./main.go
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
+            -trimpath \
+            -ldflags="-s -w -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Distribution=tauri-sidecar" \
+            -o ../native/src-tauri/binaries/ccplant-aarch64-apple-darwin \
+            ./main.go
+        working-directory: backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-unsigned
+          path: |
+            dist/ccplant
+            native/src-tauri/binaries/ccplant-aarch64-apple-darwin
+          if-no-files-found: error
+          retention-days: 1
+
+  macos-release:
+    needs: [metadata, release-draft, macos-binaries]
     environment: macos-signing
     # macOS 14 GitHub-hosted runners were retired on 2026-11-02.
     runs-on: macos-15
@@ -185,10 +180,12 @@ jobs:
       TARGET: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/download-artifact@v4
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          name: macos-unsigned
+          path: .
+      - name: Restore executable permissions
+        run: chmod +x dist/ccplant native/src-tauri/binaries/ccplant-aarch64-apple-darwin
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.5
@@ -244,9 +241,6 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: bun scripts/set-version.ts "$VERSION"
         working-directory: native
-      - name: Build bundled agentapi-proxy
-        run: bun scripts/build-sidecar.ts "$TARGET"
-        working-directory: native
       - id: release
         name: Find draft GitHub release
         env:
@@ -287,6 +281,50 @@ jobs:
           projectPath: native
           releaseId: ${{ steps.release.outputs.id }}
           args: --target ${{ env.TARGET }} --bundles app,dmg
+      - name: Sign and notarize macOS CLI
+        if: steps.apple.outputs.signed == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          certificate_path="${RUNNER_TEMP}/developer-id.p12"
+          keychain_path="${RUNNER_TEMP}/ccplant-signing.keychain-db"
+          notary_archive="${RUNNER_TEMP}/ccplant-notary.zip"
+          keychain_password="$(openssl rand -base64 24)"
+
+          printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A -out "$certificate_path"
+          chmod 600 "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          trap 'security delete-keychain "$keychain_path"' EXIT
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -k "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          signing_identity="$(security find-identity -v -p codesigning "$keychain_path" | awk '/Developer ID Application/ { print $2; exit }')"
+          test -n "$signing_identity"
+
+          codesign --force --options runtime --timestamp --keychain "$keychain_path" --sign "$signing_identity" dist/ccplant
+          codesign --verify --strict --verbose=2 dist/ccplant
+          ditto -c -k --keepParent dist/ccplant "$notary_archive"
+          xcrun notarytool submit "$notary_archive" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+      - name: Create Darwin CLI release archive
+        run: |
+          cp backend/CHANGELOG.md backend/LICENSE backend/README.md dist/
+          tar -czf ccplant_Darwin_arm64.tar.gz -C dist ccplant CHANGELOG.md LICENSE README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-darwin-arm64
+          path: ccplant_Darwin_arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 1
 
   images:
     needs: [metadata, agent-image]
@@ -457,7 +495,7 @@ jobs:
         run: helm push "$(find dist -maxdepth 1 -name "${CHART_NAME}-*.tgz" -print -quit)" oci://ghcr.io/ccplant/charts
 
   release-complete:
-    needs: [publish-binaries, images, charts, native-app, browser-image]
+    needs: [publish-binaries, images, charts, macos-release, browser-image]
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
