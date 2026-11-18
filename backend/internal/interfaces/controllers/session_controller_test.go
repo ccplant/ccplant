@@ -211,6 +211,28 @@ func TestStartSessionFallsBackToBuiltInGitHubTokenForUnlinkedOrganizationConnect
 	require.Empty(t, creator.request.Params.ConnectionID)
 }
 
+func TestStartPersonalSessionWithoutRepositoryUsesBuiltInGitHubToken(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "alice", CanCreate: true, CanRead: true},
+	})
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "built-in-token"})
+
+	creator := &previewSessionCreator{}
+	controller := NewSessionController(nil, creator, WithGitHubTokenResolver(githubRoutingResolver{}))
+
+	require.NoError(t, controller.StartSession(ctx))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "built-in-token", creator.request.Params.GithubToken)
+	require.Empty(t, creator.request.Params.ConnectionID)
+	require.NotContains(t, creator.request.Environment, "AGENTAPI_GITHUB_BROKER_TOKEN")
+}
+
 func TestStartPersonalSessionUsesOrganizationBrokerBeforeBuiltInGitHubToken(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","tags":{"repository":"acme/repo"}}`))
