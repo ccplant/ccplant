@@ -125,7 +125,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, controller.saveGitHubAppPrivateKey(context.Background(), connection, pemValue, resourceVersion))
 
-	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-1", "acme", "acme/payments", []string{"acme/shared", "acme/generated-[a-z]+"})
+	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-1", "", "acme", "acme/payments", []string{"acme/shared", "acme/generated-[a-z]+"})
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Equal(t, connection.ID, connectionID)
@@ -167,7 +167,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.Equal(t, 3, installationCalls)
 	require.Equal(t, 3, tokenCalls)
 
-	dynamicLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-dynamic", "", "", []string{"acme/shared"})
+	dynamicLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-dynamic", "", "", "", []string{"acme/shared"})
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Empty(t, connectionID)
@@ -182,6 +182,28 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	dynamicCtx.SetParamValues("session-dynamic")
 	require.NoError(t, controller.BrokerCredentials(dynamicCtx))
 	require.Equal(t, http.StatusOK, dynamicRecorder.Code)
+
+	boundLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-bound", connection.ID, "", "", []string{"acme/shared"})
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Equal(t, connection.ID, connectionID)
+	require.NotEmpty(t, boundLease)
+
+	boundReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-bound/github-credentials?repository=acme%2Fshared", nil)
+	boundReq.Header.Set("Authorization", "Bearer "+boundLease)
+	boundRecorder := httptest.NewRecorder()
+	boundCtx := e.NewContext(boundReq, boundRecorder)
+	boundCtx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	boundCtx.SetParamNames("sessionId")
+	boundCtx.SetParamValues("session-bound")
+	require.NoError(t, controller.BrokerCredentials(boundCtx))
+	require.Equal(t, http.StatusOK, boundRecorder.Code)
+
+	boundPrimaryLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-bound-primary", connection.ID, "acme", "acme/payments", nil)
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Equal(t, connection.ID, connectionID)
+	require.NotEmpty(t, boundPrimaryLease)
 
 	dynamicDeniedReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-dynamic/github-credentials?repository=acme%2Fsecret", nil)
 	dynamicDeniedReq.Header.Set("Authorization", "Bearer "+dynamicLease)
@@ -204,7 +226,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.ErrorAs(t, err, &deniedHTTPError)
 	require.Equal(t, http.StatusForbidden, deniedHTTPError.Code)
 
-	broadLease, _, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-2", "acme", "acme/payments", []string{".*"})
+	broadLease, _, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-2", "", "acme", "acme/payments", []string{".*"})
 	require.NoError(t, err)
 	require.True(t, matched)
 	otherOrgReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-2/github-credentials?repository=other%2Fsecret", nil)

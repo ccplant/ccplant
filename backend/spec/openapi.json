@@ -10011,7 +10011,7 @@
             "maxItems": 100,
             "items": { "type": "string", "maxLength": 512 },
             "uniqueItems": true,
-            "description": "RE2 expressions that team sessions may clone through the GitHub App broker. Each expression is matched case-insensitively against the full owner/repository name."
+            "description": "RE2 expressions that sessions in this settings scope may clone through the GitHub App broker. Each expression is matched case-insensitively against the full owner/repository name."
           },
           "slack_user_id": {
             "type": "string",
@@ -10231,7 +10231,7 @@
             "type": "array",
             "maxItems": 100,
             "items": { "type": "string" },
-            "description": "RE2 repository expressions available through the team GitHub App broker."
+            "description": "RE2 repository expressions available through the GitHub App broker for this settings scope."
           },
           "slack_user_id": {
             "type": "string",

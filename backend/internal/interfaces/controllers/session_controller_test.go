@@ -53,6 +53,22 @@ type missingSettingsRepo struct {
 
 func (missingSettingsRepo) Exists(context.Context, string) (bool, error) { return false, nil }
 
+type githubSettingsRepo struct {
+	repositories.SettingsRepository
+	settings *entities.Settings
+}
+
+func (r githubSettingsRepo) Exists(_ context.Context, name string) (bool, error) {
+	return r.settings != nil && r.settings.Name() == name, nil
+}
+
+func (r githubSettingsRepo) FindByName(_ context.Context, name string) (*entities.Settings, error) {
+	if r.settings == nil || r.settings.Name() != name {
+		return nil, errors.New("settings not found")
+	}
+	return r.settings, nil
+}
+
 func (r githubRoutingProfileRepo) Get(context.Context, string) (*entities.SessionProfile, error) {
 	return r.profile, nil
 }
@@ -69,7 +85,7 @@ func (s githubConnectionURLResolverStub) IssueBrokerLeaseForOrganization(context
 	return "", "", false, nil
 }
 
-func (s githubConnectionURLResolverStub) IssueBrokerLeaseForRepositories(context.Context, string, string, string, []string) (string, string, bool, error) {
+func (s githubConnectionURLResolverStub) IssueBrokerLeaseForRepositories(context.Context, string, string, string, string, []string) (string, string, bool, error) {
 	return "", "", false, nil
 }
 
@@ -195,7 +211,29 @@ func TestStartSessionFallsBackToBuiltInGitHubTokenForUnlinkedOrganizationConnect
 	require.Empty(t, creator.request.Params.ConnectionID)
 }
 
-func TestStartSessionUsesLinkedOrganizationConnectionBeforeBuiltInGitHubToken(t *testing.T) {
+func TestStartPersonalSessionWithoutRepositoryUsesBuiltInGitHubToken(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "alice", CanCreate: true, CanRead: true},
+	})
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "built-in-token"})
+
+	creator := &previewSessionCreator{}
+	controller := NewSessionController(nil, creator, WithGitHubTokenResolver(githubRoutingResolver{}))
+
+	require.NoError(t, controller.StartSession(ctx))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "built-in-token", creator.request.Params.GithubToken)
+	require.Empty(t, creator.request.Params.ConnectionID)
+	require.NotContains(t, creator.request.Environment, "AGENTAPI_GITHUB_BROKER_TOKEN")
+}
+
+func TestStartPersonalSessionUsesOrganizationBrokerBeforeBuiltInGitHubToken(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","tags":{"repository":"acme/repo"}}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -216,8 +254,9 @@ func TestStartSessionUsesLinkedOrganizationConnectionBeforeBuiltInGitHubToken(t 
 
 	require.NoError(t, controller.StartSession(ctx))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Equal(t, "connection-token", creator.request.Params.GithubToken)
-	require.Equal(t, "organization-connection", creator.request.Params.ConnectionID)
+	require.Nil(t, creator.request.Params)
+	require.Equal(t, "<generated-at-apply>", creator.request.Environment["AGENTAPI_GITHUB_BROKER_TOKEN"])
+	require.Equal(t, "organization-connection", creator.request.Environment["AGENTAPI_GITHUB_CONNECTION_ID"])
 	require.Equal(t, "https://github.com", creator.request.Environment["GITHUB_URL"])
 	require.Equal(t, "https://api.github.com", creator.request.Environment["GITHUB_API"])
 	require.Equal(t, "github.com", creator.request.Environment["GH_HOST"])
@@ -425,6 +464,34 @@ func TestGitHubRepositoriesForSessionAllowsTeamWithoutSettings(t *testing.T) {
 	require.Equal(t, []string{"^acme/shared$"}, repositories)
 }
 
+func TestStartPersonalSessionWithoutRepositoryUsesConnectionBroker(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","params":{"connection_id":"connection-1"}}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser("alice", entities.UserTypeRegular, "alice"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "alice", CanRead: true, CanCreate: true},
+	})
+	settings := entities.NewSettings("alice")
+	settings.SetGitHubRepositories([]string{"^acme/shared$"})
+	creator := &previewSessionCreator{}
+	controller := NewSessionController(nil, creator, WithGitHubTokenResolver(githubConnectionURLResolverStub{
+		baseURL: "https://github.com", apiURL: "https://api.github.com",
+	}))
+	controller.settingsRepo = githubSettingsRepo{settings: settings}
+
+	require.NoError(t, controller.StartSession(ctx))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, entities.ScopeUser, creator.request.Scope)
+	require.Empty(t, sessionRepository(creator.request))
+	require.Equal(t, "connection-1", creator.request.Params.ConnectionID)
+	require.NotEmpty(t, creator.request.Environment["AGENTAPI_GITHUB_BROKER_URL"])
+	require.Equal(t, "<generated-at-apply>", creator.request.Environment["AGENTAPI_GITHUB_BROKER_TOKEN"])
+	require.Equal(t, "connection-1", creator.request.Environment["AGENTAPI_GITHUB_CONNECTION_ID"])
+}
+
 func TestShouldUseGitHubBrokerPreservesExplicitCredentials(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -435,7 +502,9 @@ func TestShouldUseGitHubBrokerPreservesExplicitCredentials(t *testing.T) {
 		{name: "team repository uses broker", input: entities.StartRequest{Scope: entities.ScopeTeam, Params: &entities.SessionParams{}}, repo: "acme/repo", want: true},
 		{name: "legacy explicit token wins", input: entities.StartRequest{Scope: entities.ScopeTeam, Params: &entities.SessionParams{GithubToken: "legacy-token"}}, repo: "acme/repo", want: false},
 		{name: "explicit connection wins", input: entities.StartRequest{Scope: entities.ScopeTeam, Params: &entities.SessionParams{ConnectionID: "connection-1"}}, repo: "acme/repo", want: false},
-		{name: "user session does not use broker", input: entities.StartRequest{Scope: entities.ScopeUser, Params: &entities.SessionParams{}}, repo: "acme/repo", want: false},
+		{name: "user repository uses broker", input: entities.StartRequest{Scope: entities.ScopeUser, Params: &entities.SessionParams{}}, repo: "acme/repo", want: true},
+		{name: "user explicit connection uses broker", input: entities.StartRequest{Scope: entities.ScopeUser, Params: &entities.SessionParams{ConnectionID: "connection-1"}}, repo: "acme/repo", want: true},
+		{name: "user explicit token wins", input: entities.StartRequest{Scope: entities.ScopeUser, Params: &entities.SessionParams{GithubToken: "legacy-token"}}, repo: "acme/repo", want: false},
 		{name: "repository is required", input: entities.StartRequest{Scope: entities.ScopeTeam, Params: &entities.SessionParams{}}, want: false},
 	}
 	for _, tt := range tests {
