@@ -10,7 +10,7 @@ import (
 func TestResolveSkillsAgent(t *testing.T) {
 	tests := map[string]string{
 		"claude-acp": "claude-code", "claude-legacy": "claude-code",
-		"codex-acp": "codex", "pi": "", "cursor": "", "antigravity": "",
+		"codex-acp": "codex", "pi": "", "cursor": "", "antigravity": "antigravity-cli",
 	}
 	for agentType, want := range tests {
 		got, err := resolveSkillsAgent(agentType)

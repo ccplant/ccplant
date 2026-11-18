@@ -44,6 +44,9 @@ var codexRequirementsPath = nativeRuntimePath("codex", "requirements.toml", "/et
 var acpHistoryPath = nativeRuntimePath("acp-posts", "history.jsonl", "/opt/acp-posts/history.jsonl")
 var piAgentInstructionsPath = filepath.Join(runtimeHome, ".pi", "agent", "AGENTS.md")
 var piSettingsPath = filepath.Join(runtimeHome, ".pi", "agent", "settings.json")
+var antigravityAgentInstructionsPath = filepath.Join(runtimeHome, ".gemini", "AGENTS.md")
+var antigravitySettingsPath = filepath.Join(runtimeHome, ".gemini", "antigravity-cli", "settings.json")
+var antigravityMCPConfigPath = filepath.Join(runtimeHome, ".gemini", "config", "mcp_config.json")
 
 const sessionRestoreMarkerPrefix = "agentapi-session-restore-complete-"
 const sessionProvisionAbortedMarkerPrefix = "agentapi-session-provision-aborted-"
@@ -458,13 +461,19 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// ── Step 4: fetch memory from proxy → inject into CLAUDE.md ──────────────
 	s.setPhase("provision:fetch-memory")
 
-	// ── Step 4.5: expose managed instructions and MCP servers to Pi ──────────
+	// ── Step 4.5: expose managed instructions and MCP servers to agents ──────
 	s.setPhase("provision:write-agent-files")
 	if err := writePiAgentInstructions(claudeMDPath, piAgentInstructionsPath); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to write Pi AGENTS.md: %v", err)
 	}
 	if err := writePiSettings(piSettingsPath, piMCPServers(settings)); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to write Pi settings: %v", err)
+	}
+	if err := copyAgentInstructions(claudeMDPath, antigravityAgentInstructionsPath, "Antigravity"); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write Antigravity AGENTS.md: %v", err)
+	}
+	if err := writeAntigravityMCPConfig(antigravityMCPConfigPath, piMCPServers(settings)); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write Antigravity MCP config: %v", err)
 	}
 
 	// ── Step 5: cd into cloned repo ───────────────────────────────────────────
@@ -481,6 +490,11 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 				log.Printf("[PROVISIONER] Warning: failed to mark native workspace trusted: %v", err)
 			}
 		}
+	}
+	if cwd, err := os.Getwd(); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to resolve Antigravity workspace: %v", err)
+	} else if err := writeAntigravitySettings(antigravitySettingsPath, cwd); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write Antigravity settings: %v", err)
 	}
 
 	// ── Step 5.5: run pre-script ─────────────────────────────────────────────
@@ -1589,13 +1603,15 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		}
 
 	case "antigravity":
-		// Start the bridge around Antigravity CLI's native ACP v1 server.
+		// Start the bridge around Antigravity CLI's native ACP v1 server. The
+		// session container is the permission boundary, so both bridge and CLI
+		// approval prompts are disabled for unattended operation.
 		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--auto-approve",
 			"--",
-			"agy", "acp",
+			"agy", "--dangerously-skip-permissions", "acp",
 		}
 
 	default:
@@ -1625,6 +1641,10 @@ func ensurePiEnv(envMap map[string]string) {
 }
 
 func writePiAgentInstructions(sourcePath, destPath string) error {
+	return copyAgentInstructions(sourcePath, destPath, "Pi")
+}
+
+func copyAgentInstructions(sourcePath, destPath, agentName string) error {
 	if strings.TrimSpace(sourcePath) == "" || strings.TrimSpace(destPath) == "" {
 		return fmt.Errorf("source and destination paths must be set")
 	}
@@ -1636,12 +1656,73 @@ func writePiAgentInstructions(sourcePath, destPath string) error {
 		return fmt.Errorf("read source instructions: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-		return fmt.Errorf("create Pi agent dir: %w", err)
+		return fmt.Errorf("create %s agent dir: %w", agentName, err)
 	}
 	if err := os.WriteFile(destPath, content, 0o644); err != nil {
-		return fmt.Errorf("write Pi instructions: %w", err)
+		return fmt.Errorf("write %s instructions: %w", agentName, err)
 	}
-	log.Printf("[PROVISIONER] Wrote Pi instructions to %s", destPath)
+	log.Printf("[PROVISIONER] Wrote %s instructions to %s", agentName, destPath)
+	return nil
+}
+
+func writeAntigravitySettings(settingsPath, workspace string) error {
+	if strings.TrimSpace(settingsPath) == "" || strings.TrimSpace(workspace) == "" {
+		return fmt.Errorf("settings path and workspace must be set")
+	}
+	settingsJSON := make(map[string]interface{})
+	if data, err := os.ReadFile(settingsPath); err == nil && len(bytes.TrimSpace(data)) > 0 {
+		if err := json.Unmarshal(data, &settingsJSON); err != nil {
+			return fmt.Errorf("parse existing Antigravity settings: %w", err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read existing Antigravity settings: %w", err)
+	}
+	settingsJSON["enableTerminalSandbox"] = false
+	settingsJSON["toolPermission"] = "always-proceed"
+	settingsJSON["trustedWorkspaces"] = []string{workspace}
+	return writeJSONFile(settingsPath, settingsJSON, "Antigravity settings")
+}
+
+func writeAntigravityMCPConfig(configPath string, mcpServers map[string]interface{}) error {
+	if strings.TrimSpace(configPath) == "" {
+		return fmt.Errorf("MCP config path must be set")
+	}
+	servers := make(map[string]interface{}, len(mcpServers))
+	for name, raw := range mcpServers {
+		config, ok := raw.(map[string]interface{})
+		if !ok {
+			servers[name] = raw
+			continue
+		}
+		normalized := make(map[string]interface{}, len(config))
+		for key, value := range config {
+			if key != "type" {
+				normalized[key] = value
+			}
+		}
+		if _, exists := normalized["serverUrl"]; !exists {
+			if remoteURL, ok := normalized["url"]; ok {
+				normalized["serverUrl"] = remoteURL
+				delete(normalized, "url")
+			}
+		}
+		servers[name] = normalized
+	}
+	return writeJSONFile(configPath, map[string]interface{}{"mcpServers": servers}, "Antigravity MCP config")
+}
+
+func writeJSONFile(path string, value interface{}, label string) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", label, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create %s dir: %w", label, err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", label, err)
+	}
+	log.Printf("[PROVISIONER] Wrote %s to %s", label, path)
 	return nil
 }
 
