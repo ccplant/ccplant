@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 const nativeDir = resolve(import.meta.dir, "..");
@@ -11,6 +11,17 @@ const goTarget = targetToGo(target);
 const output = join(outputDir, `ccplant-${target}`);
 
 await mkdir(outputDir, { recursive: true });
+
+if (process.env.CCPLANT_USE_PREBUILT_SIDECAR === "1") {
+  try {
+    const sidecar = await stat(output);
+    if (!sidecar.isFile()) throw new Error("not a file");
+  } catch {
+    throw new Error(`Prebuilt sidecar not found: ${output}`);
+  }
+  console.log(`Using prebuilt ${output}`);
+  process.exit(0);
+}
 
 const command = Bun.spawn(
   ["go", "build", "-trimpath", "-ldflags=-s -w -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Distribution=tauri-sidecar", "-o", output, "./main.go"],
