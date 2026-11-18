@@ -36,8 +36,8 @@ const getAgentTypeLabel = (agentType: AgentApiType): string => {
       return 'Pi'
     case 'cursor':
       return 'Cursor ACP'
-    case 'antigravity-acp':
-      return 'Antigravity ACP'
+    case 'antigravity':
+      return 'Antigravity'
     default:
       return 'Claude ACP'
   }
@@ -1023,7 +1023,7 @@ export default function NewSessionPage() {
                         { value: 'codex-acp', label: 'Codex ACP', description: 'agent_type=codex-acp を送信' },
                         { value: 'pi', label: 'Pi', description: 'agent_type=pi を送信' },
                         { value: 'cursor', label: 'Cursor ACP', description: 'agent_type=cursor を送信' },
-                        { value: 'antigravity-acp', label: 'Antigravity ACP', description: 'agent_type=antigravity-acp を送信' },
+                        { value: 'antigravity', label: 'Antigravity', description: 'agent_type=antigravity を送信' },
                       ] as { value: AgentApiType; label: string; description: string }[]).map(({ value, label, description }) => (
                         <label key={value} className="flex items-start cursor-pointer group">
                           <input

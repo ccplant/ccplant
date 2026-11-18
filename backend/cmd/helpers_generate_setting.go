@@ -604,7 +604,7 @@ func buildStartupConfig(agentType string, env map[string]string) sessionsettings
 			Command: []string{proxyBinary},
 			Args:    []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"},
 		}
-	case "antigravity-acp":
+	case "antigravity":
 		// Antigravity CLI provides a native ACP v1 server over stdio.
 		// https://antigravity.google/docs/cli/acp/
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- agy acp]")

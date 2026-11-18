@@ -71,7 +71,7 @@ const DEFAULT_MODEL_TARGETS = [
   { value: 'claude:anthropic_compatible', label: 'Claude / Anthropic 互換 API' },
 ] as const satisfies ReadonlyArray<{ value: DefaultModelTarget; label: string }>
 
-const SUPPORTED_AGENT_TYPES = new Set(['auto', 'claude-legacy', 'claude-acp', 'codex-acp', 'pi', 'cursor', 'antigravity-acp'])
+const SUPPORTED_AGENT_TYPES = new Set(['auto', 'claude-legacy', 'claude-acp', 'codex-acp', 'pi', 'cursor', 'antigravity'])
 
 const normalizeAgentType = (value?: string): string => {
   return value && SUPPORTED_AGENT_TYPES.has(value) ? value : ''
@@ -797,7 +797,7 @@ export default function SessionProfileEditor({
                         { value: 'codex-acp', label: 'Codex ACP', description: 'Codex を使用します' },
                         { value: 'pi', label: 'Pi', description: '登録した互換 API に接続する Pi を使用します' },
                         { value: 'cursor', label: 'Cursor ACP', description: 'Cursor を使用します' },
-                        { value: 'antigravity-acp', label: 'Antigravity ACP', description: 'Google Antigravity を使用します' },
+                        { value: 'antigravity', label: 'Antigravity', description: 'Google Antigravity を使用します' },
                       ]).map(({ value: v, label, description }) => (
                         <label key={v} className="flex items-start cursor-pointer group">
                           <input

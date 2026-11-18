@@ -135,7 +135,7 @@ func TestBuildAgentCommandAntigravity(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
 
 	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
-		Session: sessionsettings.SessionMeta{AgentType: "antigravity-acp"},
+		Session: sessionsettings.SessionMeta{AgentType: "antigravity"},
 	}, map[string]string{})
 
 	if cmd != "ccplant" {

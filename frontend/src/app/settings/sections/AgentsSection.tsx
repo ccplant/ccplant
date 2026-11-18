@@ -10,7 +10,7 @@ const agentOptions = [
   { value: 'codex-acp', label: 'Codex ACP' },
   { value: 'pi', label: 'Pi' },
   { value: 'cursor', label: 'Cursor ACP' },
-  { value: 'antigravity-acp', label: 'Antigravity ACP' },
+  { value: 'antigravity', label: 'Antigravity' },
 ]
 
 export function AgentsSection() {

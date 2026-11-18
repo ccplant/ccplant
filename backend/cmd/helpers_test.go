@@ -39,7 +39,7 @@ func TestBuildStartupConfigCursor(t *testing.T) {
 }
 
 func TestBuildStartupConfigAntigravity(t *testing.T) {
-	config := buildStartupConfig("antigravity-acp", nil)
+	config := buildStartupConfig("antigravity", nil)
 
 	assert.Equal(t, []string{"ccplant"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--", "agy", "acp"}, config.Args)

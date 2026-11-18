@@ -62,8 +62,8 @@ func TestIsACPAgentTypeIncludesPi(t *testing.T) {
 }
 
 func TestIsACPAgentTypeIncludesAntigravity(t *testing.T) {
-	if !isACPAgentType("antigravity-acp") {
-		t.Fatal("expected antigravity-acp to use ACP transport")
+	if !isACPAgentType("antigravity") {
+		t.Fatal("expected antigravity to use ACP transport")
 	}
 }
 
@@ -254,7 +254,7 @@ func TestSupportedAgentTypeOrDefault(t *testing.T) {
 		{name: "codex acp", agentType: "codex-acp", want: "codex-acp"},
 		{name: "pi ollama", agentType: "pi", want: "pi"},
 		{name: "cursor", agentType: "cursor", want: "cursor"},
-		{name: "antigravity", agentType: "antigravity-acp", want: "antigravity-acp"},
+		{name: "antigravity", agentType: "antigravity", want: "antigravity"},
 		{name: "unknown", agentType: "unknown-agent", want: ""},
 	}
 
