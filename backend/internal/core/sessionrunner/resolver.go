@@ -34,7 +34,7 @@ type ResolverStore interface {
 }
 
 type ManagerLiveness interface {
-	IsManagerConnected(context.Context, string) (bool, error)
+	IsManagerSchedulable(context.Context, string) (bool, error)
 }
 
 // ResolutionTrace explains the scheduling decision made by ResolveWithTrace.
@@ -362,7 +362,7 @@ func (r *Resolver) managerAvailable(ctx context.Context, manager *Manager) (bool
 		return false, nil
 	}
 	if r.liveness != nil {
-		return r.liveness.IsManagerConnected(ctx, manager.ID)
+		return r.liveness.IsManagerSchedulable(ctx, manager.ID)
 	}
 	return ManagerAvailable(manager, r.heartbeatTTL, r.now()), nil
 }

@@ -40,6 +40,8 @@ type ResponseFrame struct {
 type Store interface {
 	TouchManager(ctx context.Context, managerID, instanceID string) error
 	IsManagerConnected(ctx context.Context, managerID string) (bool, error)
+	RecordManagerHeartbeat(ctx context.Context, managerID string) error
+	IsManagerSchedulable(ctx context.Context, managerID string) (bool, error)
 	EnqueueCommand(ctx context.Context, managerID string, command Command) (string, error)
 	ReadCommands(ctx context.Context, managerID, after string, wait time.Duration, count int64) ([]Command, error)
 	AckCommand(ctx context.Context, managerID, streamID string) error

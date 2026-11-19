@@ -27,6 +27,10 @@ func (s *runtimeControllerStore) TouchManager(_ context.Context, id, _ string) e
 func (s *runtimeControllerStore) IsManagerConnected(context.Context, string) (bool, error) {
 	return true, nil
 }
+func (s *runtimeControllerStore) RecordManagerHeartbeat(context.Context, string) error { return nil }
+func (s *runtimeControllerStore) IsManagerSchedulable(context.Context, string) (bool, error) {
+	return true, nil
+}
 func (s *runtimeControllerStore) EnqueueCommand(context.Context, string, core.Command) (string, error) {
 	return "1-0", nil
 }
