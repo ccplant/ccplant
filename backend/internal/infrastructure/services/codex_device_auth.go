@@ -42,7 +42,7 @@ func codexDeviceAuthResourceName(attemptID string) string {
 // this injection the container fails to start with "exec: ccplant:
 // executable file not found in $PATH". Legacy single-image deployments keep
 // running the binary directly from their image.
-func (m *KubernetesSessionManager) configureCodexDeviceAuthCLI(pod *corev1.Pod) {
+func (m *KubernetesSessionManager) configureCodexDeviceAuthCLI(pod *corev1.Pod, provider string) {
 	if m.k8sConfig == nil || len(pod.Spec.Containers) == 0 {
 		return
 	}
@@ -65,7 +65,11 @@ func (m *KubernetesSessionManager) configureCodexDeviceAuthCLI(pod *corev1.Pod) 
 		VolumeMounts:    []corev1.VolumeMount{{Name: "ccplant-cli", MountPath: "/ccplant-cli"}},
 	})
 	worker := &pod.Spec.Containers[0]
-	worker.Command = []string{sessionCLIPath, "codex-auth-worker", "--request-file", "/run/agentapi/request.json"}
+	workerCommand := "codex-auth-worker"
+	if provider == "antigravity" {
+		workerCommand = "antigravity-auth-worker"
+	}
+	worker.Command = []string{sessionCLIPath, workerCommand, "--request-file", "/run/agentapi/request.json"}
 	worker.VolumeMounts = append(worker.VolumeMounts, corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true})
 }
 
@@ -154,7 +158,12 @@ func (m *KubernetesSessionManager) StartCodexDeviceAuth(ctx context.Context, req
 			}},
 		},
 	}
-	m.configureCodexDeviceAuthCLI(pod)
+	if req.Provider == "antigravity" {
+		pod.Spec.Containers[0].Name = "antigravity-auth"
+		pod.Spec.Containers[0].Command = []string{"ccplant", "antigravity-auth-worker", "--request-file", "/run/agentapi/request.json"}
+		pod.Spec.Containers[0].VolumeMounts[1] = corev1.VolumeMount{Name: "home", MountPath: "/home/agentapi/.gemini"}
+	}
+	m.configureCodexDeviceAuthCLI(pod, req.Provider)
 	log.Printf("[CODEX_AUTH_K8S] Creating Pod for attempt %s resource=%s image=%q cli_image=%q deadline_seconds=%d", req.AttemptID, name, m.k8sConfig.Image, m.k8sConfig.CLIImage, deadline)
 	if _, err := m.client.CoreV1().Pods(m.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		log.Printf("[CODEX_AUTH_K8S] Failed to create Pod for attempt %s resource=%s: %v", req.AttemptID, name, err)

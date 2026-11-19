@@ -87,7 +87,7 @@ API keyやAWSの認証情報を初期メッセージ、チャット、リポジ�
 2. 「初期メッセージ」に、エージェントへ依頼する内容を入力します。この項目は必須です。
 3. コードを使う場合は、「対象リポジトリ」に`owner/repository`形式で入力します。必要に応じてブランチまたはPull Request番号も指定します。リポジトリを指定しない場合は一般的なチャットとして開始されます。
 4. 必要に応じてセッションプロファイルを選択します。初回は「自動選択」のままでも構いません。
-5. 「その他の設定」を開き、Codex、OpenAI API、OpenAI互換APIを設定した場合は「Codex ACP」を、Anthropic APIまたはAmazon Bedrockを設定した場合は「Claude ACP」をエージェントタイプとして選択します。Google Antigravityを使う場合は、セッションプロファイルの環境変数に`GEMINI_API_KEY`を設定して「Antigravity ACP」を選択します。複数のPoolがある場合は、ここで実行Poolを指定できます。未指定の場合は利用可能なPoolから自動選択されます。
+5. 「その他の設定」を開き、Codex、OpenAI API、OpenAI互換APIを設定した場合は「Codex ACP」を、Anthropic APIまたはAmazon Bedrockを設定した場合は「Claude ACP」をエージェントタイプとして選択します。Google Antigravityを使う場合は、個人またはチーム設定の「Antigravity 認証」でGemini Enterprise Business SSOを完了するか、Application Default Credentials JSONを登録してから「Antigravity ACP」を選択します。APIキーを使う場合は、従来どおりセッションプロファイルの環境変数に`GEMINI_API_KEY`を設定できます。複数のPoolがある場合は、ここで実行Poolを指定できます。未指定の場合は利用可能なPoolから自動選択されます。
 6. 「セッションを開始」を選択します。
 
 セッションの作成が完了するとセッション一覧へ移動します。起動処理が終わったらセッションを開き、エージェントからの応答を確認してください。以降はメッセージを追加して作業を継続できます。

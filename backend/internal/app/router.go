@@ -44,6 +44,7 @@ type HandlerRegistry struct {
 	googleOAuthController          *controllers.GoogleOAuthController
 	credentialsController          *controllers.CredentialsController
 	codexDeviceAuthController      *controllers.CodexDeviceAuthController
+	antigravityAuthController      *controllers.AntigravityAuthController
 	userController                 *controllers.UserController
 	shareController                *controllers.ShareController
 	personalAPIKeyController       *controllers.PersonalAPIKeyController
@@ -159,6 +160,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Workloads are always delegated to an external session manager over the
 	// outbound control tunnel; there is deliberately no in-process launcher.
 	var codexDeviceAuthController *controllers.CodexDeviceAuthController
+	var antigravityAuthController *controllers.AntigravityAuthController
 	if server.credentialsRepo != nil {
 		if server.codexDeviceAuthLauncher != nil {
 			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo, server.codexDeviceAuthLauncher)
@@ -172,6 +174,16 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			codexDeviceAuthController.WithCallbackBaseURL(cfg.CodexDeviceAuthCallbackBaseURL)
 		}
 		log.Printf("[ROUTER] Codex device auth controller initialized")
+		if server.codexDeviceAuthLauncher != nil {
+			antigravityAuthController = controllers.NewAntigravityAuthController(server.credentialsRepo, server.codexDeviceAuthLauncher)
+			if server.persistenceClient != nil {
+				antigravityAuthController.CodexDeviceAuthController.WithAttemptStore(repositories.NewKubernetesAntigravityAuthAttemptRepository(server.GetPersistenceClient(), server.namespace))
+			}
+			if cfg := server.GetConfig(); cfg != nil {
+				antigravityAuthController.CodexDeviceAuthController.WithCallbackBaseURL(cfg.CodexDeviceAuthCallbackBaseURL)
+			}
+			log.Printf("[ROUTER] Antigravity auth controller initialized")
+		}
 	}
 
 	// Create session controller with proper dependencies
@@ -383,6 +395,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			googleOAuthController:          googleOAuthController,
 			credentialsController:          credentialsController,
 			codexDeviceAuthController:      codexDeviceAuthController,
+			antigravityAuthController:      antigravityAuthController,
 			userController:                 controllers.NewUserController(server.teamConfigRepo),
 			shareController:                shareController,
 			personalAPIKeyController:       personalAPIKeyController,
@@ -832,6 +845,16 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.POST("/internal/codex-device-auth/:attemptId/challenge", r.handlers.codexDeviceAuthController.ReportChallenge)
 		r.echo.POST("/internal/codex-device-auth/:attemptId/result", r.handlers.codexDeviceAuthController.ReportResult)
 		log.Printf("[ROUTES] Codex device auth endpoints registered")
+	}
+	if r.handlers.antigravityAuthController != nil {
+		r.echo.GET("/antigravity/auth/config", r.handlers.antigravityAuthController.GetConfig, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/antigravity/auth/sso", r.handlers.antigravityAuthController.StartSSO, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/antigravity/auth/:attemptId", r.handlers.antigravityAuthController.GetAttempt, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/antigravity/auth/:attemptId/input", r.handlers.antigravityAuthController.SubmitInput, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/antigravity/auth/:attemptId", r.handlers.antigravityAuthController.CancelAttempt, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/internal/antigravity-auth/:attemptId/challenge", r.handlers.antigravityAuthController.ReportChallenge)
+		r.echo.GET("/internal/antigravity-auth/:attemptId/input", r.handlers.antigravityAuthController.WorkerInput)
+		r.echo.POST("/internal/antigravity-auth/:attemptId/result", r.handlers.antigravityAuthController.ReportResult)
 	}
 
 	// Add personal API key routes if controller is available (Kubernetes mode only)

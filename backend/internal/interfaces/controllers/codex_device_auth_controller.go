@@ -41,6 +41,8 @@ type deviceAuthAttempt struct {
 	Status         string
 	Challenge      codexauth.Challenge
 	ExpiresAt      time.Time
+	Input          string
+	InputVersion   int64
 	mu             sync.RWMutex
 }
 
@@ -348,6 +350,7 @@ func (c *CodexDeviceAuthController) finishAttempt(attempt *deviceAuthAttempt, st
 	attempt.mu.Lock()
 	attempt.Status = status
 	attempt.TokenHash = [sha256.Size]byte{}
+	attempt.Input = ""
 	attempt.mu.Unlock()
 	c.active.CompareAndDelete(attempt.CredentialName, attempt.ID)
 	if c.store != nil {
@@ -433,11 +436,11 @@ func (c *CodexDeviceAuthController) persistAttempt(ctx context.Context, attempt 
 func durableAttempt(attempt *deviceAuthAttempt) *codexauth.Attempt {
 	attempt.mu.RLock()
 	defer attempt.mu.RUnlock()
-	return &codexauth.Attempt{ID: attempt.ID, UserID: attempt.UserID, CredentialName: attempt.CredentialName, TokenHash: append([]byte(nil), attempt.TokenHash[:]...), Status: attempt.Status, Challenge: attempt.Challenge, ExpiresAt: attempt.ExpiresAt}
+	return &codexauth.Attempt{ID: attempt.ID, UserID: attempt.UserID, CredentialName: attempt.CredentialName, TokenHash: append([]byte(nil), attempt.TokenHash[:]...), Status: attempt.Status, Challenge: attempt.Challenge, ExpiresAt: attempt.ExpiresAt, Input: attempt.Input, InputVersion: attempt.InputVersion}
 }
 
 func runtimeAttempt(attempt *codexauth.Attempt) *deviceAuthAttempt {
-	r := &deviceAuthAttempt{ID: attempt.ID, UserID: attempt.UserID, CredentialName: attempt.CredentialName, Status: attempt.Status, Challenge: attempt.Challenge, ExpiresAt: attempt.ExpiresAt}
+	r := &deviceAuthAttempt{ID: attempt.ID, UserID: attempt.UserID, CredentialName: attempt.CredentialName, Status: attempt.Status, Challenge: attempt.Challenge, ExpiresAt: attempt.ExpiresAt, Input: attempt.Input, InputVersion: attempt.InputVersion}
 	copy(r.TokenHash[:], attempt.TokenHash)
 	return r
 }

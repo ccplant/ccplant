@@ -31,12 +31,14 @@ type WorkloadRequest struct {
 	SubjectType string    `json:"subject_type"`
 	SubjectID   string    `json:"subject_id"`
 	ManagerID   string    `json:"manager_id,omitempty"`
+	Provider    string    `json:"provider,omitempty"`
 }
 
 type Challenge struct {
 	UserCode        string `json:"user_code"`
 	VerificationURI string `json:"verification_uri"`
 	CLIVersion      string `json:"cli_version,omitempty"`
+	Transcript      string `json:"transcript,omitempty"`
 }
 
 type Result struct {
@@ -56,6 +58,8 @@ type Attempt struct {
 	Status         string    `json:"status"`
 	Challenge      Challenge `json:"challenge,omitempty"`
 	ExpiresAt      time.Time `json:"expires_at"`
+	Input          string    `json:"input,omitempty"`
+	InputVersion   int64     `json:"input_version,omitempty"`
 }
 
 type AttemptStore interface {

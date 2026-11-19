@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -393,6 +394,13 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			}
 			log.Printf("[PROVISIONER] Warning: failed to write managed files: %v", err)
 		}
+		if err := restoreAntigravityAuthBundle(settings.Files); err != nil {
+			if settings.Restart {
+				s.setStatus(StatusError, "failed to restore Antigravity authentication")
+				return
+			}
+			log.Printf("[PROVISIONER] Warning: failed to restore Antigravity authentication: %v", err)
+		}
 		// Re-apply compiled hooks into settings.json in case a managed settings.json
 		// overwrote the hooks that were generated during the compile step above.
 		// This preserves user customisations while ensuring oneshot/cycle/managed
@@ -437,6 +445,9 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// Step 3: prepare the process-only session environment.
 	s.setPhase("provision:load-env")
 	envMap := cloneEnvironment(settings.Env)
+	if settings.Session.AgentType == "antigravity" && managedFilePresent(settings.Files, sessionsettings.FileTypeGoogleADC) {
+		envMap["AGY_ADC_AUTH"] = "true"
+	}
 	if strings.TrimSpace(os.Getenv("CCPLANT_EXECUTOR_REQUIRED")) == "1" && len(settings.Files) > 0 {
 		paths := make([]string, 0, len(settings.Files))
 		for _, file := range settings.Files {
@@ -1003,6 +1014,8 @@ func (s *Server) runAcpPosts(ctx context.Context, params *sessionsettings.SlackP
 var managedFilePaths = []string{
 	filepath.Join(runtimeHome, ".codex", "auth.json"),
 	filepath.Join(runtimeHome, ".claude", ".credentials.json"),
+	filepath.Join(runtimeHome, ".ccplant", "antigravity-auth.json"),
+	filepath.Join(runtimeHome, ".config", "gcloud", "application_default_credentials.json"),
 }
 
 // writeFiles writes each ManagedFile to its path, creating parent directories
@@ -1037,6 +1050,64 @@ func writeFiles(files []sessionsettings.ManagedFile) error {
 		log.Printf("[PROVISIONER] Restored managed file: %s (mode %s)", f.Path, perm)
 	}
 	return firstErr
+}
+
+type portableAntigravityAuthBundle struct {
+	Version int `json:"version"`
+	Files   []struct {
+		Path    string `json:"path"`
+		Content string `json:"content_base64"`
+	} `json:"files"`
+}
+
+func managedFilePresent(files []sessionsettings.ManagedFile, fileType string) bool {
+	want := sessionsettings.ManagedFileTypes[fileType]
+	want = filepath.Join(runtimeHome, strings.TrimPrefix(want, "/home/agentapi/"))
+	for _, file := range files {
+		if file.Path == want && strings.TrimSpace(file.Content) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func restoreAntigravityAuthBundle(files []sessionsettings.ManagedFile) error {
+	bundlePath := sessionsettings.ManagedFileTypes[sessionsettings.FileTypeAntigravityAuth]
+	bundlePath = filepath.Join(runtimeHome, strings.TrimPrefix(bundlePath, "/home/agentapi/"))
+	var raw string
+	for _, file := range files {
+		if file.Path == bundlePath {
+			raw = file.Content
+			break
+		}
+	}
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var bundle portableAntigravityAuthBundle
+	if err := json.Unmarshal([]byte(raw), &bundle); err != nil || bundle.Version != 1 {
+		return errors.New("invalid Antigravity auth bundle")
+	}
+	root := filepath.Join(runtimeHome, ".gemini", "antigravity-cli")
+	for _, file := range bundle.Files {
+		rel := filepath.Clean(filepath.FromSlash(file.Path))
+		if rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return errors.New("invalid Antigravity auth bundle path")
+		}
+		content, err := base64.StdEncoding.DecodeString(file.Content)
+		if err != nil {
+			return errors.New("invalid Antigravity auth bundle content")
+		}
+		dest := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dest, content, 0o600); err != nil {
+			return err
+		}
+	}
+	log.Printf("[PROVISIONER] Restored %d Antigravity authentication file(s)", len(bundle.Files))
+	return nil
 }
 
 func writeCodexRequirements(hooksJSON map[string]interface{}) error {

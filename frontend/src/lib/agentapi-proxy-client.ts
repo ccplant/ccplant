@@ -111,6 +111,16 @@ export interface CredentialsMetadata {
   has_data: boolean;
   created_at: string;
   updated_at: string;
+  files?: Array<{ type: string; path: string; has_data: boolean }>;
+}
+
+export interface AntigravityAuthAttempt {
+  attempt_id: string;
+  status: 'starting' | 'waiting_for_user' | 'authorized' | 'denied' | 'failed' | 'cancelled';
+  verification_uri?: string;
+  transcript?: string;
+  expires_at: string;
+  poll_after_ms: number;
 }
 
 export type TransferableResourceType = 'webhook' | 'slackbot' | 'session_profile' | 'sandbox_policy';
@@ -2202,11 +2212,12 @@ export class AgentAPIProxyClient {
    * Upload or replace credential JSON data
    * PUT /credentials/{name}
    */
-  async uploadCredentials(name: string, data: Record<string, unknown>): Promise<CredentialsMetadata> {
+  async uploadCredentials(name: string, data: Record<string, unknown>, type?: string): Promise<CredentialsMetadata> {
     if (this.debug) {
       console.log(`[AgentAPIProxy] Uploading credentials: ${name}`);
     }
-    return await this.makeRequest<CredentialsMetadata>(`/credentials/${encodeURIComponent(name)}`, {
+    const query = type ? `?type=${encodeURIComponent(type)}` : '';
+    return await this.makeRequest<CredentialsMetadata>(`/credentials/${encodeURIComponent(name)}${query}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -2265,6 +2276,30 @@ export class AgentAPIProxyClient {
 
   async cancelCodexDeviceAuth(attemptId: string): Promise<void> {
     await this.makeRequest<void>(`/codex/device-auth/${encodeURIComponent(attemptId)}`, { method: 'DELETE' });
+  }
+
+  async getAntigravityAuthConfig(target?: Pick<CodexDeviceAuthTarget, 'scope' | 'team_id'>): Promise<CodexDeviceAuthConfig> {
+    const query = new URLSearchParams();
+    if (target?.scope) query.set('scope', target.scope);
+    if (target?.team_id) query.set('team_id', target.team_id);
+    const suffix = query.size ? `?${query.toString()}` : '';
+    return await this.makeRequest<CodexDeviceAuthConfig>(`/antigravity/auth/config${suffix}`);
+  }
+
+  async startAntigravitySSO(target: CodexDeviceAuthTarget): Promise<AntigravityAuthAttempt> {
+    return await this.makeRequest<AntigravityAuthAttempt>('/antigravity/auth/sso', { method: 'POST', body: JSON.stringify(target) });
+  }
+
+  async getAntigravityAuthAttempt(attemptId: string): Promise<AntigravityAuthAttempt> {
+    return await this.makeRequest<AntigravityAuthAttempt>(`/antigravity/auth/${encodeURIComponent(attemptId)}`);
+  }
+
+  async submitAntigravityAuthInput(attemptId: string, input: string): Promise<void> {
+    await this.makeRequest<void>(`/antigravity/auth/${encodeURIComponent(attemptId)}/input`, { method: 'POST', body: JSON.stringify({ input }) });
+  }
+
+  async cancelAntigravityAuth(attemptId: string): Promise<void> {
+    await this.makeRequest<void>(`/antigravity/auth/${encodeURIComponent(attemptId)}`, { method: 'DELETE' });
   }
 
   // Session sharing operations
