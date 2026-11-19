@@ -16,12 +16,16 @@ import (
 
 type failingPoolSupplierStore struct {
 	*infra.Store
-	fail bool
+	fail                bool
+	duringPoolSuppliers func()
 }
 
 func (s *failingPoolSupplierStore) ListPoolSuppliers(ctx context.Context) ([]*core.PoolSupplier, error) {
 	if s.fail {
 		return nil, errors.New("pool suppliers unavailable")
+	}
+	if s.duringPoolSuppliers != nil {
+		s.duringPoolSuppliers()
 	}
 	return s.Store.ListPoolSuppliers(ctx)
 }
@@ -86,6 +90,30 @@ func TestSessionManagerHeartbeatWithoutSharedLivenessPersistsOnlyCompletedHeartb
 	persisted, err = store.GetManager(context.Background(), manager.ID)
 	require.NoError(t, err)
 	require.WithinDuration(t, now, persisted.LastHeartbeatAt, time.Second)
+}
+
+func TestSessionManagerHeartbeatDoesNotRevertConcurrentManagerChanges(t *testing.T) {
+	ctx := context.Background()
+	store, manager, token := newHeartbeatLivenessFixture(t)
+	controller := NewSessionPoolController(store, nil)
+	_, rotatedHash, err := newSessionRunnerToken()
+	require.NoError(t, err)
+	store.duringPoolSuppliers = func() {
+		store.duringPoolSuppliers = nil
+		current, getErr := store.GetManager(ctx, manager.ID)
+		require.NoError(t, getErr)
+		current.Enabled = false
+		current.ConnectionTokenHash = rotatedHash
+		require.NoError(t, store.UpdateManager(ctx, current))
+	}
+
+	require.Equal(t, http.StatusOK, callHeartbeat(t, controller, manager.ID, token))
+
+	persisted, err := store.GetManager(ctx, manager.ID)
+	require.NoError(t, err)
+	require.False(t, persisted.Enabled, "a heartbeat must not re-enable a manager disabled while it was running")
+	require.Equal(t, rotatedHash, persisted.ConnectionTokenHash, "a heartbeat must not restore a revoked connection token")
+	require.False(t, persisted.LastHeartbeatAt.IsZero())
 }
 
 func TestRunnerClaimRequiresSchedulableManagerNotOnlyControlConnection(t *testing.T) {

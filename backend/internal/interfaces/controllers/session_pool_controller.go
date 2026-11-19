@@ -1389,9 +1389,8 @@ func (c *SessionPoolController) recordManagerHeartbeat(ctx context.Context, mana
 		}
 		return nil
 	}
-	manager.LastHeartbeatAt = c.now()
 	if err := telemetry.LoggedOperationErr(ctx, "session_pool.heartbeat.update_manager_liveness", func(operationCtx context.Context) error {
-		return c.store.UpdateManager(operationCtx, manager)
+		return c.store.TouchManagerHeartbeat(operationCtx, manager.ID, c.now())
 	}, telemetry.String("session_manager.id", manager.ID)); err != nil {
 		return sessionRunnerStoreError(err)
 	}

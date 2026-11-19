@@ -17,6 +17,7 @@ type Store interface {
 	GetManager(context.Context, string) (*Manager, error)
 	ListManagers(context.Context) ([]*Manager, error)
 	UpdateManager(context.Context, *Manager) error
+	TouchManagerHeartbeat(context.Context, string, time.Time) error
 	DeleteManager(context.Context, string) error
 
 	CreateLogicalPool(context.Context, *LogicalPool) error

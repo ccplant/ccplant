@@ -330,6 +330,14 @@ func (s *Store) UpdateManager(ctx context.Context, manager *core.Manager) error 
 	return s.update(ctx, managerName(manager.ID), manager)
 }
 
+func (s *Store) TouchManagerHeartbeat(ctx context.Context, id string, at time.Time) error {
+	var manager core.Manager
+	return s.mutate(ctx, managerName(id), &manager, func() error {
+		manager.LastHeartbeatAt = at
+		return nil
+	})
+}
+
 func (s *Store) DeleteManager(ctx context.Context, id string) error {
 	return s.delete(ctx, managerName(id))
 }
