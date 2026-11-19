@@ -25,7 +25,7 @@ func (s *Store) mutate(ctx context.Context, name string, value any, change func(
 		if err = json.Unmarshal(record.Value, &doc); err != nil {
 			return err
 		}
-		doc.Data[dataKey], err = json.Marshal(value)
+		doc.Data[dataKey], err = s.encodeResource(ctx, value)
 		if err != nil {
 			return err
 		}
@@ -105,7 +105,10 @@ func (s *Store) RequeueUnstarted(ctx context.Context, id, runnerID string) (*cor
 		a.UpdatedAt = s.now()
 		return nil
 	})
-	return &a, err
+	if err != nil {
+		return &a, err
+	}
+	return &a, s.attachAllocationSettings(ctx, &a)
 }
 
 func (s *Store) MarkStarted(ctx context.Context, id string, generation int64) error {

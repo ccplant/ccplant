@@ -147,7 +147,7 @@ func (s *Store) UpdateProvisionSettings(ctx context.Context, id string, settings
 	if err := json.Unmarshal(record.Value, &doc); err != nil {
 		return err
 	}
-	doc.Data[dataKey], err = json.Marshal(&a)
+	doc.Data[dataKey], err = s.encodeResource(ctx, &a)
 	if err != nil {
 		return err
 	}

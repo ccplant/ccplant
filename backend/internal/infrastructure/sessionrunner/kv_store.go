@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +37,8 @@ type Store struct {
 	kv        kvstore.Store
 	namespace string
 	now       func() time.Time
+
+	metaRepairAttempted sync.Map
 }
 
 func NewStore(kv kvstore.Store, namespace string) *Store {
@@ -85,6 +88,8 @@ func resourcePrefix(resource string) string {
 		return runnerPrefix
 	case "allocation":
 		return allocationPrefix
+	case allocationSettingsResource:
+		return allocationSettingsPrefix
 	default:
 		return ""
 	}
@@ -95,7 +100,7 @@ func (s *Store) create(ctx context.Context, name, resource, pool string, value a
 }
 
 func (s *Store) createWithLabels(ctx context.Context, name, resource, pool string, additionalLabels map[string]string, value any) error {
-	raw, err := json.Marshal(value)
+	raw, err := s.encodeResource(ctx, value)
 	if err != nil {
 		return err
 	}
@@ -151,7 +156,7 @@ func (s *Store) update(ctx context.Context, name string, value any) error {
 		if err := json.Unmarshal(record.Value, &document); err != nil {
 			return err
 		}
-		raw, err := json.Marshal(value)
+		raw, err := s.encodeResource(ctx, value)
 		if err != nil {
 			return err
 		}
@@ -568,13 +573,20 @@ func (s *Store) Enqueue(ctx context.Context, allocation *core.Allocation) error 
 		allocation.Generation = 1
 	}
 	allocation.CreatedAt, allocation.UpdatedAt = now, now
+	if _, err := s.kv.Get(ctx, kvstore.KindSecret, s.namespace, allocationName(allocation.SessionID)); err == nil {
+		return core.ErrConflict
+	} else if !errors.Is(err, kvstore.ErrNotFound) {
+		return err
+	}
 	return s.create(ctx, allocationName(allocation.SessionID), "allocation", allocation.Pool, allocation)
 }
 
 func (s *Store) GetAllocation(ctx context.Context, id string) (*core.Allocation, error) {
 	var value core.Allocation
-	_, err := s.get(ctx, allocationName(id), &value)
-	return &value, err
+	if _, err := s.get(ctx, allocationName(id), &value); err != nil {
+		return &value, err
+	}
+	return &value, s.attachAllocationSettings(ctx, &value)
 }
 
 func (s *Store) ListAllocations(ctx context.Context, pool string) ([]*core.Allocation, error) {
@@ -623,11 +635,18 @@ func (s *Store) ListManagerAllocations(ctx context.Context, managerID string) ([
 	}, "!"+labelManagerHash); err != nil {
 		return nil, err
 	}
+	if err := s.migrateManagerAllocations(ctx, result); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 func (s *Store) DeleteAllocation(ctx context.Context, sessionID string) error {
-	return s.delete(ctx, allocationName(sessionID))
+	if err := s.delete(ctx, allocationName(sessionID)); err != nil {
+		return err
+	}
+	s.metaRepairAttempted.Delete(sessionID)
+	return s.delete(ctx, allocationSettingsName(sessionID))
 }
 
 func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time.Duration) (*core.Allocation, bool, error) {
@@ -717,7 +736,10 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 		allocation.LeaseExpiresAt = now.Add(lease)
 		allocation.Attempts++
 		allocation.UpdatedAt = now
-		raw, _ := json.Marshal(&allocation)
+		raw, err := s.encodeResource(ctx, &allocation)
+		if err != nil {
+			return nil, false, err
+		}
 		item.document.Data[dataKey] = raw
 		addSessionRunnerQueryLabels(item.document.Metadata.Labels, &allocation)
 		item.record.Labels = item.document.Metadata.Labels
@@ -731,6 +753,9 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 			return nil, false, err
 		}
 		committed = true
+		if err := s.attachAllocationSettings(ctx, &allocation); err != nil {
+			return nil, false, err
+		}
 		return &allocation, true, nil
 	}
 	return nil, false, nil
@@ -794,7 +819,10 @@ func (s *Store) transitionLease(ctx context.Context, sessionID, runnerID, leaseI
 			allocation.LeaseExpiresAt = time.Time{}
 			allocation.Generation++
 		}
-		raw, _ := json.Marshal(&allocation)
+		raw, err := s.encodeResource(ctx, &allocation)
+		if err != nil {
+			return nil, err
+		}
 		var document secretDocument
 		if err := json.Unmarshal(record.Value, &document); err != nil {
 			return nil, err
