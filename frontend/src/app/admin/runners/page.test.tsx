@@ -28,8 +28,8 @@ describe('AdminRunnersPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     listAdminSessionRunners.mockResolvedValue([
-      { id: 'pooled-runner', manager_id: 'manager-a', manager_name: 'Manager A', pool: 'linux', from_pool: true, status: 'running', session_id: 'session-a', online: true },
-      { id: 'direct-session', manager_id: 'manager-a', manager_name: 'Manager A', from_pool: false, status: 'running', session_id: 'direct-session', online: true },
+      { id: 'pooled-runner', manager_id: 'manager-a', manager_name: 'Manager A', pool: 'linux', from_pool: true, status: 'running', session_id: 'session-a', online: true, connectivity: { state: 'online', source: 'direct_runtime' }, workload_state: 'present', manager_online: true },
+      { id: 'direct-session', manager_id: 'manager-a', manager_name: 'Manager A', from_pool: false, status: 'running', session_id: 'direct-session', online: true, connectivity: { state: 'online', source: 'direct_runtime' }, workload_state: 'present', manager_online: true },
     ])
     getAdminSessionRunnerLogs.mockResolvedValue({ lines: ['runner output'], source: 'pod/agentapi' })
     deleteAdminSessionRunner.mockResolvedValue(undefined)
@@ -76,7 +76,7 @@ describe('AdminRunnersPage', () => {
   it('warns and force-cleans parent metadata for an offline runner', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     listAdminSessionRunners.mockResolvedValue([
-      { id: 'offline-runner', manager_id: 'manager-a', manager_name: 'Manager A', pool: 'linux', from_pool: true, status: 'offline', online: false },
+      { id: 'offline-runner', manager_id: 'manager-a', manager_name: 'Manager A', pool: 'linux', from_pool: true, status: 'running', online: false, connectivity: { state: 'unknown' }, workload_state: 'unknown', manager_online: false },
     ])
     render(<AdminRunnersPage />)
 

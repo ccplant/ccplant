@@ -22,6 +22,10 @@ const statusTone = (status: AdminSessionRunner['status']) => {
 }
 
 const runnerKey = (runner: AdminSessionRunner) => `${runner.manager_id}:${runner.id}`
+const managerConnectivity = (runner: AdminSessionRunner) => runner.manager_connectivity ?? ((runner.manager_online ?? runner.online) ? 'online' : 'offline')
+const managerOnline = (runner: AdminSessionRunner) => managerConnectivity(runner) === 'online'
+const connectivityState = (runner: AdminSessionRunner) => runner.connectivity?.state ?? (runner.online ? 'online' : 'unknown')
+const workloadState = (runner: AdminSessionRunner) => runner.workload_state ?? 'unknown'
 
 function RunnerLogPanel({ runner, result, onClose }: {
   runner: AdminSessionRunner
@@ -83,7 +87,12 @@ export default function AdminRunnersPage() {
   }
 
   const deleteRunner = async (runner: AdminSessionRunner) => {
-    const force = !runner.online
+    const managerState = managerConnectivity(runner)
+    if (managerState === 'unknown') {
+      setError('Manager の接続状態を確認できないため、Runner を削除できません。')
+      return
+    }
+    const force = managerState === 'offline'
     const warning = force
       ? `Runner「${runner.id}」を強制クリーンアップしますか？\n\nManager が offline のため、親側の Runner、Session の紐づき、allocation メタデータだけを削除します。Pod、Service、PVC、Secret は Manager 側に残る可能性があります。Manager が復旧しないことを確認してから実行してください。`
       : `Runner「${runner.id}」を削除しますか？Pod、Service、PVC、関連する Secret と Session の紐づきも削除されます。`
@@ -133,7 +142,11 @@ export default function AdminRunnersPage() {
 
   const deleteSelected = async () => {
     if (selectedRunners.length === 0) return
-    const offlineCount = selectedRunners.filter((runner) => !runner.online).length
+    if (selectedRunners.some((runner) => managerConnectivity(runner) === 'unknown')) {
+      setError('Manager の接続状態を確認できない Runner が含まれるため、削除できません。')
+      return
+    }
+    const offlineCount = selectedRunners.filter((runner) => !managerOnline(runner)).length
     const warning = offlineCount > 0
       ? `選択した ${selectedRunners.length} 件の Runner を削除しますか？\n\nうち ${offlineCount} 件は Manager が offline のため強制クリーンアップします。offline Runner は親側メタデータだけが削除され、Pod、Service、PVC、Secret が Manager 側に残る可能性があります。Manager が復旧しないことを確認してください。`
       : `選択した ${selectedRunners.length} 件の Runner を削除しますか？Pod、Service、PVC、関連する Secret と Session の紐づきも削除されます。`
@@ -143,7 +156,7 @@ export default function AdminRunnersPage() {
     setError('')
     setDeleting((current) => new Set([...current, ...keys]))
     const results = await Promise.allSettled(
-      targets.map((runner) => client.deleteAdminSessionRunner(runner.id, runner.manager_id, !runner.online)),
+      targets.map((runner) => client.deleteAdminSessionRunner(runner.id, runner.manager_id, !managerOnline(runner))),
     )
     const failed = results.filter((result) => result.status === 'rejected').length
     const succeededKeys = new Set(targets.filter((_, index) => results[index].status === 'fulfilled').map(runnerKey))
@@ -178,7 +191,7 @@ export default function AdminRunnersPage() {
             すべて選択
           </label>
           <span className="text-xs text-gray-500 dark:text-gray-400">{selectedRunners.length} 件選択中</span>
-          <button type="button" onClick={() => void deleteSelected()} disabled={selectedRunners.length === 0 || deleting.size > 0} className="ml-auto rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20">
+          <button type="button" onClick={() => void deleteSelected()} disabled={selectedRunners.length === 0 || deleting.size > 0 || selectedRunners.some((runner) => managerConnectivity(runner) === 'unknown')} className="ml-auto rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20">
             {deleting.size > 0 ? '削除中...' : '選択した Runner を削除'}
           </button>
         </div>}
@@ -195,11 +208,19 @@ export default function AdminRunnersPage() {
                 {runner.from_pool
                   ? <StatusBadge tone="blue">Pool: {runner.pool}</StatusBadge>
                   : <StatusBadge tone="amber">Pool から作成されていません</StatusBadge>}
-                {!runner.online && <StatusBadge tone="neutral">Manager 未確認</StatusBadge>}
+                <StatusBadge tone={connectivityState(runner) === 'online' ? 'green' : connectivityState(runner) === 'offline' ? 'amber' : 'neutral'}>
+                  Runner: {connectivityState(runner)}
+                </StatusBadge>
+                <StatusBadge tone={workloadState(runner) === 'present' ? 'green' : workloadState(runner) === 'missing' ? 'amber' : 'neutral'}>
+                  Workload: {workloadState(runner)}
+                </StatusBadge>
+                <StatusBadge tone={managerConnectivity(runner) === 'online' ? 'green' : managerConnectivity(runner) === 'offline' ? 'amber' : 'neutral'}>
+                  Manager: {managerConnectivity(runner)}
+                </StatusBadge>
               </>}
               actions={<>
-                <RowAction onClick={() => void showLogs(runner)} disabled={!runner.online}><span className="inline-flex items-center gap-1"><Terminal className="h-3 w-3" />ログ</span></RowAction>
-                <RowAction tone="danger" onClick={() => void deleteRunner(runner)} disabled={deleting.has(runnerKey(runner))}>{deleting.has(runnerKey(runner)) ? '削除中...' : runner.online ? '削除' : '強制クリーンアップ'}</RowAction>
+                <RowAction onClick={() => void showLogs(runner)} disabled={!managerOnline(runner)}><span className="inline-flex items-center gap-1"><Terminal className="h-3 w-3" />ログ</span></RowAction>
+                <RowAction tone="danger" onClick={() => void deleteRunner(runner)} disabled={deleting.has(runnerKey(runner)) || managerConnectivity(runner) === 'unknown'}>{deleting.has(runnerKey(runner)) ? '削除中...' : managerOnline(runner) ? '削除' : '強制クリーンアップ'}</RowAction>
               </>}
             >
               <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">

@@ -72,9 +72,17 @@ export interface AdminSessionRunner {
   manager_name?: string
   pool?: string
   from_pool: boolean
-  status: 'idle' | 'claiming' | 'running' | 'offline' | 'draining'
+  status: 'idle' | 'claiming' | 'running' | 'draining'
   session_id?: string
   online: boolean
+  connectivity?: {
+    state: 'online' | 'offline' | 'unknown'
+    source?: 'runner_api' | 'direct_runtime'
+    observed_at?: string
+  }
+  workload_state?: 'present' | 'missing' | 'unknown'
+  manager_online?: boolean
+  manager_connectivity?: 'online' | 'offline' | 'unknown'
   created_at?: string
   updated_at?: string
   last_seen?: string
