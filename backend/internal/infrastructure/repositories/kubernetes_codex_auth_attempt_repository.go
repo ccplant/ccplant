@@ -21,15 +21,21 @@ const codexAuthAttemptLabel = "agentapi.proxy/codex-device-auth-attempt"
 type KubernetesCodexAuthAttemptRepository struct {
 	client    kubernetes.Interface
 	namespace string
+	label     string
+	prefix    string
 }
 
 func NewKubernetesCodexAuthAttemptRepository(client kubernetes.Interface, namespace string) *KubernetesCodexAuthAttemptRepository {
-	return &KubernetesCodexAuthAttemptRepository{client: client, namespace: namespace}
+	return &KubernetesCodexAuthAttemptRepository{client: client, namespace: namespace, label: codexAuthAttemptLabel, prefix: "codex"}
+}
+
+func NewKubernetesAntigravityAuthAttemptRepository(client kubernetes.Interface, namespace string) *KubernetesCodexAuthAttemptRepository {
+	return &KubernetesCodexAuthAttemptRepository{client: client, namespace: namespace, label: "agentapi.proxy/antigravity-auth-attempt", prefix: "antigravity"}
 }
 
 func (r *KubernetesCodexAuthAttemptRepository) Create(ctx context.Context, attempt *codexauth.Attempt) error {
 	secrets := r.client.CoreV1().Secrets(r.namespace)
-	lock := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: codexAuthLockName(attempt.CredentialName), Labels: map[string]string{codexAuthAttemptLabel: "lock"}}, Data: map[string][]byte{"attempt_id": []byte(attempt.ID)}}
+	lock := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: r.lockName(attempt.CredentialName), Labels: map[string]string{r.label: "lock"}}, Data: map[string][]byte{"attempt_id": []byte(attempt.ID)}}
 	if _, err := secrets.Create(ctx, lock, metav1.CreateOptions{}); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return codexauth.ErrAttemptActive
@@ -48,7 +54,7 @@ func (r *KubernetesCodexAuthAttemptRepository) createAttempt(ctx context.Context
 	if err != nil {
 		return err
 	}
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: codexAuthAttemptName(attempt.ID), Labels: map[string]string{codexAuthAttemptLabel: "true"}}, Data: map[string][]byte{"attempt.json": raw}}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: r.attemptName(attempt.ID), Labels: map[string]string{r.label: "true"}}, Data: map[string][]byte{"attempt.json": raw}}
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("create device auth attempt: %w", err)
@@ -57,7 +63,7 @@ func (r *KubernetesCodexAuthAttemptRepository) createAttempt(ctx context.Context
 }
 
 func (r *KubernetesCodexAuthAttemptRepository) Get(ctx context.Context, id string) (*codexauth.Attempt, error) {
-	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, codexAuthAttemptName(id), metav1.GetOptions{})
+	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, r.attemptName(id), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, codexauth.ErrAttemptNotFound
 	}
@@ -74,7 +80,7 @@ func (r *KubernetesCodexAuthAttemptRepository) Get(ctx context.Context, id strin
 func (r *KubernetesCodexAuthAttemptRepository) Update(ctx context.Context, attempt *codexauth.Attempt) error {
 	secrets := r.client.CoreV1().Secrets(r.namespace)
 	for i := 0; i < 5; i++ {
-		secret, err := secrets.Get(ctx, codexAuthAttemptName(attempt.ID), metav1.GetOptions{})
+		secret, err := secrets.Get(ctx, r.attemptName(attempt.ID), metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
@@ -94,7 +100,7 @@ func (r *KubernetesCodexAuthAttemptRepository) Update(ctx context.Context, attem
 }
 
 func (r *KubernetesCodexAuthAttemptRepository) ActiveByCredential(ctx context.Context, name string) (*codexauth.Attempt, error) {
-	lock, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, codexAuthLockName(name), metav1.GetOptions{})
+	lock, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, r.lockName(name), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, codexauth.ErrAttemptNotFound
 	}
@@ -105,7 +111,7 @@ func (r *KubernetesCodexAuthAttemptRepository) ActiveByCredential(ctx context.Co
 }
 
 func (r *KubernetesCodexAuthAttemptRepository) LatestByUser(ctx context.Context, userID string) (*codexauth.Attempt, error) {
-	list, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: codexAuthAttemptLabel + "=true"})
+	list, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: r.label + "=true"})
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +131,7 @@ func (r *KubernetesCodexAuthAttemptRepository) LatestByUser(ctx context.Context,
 
 func (r *KubernetesCodexAuthAttemptRepository) Release(ctx context.Context, attempt *codexauth.Attempt) error {
 	secrets := r.client.CoreV1().Secrets(r.namespace)
-	lock, err := secrets.Get(ctx, codexAuthLockName(attempt.CredentialName), metav1.GetOptions{})
+	lock, err := secrets.Get(ctx, r.lockName(attempt.CredentialName), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -138,6 +144,16 @@ func (r *KubernetesCodexAuthAttemptRepository) Release(ctx context.Context, atte
 	return secrets.Delete(ctx, lock.Name, metav1.DeleteOptions{})
 }
 
+func (r *KubernetesCodexAuthAttemptRepository) attemptName(id string) string {
+	return "agentapi-" + r.prefix + "-auth-" + id
+}
+func (r *KubernetesCodexAuthAttemptRepository) lockName(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return "agentapi-" + r.prefix + "-auth-lock-" + hex.EncodeToString(sum[:12])
+}
+
+// Kept for package-local compatibility tests and migrations that refer to the
+// original Codex resource naming helpers.
 func codexAuthAttemptName(id string) string { return "agentapi-codex-auth-" + id }
 func codexAuthLockName(name string) string {
 	sum := sha256.Sum256([]byte(name))

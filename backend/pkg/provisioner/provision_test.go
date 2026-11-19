@@ -342,7 +342,11 @@ func TestSyncedManagedFilePathsExcludesUnsyncedPaths(t *testing.T) {
 		" /home/agentapi/.codex/auth.json ",
 		"",
 	})
-	want := []string{"/home/agentapi/.claude/.credentials.json"}
+	want := []string{
+		"/home/agentapi/.claude/.credentials.json",
+		"/home/agentapi/.ccplant/antigravity-auth.json",
+		"/home/agentapi/.config/gcloud/application_default_credentials.json",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("syncedManagedFilePaths() = %#v, want %#v", got, want)
 	}

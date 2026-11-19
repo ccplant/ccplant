@@ -260,6 +260,7 @@ func attachStoragePrincipal(c echo.Context, authzCtx *AuthorizationContext) {
 func isInternalTokenEndpoint(path string) bool {
 	return strings.HasPrefix(path, "/internal/session-provisioners") ||
 		strings.HasPrefix(path, "/internal/codex-device-auth/") ||
+		strings.HasPrefix(path, "/internal/antigravity-auth/") ||
 		strings.HasPrefix(path, "/internal/session-control") ||
 		strings.HasPrefix(path, "/internal/session-runtime") ||
 		strings.HasPrefix(path, "/internal/session-allocations") ||

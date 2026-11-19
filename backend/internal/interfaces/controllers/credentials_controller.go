@@ -84,6 +84,8 @@ func (c *CredentialsController) GetCredentials(ctx echo.Context) error {
 // The optional `type` query parameter selects which file to update:
 //   - "codex_auth"         → ~/.codex/auth.json  (default)
 //   - "claude_credentials" → ~/.claude/.credentials.json
+//   - "antigravity_auth"   → portable Antigravity Business SSO bundle
+//   - "google_adc"         → ~/.config/gcloud/application_default_credentials.json
 func (c *CredentialsController) UploadCredentials(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
@@ -105,7 +107,7 @@ func (c *CredentialsController) UploadCredentials(ctx echo.Context) error {
 		fileType = sessionsettings.FileTypeCodexAuth
 	}
 	if _, ok := sessionsettings.ManagedFileTypes[fileType]; !ok {
-		return echo.NewHTTPError(http.StatusBadRequest, "Unknown type; valid values: codex_auth, claude_credentials")
+		return echo.NewHTTPError(http.StatusBadRequest, "Unknown credential file type")
 	}
 
 	// Read raw body as JSON.
@@ -119,6 +121,9 @@ func (c *CredentialsController) UploadCredentials(ctx echo.Context) error {
 	var tmp interface{}
 	if err := json.Unmarshal(rawData, &tmp); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Request body must be valid JSON")
+	}
+	if fileType == sessionsettings.FileTypeGoogleADC && !validGoogleADC(rawData) {
+		return echo.NewHTTPError(http.StatusBadRequest, "Request body must be a valid ADC credential JSON")
 	}
 
 	creds := entities.NewCredentials(name, rawData)
@@ -136,6 +141,25 @@ func (c *CredentialsController) UploadCredentials(ctx echo.Context) error {
 		return ctx.JSON(http.StatusOK, c.toResponse(creds))
 	}
 	return ctx.JSON(http.StatusOK, c.toResponse(updated))
+}
+
+func validGoogleADC(raw json.RawMessage) bool {
+	var document map[string]json.RawMessage
+	if json.Unmarshal(raw, &document) != nil {
+		return false
+	}
+	var credentialType string
+	if json.Unmarshal(document["type"], &credentialType) != nil {
+		return false
+	}
+	switch credentialType {
+	case "authorized_user":
+		return len(document["client_id"]) > 0 && len(document["client_secret"]) > 0 && len(document["refresh_token"]) > 0
+	case "external_account", "external_account_authorized_user", "impersonated_service_account", "service_account":
+		return true
+	default:
+		return false
+	}
 }
 
 // DeleteCredentials handles DELETE /credentials/:name

@@ -36,6 +36,7 @@ func init() {
 	rootCmd.AddCommand(cmd.HelmCmd)
 	rootCmd.AddCommand(cmd.KVStoreCmd)
 	rootCmd.AddCommand(cmd.CodexAuthWorkerCmd)
+	rootCmd.AddCommand(cmd.AntigravityAuthWorkerCmd)
 	rootCmd.AddCommand(cmd.AdminCmd)
 	rootCmd.AddCommand(cmd.VersionCmd)
 	rootCmd.AddCommand(cmd.UpdateCmd)

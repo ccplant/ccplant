@@ -5028,6 +5028,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "description": "Managed credential file type. Defaults to codex_auth.",
+            "schema": {
+              "type": "string",
+              "enum": ["codex_auth", "claude_credentials", "antigravity_auth", "google_adc"]
+            }
           }
         ],
         "requestBody": {
@@ -5824,6 +5834,55 @@
             "description": "Attempt not found"
           }
         }
+      }
+    },
+    "/antigravity/auth/config": {
+      "get": {
+        "summary": "Get Antigravity authentication availability",
+        "operationId": "getAntigravityAuthConfig",
+        "tags": ["Antigravity"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "responses": {"200": {"description": "Authentication workload availability"}, "401": {"description": "Unauthorized"}}
+      }
+    },
+    "/antigravity/auth/sso": {
+      "post": {
+        "summary": "Start Antigravity Gemini Enterprise Business SSO",
+        "description": "Starts an isolated `agy acp --login` workload and returns the Google authorization URL.",
+        "operationId": "startAntigravityBusinessSSO",
+        "tags": ["Antigravity"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "properties": {"scope": {"type": "string", "enum": ["user", "team"]}, "team_id": {"type": "string"}, "replace": {"type": "boolean"}}}}}},
+        "responses": {"202": {"description": "Business SSO workload accepted"}, "401": {"description": "Unauthorized"}, "409": {"description": "Authentication already active"}, "503": {"description": "Authentication workload unavailable"}}
+      }
+    },
+    "/antigravity/auth/{attemptId}": {
+      "get": {
+        "summary": "Get an Antigravity authentication attempt",
+        "operationId": "getAntigravityAuthAttempt",
+        "tags": ["Antigravity"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Current authentication state"}, "404": {"description": "Attempt not found"}}
+      },
+      "delete": {
+        "summary": "Cancel an Antigravity authentication attempt",
+        "operationId": "cancelAntigravityAuthAttempt",
+        "tags": ["Antigravity"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"204": {"description": "Attempt cancelled"}, "404": {"description": "Attempt not found"}}
+      }
+    },
+    "/antigravity/auth/{attemptId}/input": {
+      "post": {
+        "summary": "Submit an authorization code or interactive Business SSO response",
+        "operationId": "submitAntigravityAuthInput",
+        "tags": ["Antigravity"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["input"], "properties": {"input": {"type": "string"}}}}}},
+        "responses": {"204": {"description": "Input accepted"}, "404": {"description": "Attempt not found"}, "409": {"description": "Attempt is not waiting for input"}}
       }
     },
     "/codex/device-auth/token": {

@@ -17,12 +17,23 @@ const FileTypeCodexAuth = "codex_auth"
 // FileTypeClaudeCredentials is the type name for ~/.claude/.credentials.json (Claude Code credentials).
 const FileTypeClaudeCredentials = "claude_credentials"
 
+// FileTypeAntigravityAuth stores the portable file-backed token bundle created
+// by `agy acp --login` on headless hosts. The provisioner expands the bundle
+// into ~/.gemini/antigravity-cli before starting Antigravity.
+const FileTypeAntigravityAuth = "antigravity_auth"
+
+// FileTypeGoogleADC is the standard Google Application Default Credentials
+// file consumed by Antigravity when AGY_ADC_AUTH=true.
+const FileTypeGoogleADC = "google_adc"
+
 // ManagedFileTypes maps a file type name to its absolute path inside the agent container.
 // This is the single source of truth shared by the provisioner (runFilesSync) and
 // the credentials controller (PUT /credentials/{name}).
 var ManagedFileTypes = map[string]string{
 	FileTypeCodexAuth:         "/home/agentapi/.codex/auth.json",
 	FileTypeClaudeCredentials: "/home/agentapi/.claude/.credentials.json",
+	FileTypeAntigravityAuth:   "/home/agentapi/.ccplant/antigravity-auth.json",
+	FileTypeGoogleADC:         "/home/agentapi/.config/gcloud/application_default_credentials.json",
 }
 
 // ManagedFileTypeOrder defines the canonical ordering of file types used when
@@ -30,6 +41,8 @@ var ManagedFileTypes = map[string]string{
 var ManagedFileTypeOrder = []string{
 	FileTypeCodexAuth,
 	FileTypeClaudeCredentials,
+	FileTypeAntigravityAuth,
+	FileTypeGoogleADC,
 }
 
 // ManagedFile represents a file path and its contents, used to persist arbitrary

@@ -61,6 +61,32 @@ func TestStartCodexDeviceAuthCreatesIsolatedPod(t *testing.T) {
 	}
 }
 
+func TestStartAntigravityAuthCreatesIsolatedPod(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	manager := &KubernetesSessionManager{
+		client: client, namespace: "test",
+		k8sConfig: &config.KubernetesSessionConfig{Image: "example/session:dev", ImagePullPolicy: "IfNotPresent"},
+	}
+	request := codexauth.WorkloadRequest{
+		AttemptID: "aga-0123456789abcdef", CallbackURL: "https://proxy.example/internal/antigravity-auth",
+		Token: "secret-token", ExpiresAt: time.Now().Add(5 * time.Minute), Provider: "antigravity",
+	}
+	if err := manager.StartCodexDeviceAuth(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := client.CoreV1().Pods("test").Get(context.Background(), codexDeviceAuthResourceName(request.AttemptID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := pod.Spec.Containers[0]
+	if worker.Name != "antigravity-auth" || len(worker.Command) < 2 || worker.Command[1] != "antigravity-auth-worker" {
+		t.Fatalf("unexpected Antigravity worker: %#v", worker)
+	}
+	if worker.VolumeMounts[1].MountPath != "/home/agentapi/.gemini" {
+		t.Fatalf("Antigravity home mount = %q", worker.VolumeMounts[1].MountPath)
+	}
+}
+
 func TestCancelCodexDeviceAuthDeletesResources(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	manager := &KubernetesSessionManager{client: client, namespace: "test", k8sConfig: &config.KubernetesSessionConfig{Image: "session"}}
