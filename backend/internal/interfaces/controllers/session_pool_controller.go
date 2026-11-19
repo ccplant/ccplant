@@ -1247,8 +1247,21 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 			localRunners[id] = true
 		}
 	}
+	runners, err := telemetry.LoggedOperation(requestCtx, "session_pool.heartbeat.list_runners", func(operationCtx context.Context) ([]*core.Runner, error) {
+		return c.listManagerRunners(operationCtx, manager.ID)
+	}, telemetry.String("session_manager.id", manager.ID))
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	managerAllocations, err := telemetry.LoggedOperation(requestCtx, "session_pool.heartbeat.list_manager_allocations", func(operationCtx context.Context) ([]*core.Allocation, error) {
+		return c.listManagerAllocations(operationCtx, manager.ID)
+	}, telemetry.String("session_manager.id", manager.ID))
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
 	if heartbeat.LocalRunnerIDs != nil {
-		if err := c.reconcileMissingManagerRunners(requestCtx, manager.ID, *heartbeat.LocalRunnerIDs); err != nil {
+		runners, managerAllocations, err = c.reconcileMissingManagerRunnersWith(requestCtx, manager.ID, *heartbeat.LocalRunnerIDs, runners, managerAllocations)
+		if err != nil {
 			return sessionRunnerStoreError(err)
 		}
 	}
@@ -1282,21 +1295,9 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 	allocatedRunnerIDs := make([]string, 0)
 	protectedRunners := make(map[string]bool)
 	allocatedRunnerPolicies := make(map[string]sessionsettings.SessionMeta)
-	runners, err := telemetry.LoggedOperation(requestCtx, "session_pool.heartbeat.list_runners", func(operationCtx context.Context) ([]*core.Runner, error) {
-		return c.listManagerRunners(operationCtx, manager.ID)
-	}, telemetry.String("session_manager.id", manager.ID))
-	if err != nil {
-		return sessionRunnerStoreError(err)
-	}
 	runnersByPool := make(map[string][]*core.Runner)
 	for _, runner := range runners {
 		runnersByPool[runner.Pool] = append(runnersByPool[runner.Pool], runner)
-	}
-	managerAllocations, err := telemetry.LoggedOperation(requestCtx, "session_pool.heartbeat.list_manager_allocations", func(operationCtx context.Context) ([]*core.Allocation, error) {
-		return c.listManagerAllocations(operationCtx, manager.ID)
-	}, telemetry.String("session_manager.id", manager.ID))
-	if err != nil {
-		return sessionRunnerStoreError(err)
 	}
 	allocationsByPool := make(map[string][]*core.Allocation)
 	for _, allocation := range managerAllocations {
@@ -1322,9 +1323,8 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 				if heartbeat.LocalRunnerIDs != nil && !localRunners[allocation.RunnerID] {
 					continue
 				}
-				var settings sessionsettings.SessionSettings
-				if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {
-					allocatedRunnerPolicies[allocation.RunnerID] = settings.Session
+				if meta, ok := allocationSessionMeta(allocation); ok {
+					allocatedRunnerPolicies[allocation.RunnerID] = meta
 				}
 			}
 			copy := *pool
@@ -1488,20 +1488,44 @@ func (c *SessionPoolController) reconcileManagerSessionStatusesInner(ctx context
 	return nil
 }
 
-func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {
-	return telemetry.LoggedOperationErr(ctx, "session_pool.heartbeat.reconcile_missing_runners", func(operationCtx context.Context) error {
-		return c.reconcileMissingManagerRunnersInner(operationCtx, managerID, localRunnerIDs)
-	}, telemetry.String("session_manager.id", managerID), telemetry.Int64("session_manager.local_runner_count", int64(len(localRunnerIDs))))
+func allocationSessionMeta(allocation *core.Allocation) (sessionsettings.SessionMeta, bool) {
+	var meta sessionsettings.SessionMeta
+	if len(allocation.SessionMeta) > 0 {
+		return meta, json.Unmarshal(allocation.SessionMeta, &meta) == nil
+	}
+	var settings sessionsettings.SessionSettings
+	if json.Unmarshal(allocation.ProvisionSettings, &settings) != nil {
+		return meta, false
+	}
+	return settings.Session, true
 }
 
-func (c *SessionPoolController) reconcileMissingManagerRunnersInner(ctx context.Context, managerID string, localRunnerIDs []string) error {
-	local := make(map[string]bool, len(localRunnerIDs))
-	for _, id := range localRunnerIDs {
-		local[id] = true
-	}
+func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {
 	allocations, err := c.listManagerAllocations(ctx, managerID)
 	if err != nil {
 		return err
+	}
+	runners, err := c.listManagerRunners(ctx, managerID)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.reconcileMissingManagerRunnersWith(ctx, managerID, localRunnerIDs, runners, allocations)
+	return err
+}
+
+func (c *SessionPoolController) reconcileMissingManagerRunnersWith(ctx context.Context, managerID string, localRunnerIDs []string, runners []*core.Runner, allocations []*core.Allocation) ([]*core.Runner, []*core.Allocation, error) {
+	err := telemetry.LoggedOperationErr(ctx, "session_pool.heartbeat.reconcile_missing_runners", func(operationCtx context.Context) error {
+		var reconcileErr error
+		runners, allocations, reconcileErr = c.reconcileMissingManagerRunnersInner(operationCtx, managerID, localRunnerIDs, runners, allocations)
+		return reconcileErr
+	}, telemetry.String("session_manager.id", managerID), telemetry.Int64("session_manager.local_runner_count", int64(len(localRunnerIDs))))
+	return runners, allocations, err
+}
+
+func (c *SessionPoolController) reconcileMissingManagerRunnersInner(ctx context.Context, managerID string, localRunnerIDs []string, runners []*core.Runner, allocations []*core.Allocation) ([]*core.Runner, []*core.Allocation, error) {
+	local := make(map[string]bool, len(localRunnerIDs))
+	for _, id := range localRunnerIDs {
+		local[id] = true
 	}
 	allocated := make(map[string]bool, len(allocations))
 	for _, allocation := range allocations {
@@ -1509,22 +1533,23 @@ func (c *SessionPoolController) reconcileMissingManagerRunnersInner(ctx context.
 			allocated[allocation.RunnerID] = true
 		}
 	}
-	runners, err := c.listManagerRunners(ctx, managerID)
-	if err != nil {
-		return err
-	}
+	remainingRunners := make([]*core.Runner, 0, len(runners))
 	for _, runner := range runners {
 		if runner.ManagerID != managerID || runner.Status != core.RunnerDraining || local[runner.ID] || allocated[runner.ID] {
+			remainingRunners = append(remainingRunners, runner)
 			continue
 		}
 		if c.now().Sub(runner.UpdatedAt) < sessionRunnerDrainingRetention {
+			remainingRunners = append(remainingRunners, runner)
 			continue
 		}
 		if err := c.store.DeleteRunner(ctx, runner.ID); err != nil && !errors.Is(err, core.ErrNotFound) {
-			return err
+			return nil, nil, err
 		}
 	}
+	remainingAllocations := make([]*core.Allocation, 0, len(allocations))
 	for _, allocation := range allocations {
+		remainingAllocations = append(remainingAllocations, allocation)
 		if allocation.ManagerID != managerID || allocation.RunnerID == "" || local[allocation.RunnerID] {
 			continue
 		}
@@ -1535,7 +1560,7 @@ func (c *SessionPoolController) reconcileMissingManagerRunnersInner(ctx context.
 		if allocation.Status == core.AllocationRunning && c.routes != nil {
 			route, e := c.routes.Get(ctx, allocation.SessionID)
 			if e != nil {
-				return e
+				return nil, nil, e
 			}
 			if route != nil && route.Status == "resuming" && !route.StatusUpdatedAt.IsZero() &&
 				c.now().Sub(route.StatusUpdatedAt) >= missingResumingRunnerRecoveryDelay {
@@ -1543,7 +1568,7 @@ func (c *SessionPoolController) reconcileMissingManagerRunnersInner(ctx context.
 				route.Status = "suspended"
 				route.StatusUpdatedAt = c.now()
 				if e = c.routes.Save(ctx, route); e != nil {
-					return e
+					return nil, nil, e
 				}
 				c.notifyRouteStatus(route)
 			}
@@ -1559,27 +1584,32 @@ func (c *SessionPoolController) reconcileMissingManagerRunnersInner(ctx context.
 		if c.routes != nil {
 			route, e := c.routes.Get(ctx, allocation.SessionID)
 			if e != nil {
-				return e
+				return nil, nil, e
 			}
 			if route != nil && route.Status != "" && route.Status != "starting" && route.Status != "creating" {
 				continue
 			}
 		}
 		retried, e := c.store.RequeueUnstarted(ctx, allocation.SessionID, allocation.RunnerID)
-		if errors.Is(e, core.ErrConflict) || errors.Is(e, core.ErrNotFound) {
+		if errors.Is(e, core.ErrConflict) {
+			continue
+		}
+		if errors.Is(e, core.ErrNotFound) {
+			remainingAllocations = remainingAllocations[:len(remainingAllocations)-1]
 			continue
 		}
 		if e != nil {
-			return e
+			return nil, nil, e
 		}
+		remainingAllocations = remainingAllocations[:len(remainingAllocations)-1]
 		if c.notifier != nil {
 			if e = c.notifier.Notify(ctx, retried.Pool); e != nil {
-				return e
+				return nil, nil, e
 			}
 		}
 	}
 
-	return nil
+	return remainingRunners, remainingAllocations, nil
 }
 
 // RetireRunner must succeed before a manager deletes an idle workload.

@@ -86,6 +86,7 @@ var libSQLResourceTables = []libSQLResourceTable{
 	{name: "agentapi_session_runners", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "runner", indexColumns: []string{"runner_pool", "runner_manager", "runner_status", "runner_dind"}},
 	{name: "agentapi_session_allocations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "allocation", indexColumns: []string{"runner_pool", "runner_manager", "runner_status", "runner_dind"}},
 	{name: "agentapi_session_configurations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "configuration"},
+	{name: "agentapi_session_allocation_settings", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "allocation-settings"},
 }
 
 const libSQLFallbackTable = "agentapi_kv"
@@ -113,6 +114,7 @@ func libSQLSessionRunnerTableForKey(kind Kind, key string) (string, bool) {
 		{"agentapi-session-pool-binding-", "agentapi_session_pool_bindings"},
 		{"agentapi-session-runner-", "agentapi_session_runners"},
 		{"agentapi-session-allocation-pool-", "agentapi_session_allocations"},
+		{"agentapi-session-allocation-settings-", "agentapi_session_allocation_settings"},
 		{"agentapi-session-configuration-", "agentapi_session_configurations"},
 	}
 	for _, candidate := range prefixes {

@@ -1,6 +1,9 @@
 package sessionrunner
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	CapabilityRunnerClaimV1     = "runner_claim_v1"
@@ -212,6 +215,7 @@ type Allocation struct {
 	RuntimeToken         string            `json:"runtime_token,omitempty"`
 	RuntimeTokenHash     string            `json:"runtime_token_hash,omitempty"`
 	ProvisionSettings    []byte            `json:"provision_settings,omitempty"`
+	SessionMeta          json.RawMessage   `json:"session_meta,omitempty"`
 	CreatedAt            time.Time         `json:"created_at"`
 	UpdatedAt            time.Time         `json:"updated_at"`
 }

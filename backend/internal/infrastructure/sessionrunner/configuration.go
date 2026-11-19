@@ -137,24 +137,9 @@ func (s *Store) SaveConfiguration(ctx context.Context, c *core.Configuration) er
 }
 func (s *Store) UpdateProvisionSettings(ctx context.Context, id string, settings []byte) error {
 	var a core.Allocation
-	record, err := s.get(ctx, allocationName(id), &a)
-	if err != nil {
-		return err
-	}
-	a.ProvisionSettings = settings
-	a.UpdatedAt = s.now()
-	var doc secretDocument
-	if err := json.Unmarshal(record.Value, &doc); err != nil {
-		return err
-	}
-	doc.Data[dataKey], err = json.Marshal(&a)
-	if err != nil {
-		return err
-	}
-	record.Value, err = json.Marshal(doc)
-	if err != nil {
-		return err
-	}
-	_, err = s.kv.Update(ctx, record)
-	return err
+	return s.mutate(ctx, allocationName(id), &a, func() error {
+		a.ProvisionSettings = settings
+		a.UpdatedAt = s.now()
+		return nil
+	})
 }
