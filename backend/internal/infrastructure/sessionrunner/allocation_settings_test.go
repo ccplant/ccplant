@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,6 +129,41 @@ func TestUpdateProvisionSettingsReplacesSettingsAndSessionMeta(t *testing.T) {
 	s := newEncryptedLibSQLTestStore(t)
 	require.NoError(t, s.Enqueue(ctx, &core.Allocation{SessionID: "session", Pool: "pool", ProvisionSettings: testProvisionSettings(t, "alice", 1024)}))
 
+	next := testProvisionSettings(t, "bob", 2048)
+	require.NoError(t, s.UpdateProvisionSettings(ctx, "session", next))
+
+	stored := storedAllocation(t, s, "session")
+	require.Empty(t, stored.ProvisionSettings)
+	require.JSONEq(t, `{"user_id":"bob","agent_type":"claude-acp"}`, string(stored.SessionMeta))
+	fetched, err := s.GetAllocation(ctx, "session")
+	require.NoError(t, err)
+	require.Equal(t, next, fetched.ProvisionSettings)
+}
+
+type failAllocationUpdateStore struct {
+	kvstore.Store
+	mu        sync.Mutex
+	remaining int
+}
+
+func (s *failAllocationUpdateStore) Update(ctx context.Context, record kvstore.Record) (kvstore.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.remaining > 0 && record.Key == allocationName("session") {
+		s.remaining--
+		return kvstore.Record{}, kvstore.ErrConflict
+	}
+	return s.Store.Update(ctx, record)
+}
+
+func TestUpdateProvisionSettingsRetriesAllocationConflict(t *testing.T) {
+	ctx := context.Background()
+	backend := &versionedMemoryStore{records: make(map[string]kvstore.Record)}
+	flaky := &failAllocationUpdateStore{Store: backend}
+	s := NewStore(flaky, "test")
+	require.NoError(t, s.Enqueue(ctx, &core.Allocation{SessionID: "session", Pool: "pool", ProvisionSettings: testProvisionSettings(t, "alice", 1024)}))
+
+	flaky.remaining = 1
 	next := testProvisionSettings(t, "bob", 2048)
 	require.NoError(t, s.UpdateProvisionSettings(ctx, "session", next))
 
