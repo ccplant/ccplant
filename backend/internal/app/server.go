@@ -15,8 +15,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +44,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
+	storageattachmentuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/storageattachment"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -83,12 +82,13 @@ type Server struct {
 	sessionCountWorker          *sessioncount.Worker
 	sessionCountWorkers         sync.WaitGroup
 	sessionCountCancel          context.CancelFunc
-	settingsRepo                portrepos.SettingsRepository                    // Settings repository
-	credentialsRepo             portrepos.CredentialsRepository                 // Credentials repository
-	shareRepo                   portrepos.ShareRepository                       // Share repository for session sharing
-	teamConfigRepo              portrepos.TeamConfigRepository                  // Team configuration repository
-	sandboxPolicyRepo           portrepos.SandboxPolicyRepository               // Sandbox policy repository
-	storageRepo                 portrepos.StorageRepository                     // Scoped persistent storage metadata
+	settingsRepo                portrepos.SettingsRepository      // Settings repository
+	credentialsRepo             portrepos.CredentialsRepository   // Credentials repository
+	shareRepo                   portrepos.ShareRepository         // Share repository for session sharing
+	teamConfigRepo              portrepos.TeamConfigRepository    // Team configuration repository
+	sandboxPolicyRepo           portrepos.SandboxPolicyRepository // Sandbox policy repository
+	storageRepo                 portrepos.StorageRepository       // Scoped persistent storage metadata
+	storageAttachmentResolver   *storageattachmentuc.Resolver
 	storageObjectStore          services.StorageObjectStore                     // Immutable object_snapshot blobs
 	sandboxDomainRepo           *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
 	sessionRouteRepo            portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
@@ -615,6 +615,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		teamConfigRepo:              teamConfigRepo,
 		sandboxPolicyRepo:           sandboxPolicyRepo,
 		storageRepo:                 storageRepo,
+		storageAttachmentResolver:   storageattachmentuc.NewResolver(storageRepo),
 		storageObjectStore:          storageObjectStore,
 		sandboxDomainRepo:           sandboxDomainRepo,
 		sessionRouteRepo:            sessionRouteRepo,
@@ -2214,152 +2215,13 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 	if startReq.Params == nil || len(startReq.Params.Storages) == 0 {
 		return nil, nil
 	}
-	if s.storageRepo == nil {
-		return nil, fmt.Errorf("storage repository is unavailable")
-	}
-	seenSources := make(map[string][]entities.StorageAttachment, len(startReq.Params.Storages))
-	seenPaths := make(map[string]struct{}, len(startReq.Params.Storages))
-	resolved := make([]entities.ResolvedStorageAttachment, 0, len(startReq.Params.Storages))
-	for _, attachment := range startReq.Params.Storages {
-		attachment.StorageID = strings.TrimSpace(attachment.StorageID)
-		attachment.StoragePath = strings.Trim(strings.TrimSpace(attachment.StoragePath), "/")
-		mountPath, err := normalizeStorageMountPath(attachment.MountPath)
-		if attachment.StorageID == "" || err != nil {
-			return nil, fmt.Errorf("storage_id and a valid non-root mount_path are required")
-		}
-		attachment.MountPath = mountPath
-		if storageMountPathReserved(attachment.MountPath) && !attachment.Managed {
-			return nil, fmt.Errorf("storage mount path %q is reserved", attachment.MountPath)
-		}
-		if attachment.StoragePath != "" {
-			cleaned := filepath.ToSlash(filepath.Clean(attachment.StoragePath))
-			if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || filepath.IsAbs(attachment.StoragePath) {
-				return nil, fmt.Errorf("storage_path must be a normalized relative path")
-			}
-			attachment.StoragePath = cleaned
-		}
-		for _, existing := range seenSources[attachment.StorageID] {
-			if storageSourcePathsOverlap(attachment.StoragePath, existing.StoragePath) && !managedStorageNamespaceOverlapAllowed(attachment, existing) {
-				return nil, fmt.Errorf("storage path %q overlaps %q for storage %q", attachment.StoragePath, existing.StoragePath, attachment.StorageID)
-			}
-		}
-		for existing := range seenPaths {
-			if attachment.MountPath == existing || strings.HasPrefix(attachment.MountPath+"/", existing+"/") || strings.HasPrefix(existing+"/", attachment.MountPath+"/") {
-				return nil, fmt.Errorf("storage mount path %q overlaps %q", attachment.MountPath, existing)
-			}
-		}
-		storage, err := s.storageRepo.GetByID(ctx, attachment.StorageID)
-		if err != nil {
-			return nil, fmt.Errorf("load storage %q: %w", attachment.StorageID, err)
-		}
-		if storage.Scope() != startReq.Scope || (storage.Scope() == entities.ScopeUser && storage.OwnerID() != userID) || (storage.Scope() == entities.ScopeTeam && storage.TeamID() != startReq.TeamID) {
-			return nil, fmt.Errorf("storage %q does not belong to the session scope", attachment.StorageID)
-		}
-		if storage.State() != entities.StorageStateReady {
-			return nil, fmt.Errorf("storage %q is not ready", attachment.StorageID)
-		}
-		if storage.Pool() != "" && pool != "" && storage.Pool() != pool {
-			return nil, fmt.Errorf("storage %q requires pool %q, selected pool is %q", attachment.StorageID, storage.Pool(), pool)
-		}
-		entry := entities.ResolvedStorageAttachment{
-			StorageAttachment: attachment, Kind: storage.Kind(), Pool: storage.Pool(),
-			Provider: storage.Provider(), Size: storage.Size(), Revision: storage.Revision(),
-		}
-		if storage.Kind() == entities.StorageKindObjectSnapshot {
-			files := storage.Files()
-			paths := make([]string, 0, len(files))
-			selectedFiles := make(map[string]entities.StorageFile, len(files))
-			for filePath, file := range files {
-				if !storageAttachmentIncludesRemotePath(attachment, filePath) {
-					continue
-				}
-				if attachment.StoragePath != "" {
-					prefix := attachment.StoragePath + "/"
-					if !strings.HasPrefix(filePath, prefix) {
-						continue
-					}
-					filePath = strings.TrimPrefix(filePath, prefix)
-					file.Path = filePath
-				}
-				if !file.Deleted {
-					paths = append(paths, filePath)
-					selectedFiles[filePath] = file
-				}
-			}
-			sort.Strings(paths)
-			for _, filePath := range paths {
-				entry.Files = append(entry.Files, selectedFiles[filePath])
-			}
-		}
-		seenSources[attachment.StorageID] = append(seenSources[attachment.StorageID], attachment)
-		seenPaths[attachment.MountPath] = struct{}{}
-		resolved = append(resolved, entry)
-	}
-	return resolved, nil
-}
-
-func normalizeStorageMountPath(value string) (string, error) {
-	const sessionHome = "/home/agentapi"
-
-	value = strings.TrimSpace(value)
-	segments := strings.Split(filepath.ToSlash(value), "/")
-	for _, segment := range segments {
-		if segment == "." || segment == ".." {
-			return "", fmt.Errorf("mount path must not contain traversal segments")
-		}
-	}
-	if value == "" {
-		return "", fmt.Errorf("mount path is required")
-	}
-	if !filepath.IsAbs(value) {
-		value = filepath.Join(sessionHome, value)
-	}
-	value = filepath.Clean(value)
-	if value == "/" {
-		return "", fmt.Errorf("mount path must not be root")
-	}
-	return value, nil
-}
-
-func storageSourcePathsOverlap(left, right string) bool {
-	return left == "" || right == "" || left == right || strings.HasPrefix(left+"/", right+"/") || strings.HasPrefix(right+"/", left+"/")
-}
-
-func managedStorageNamespaceOverlapAllowed(left, right entities.StorageAttachment) bool {
-	if left.Managed == right.Managed {
-		return false
-	}
-	managed := left
-	regular := right
-	if !managed.Managed {
-		managed, regular = right, left
-	}
-	return regular.StoragePath == "" && managedStorageNamespace(managed.StoragePath)
-}
-
-func managedStorageNamespace(storagePath string) bool {
-	return storagePath == "workspace" || strings.HasPrefix(storagePath, "workspace/") || storagePath == "session-state" || strings.HasPrefix(storagePath, "session-state/")
-}
-
-// storageAttachmentIncludesRemotePath keeps system-managed state out of a
-// regular root attachment. Managed attachments mount those namespaces at the
-// agent-specific paths instead, so syncing them through both attachments would
-// allow the two workers to overwrite or delete each other's files.
-func storageAttachmentIncludesRemotePath(attachment entities.StorageAttachment, remotePath string) bool {
-	if attachment.Managed || attachment.StoragePath != "" {
-		return true
-	}
-	return !managedStorageNamespace(remotePath)
-}
-
-func storageMountPathReserved(value string) bool {
-	reserved := []string{"/bin", "/boot", "/dev", "/etc", "/proc", "/sys", "/usr", "/var/run", "/session-settings", "/credentials", "/opt/ccplant", "/home/agentapi/.codex", "/home/agentapi/.claude", "/home/agentapi/.docker", "/home/agentapi/workdir"}
-	for _, prefix := range reserved {
-		if value == prefix || (prefix != "/home/agentapi/workdir" && strings.HasPrefix(value, prefix+"/")) {
-			return true
-		}
-	}
-	return false
+	return s.storageAttachmentResolver.Resolve(ctx, storageattachmentuc.Request{
+		Attachments: startReq.Params.Storages,
+		Scope:       startReq.Scope,
+		TeamID:      startReq.TeamID,
+		UserID:      userID,
+		Pool:        pool,
+	})
 }
 
 func (s *Server) ResolveRestartSettings(ctx context.Context, id string, input entities.StartRequest, userID string, teams []string) (*sessionsettings.SessionSettings, error) {
