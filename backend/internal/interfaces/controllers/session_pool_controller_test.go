@@ -477,10 +477,7 @@ func TestDeleteAdminRunnerCleansSessionWhenRunnerRecordIsAlreadyGone(t *testing.
 }
 
 type testManagerLiveness struct {
-	connected   map[string]bool
-	heartbeats  map[string]int
-	unhealthy   map[string]bool
-	recordError error
+	connected map[string]bool
 }
 
 type countingRunnerStore struct {
@@ -653,21 +650,6 @@ func (l *testManagerLiveness) TouchManager(_ context.Context, managerID, _ strin
 
 func (l *testManagerLiveness) IsManagerConnected(_ context.Context, managerID string) (bool, error) {
 	return l.connected[managerID], nil
-}
-
-func (l *testManagerLiveness) RecordManagerHeartbeat(_ context.Context, managerID string) error {
-	if l.recordError != nil {
-		return l.recordError
-	}
-	if l.heartbeats == nil {
-		l.heartbeats = map[string]int{}
-	}
-	l.heartbeats[managerID]++
-	return nil
-}
-
-func (l *testManagerLiveness) IsManagerSchedulable(_ context.Context, managerID string) (bool, error) {
-	return l.connected[managerID] && !l.unhealthy[managerID], nil
 }
 
 func TestSessionManagerHeartbeatUsesSharedLivenessWithoutPersistingManager(t *testing.T) {

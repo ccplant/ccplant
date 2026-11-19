@@ -18,7 +18,7 @@ type resolverStore struct {
 
 type resolverLiveness map[string]bool
 
-func (l resolverLiveness) IsManagerSchedulable(_ context.Context, managerID string) (bool, error) {
+func (l resolverLiveness) IsManagerConnected(_ context.Context, managerID string) (bool, error) {
 	return l[managerID], nil
 }
 

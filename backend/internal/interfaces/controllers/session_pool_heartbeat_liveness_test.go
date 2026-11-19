@@ -1,12 +1,15 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
@@ -30,6 +33,15 @@ func (s *failingPoolSupplierStore) ListPoolSuppliers(ctx context.Context) ([]*co
 	return s.Store.ListPoolSuppliers(ctx)
 }
 
+type failingTouchLiveness struct {
+	testManagerLiveness
+	err error
+}
+
+func (l *failingTouchLiveness) TouchManager(context.Context, string, string) error {
+	return l.err
+}
+
 func newHeartbeatLivenessFixture(t *testing.T) (*failingPoolSupplierStore, *core.Manager, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -50,24 +62,23 @@ func callHeartbeat(t *testing.T, controller *SessionPoolController, managerID, t
 	return result.Code
 }
 
-func TestSessionManagerHeartbeatRecordsCompletionOnlyWhenItSucceeds(t *testing.T) {
+func TestSessionManagerHeartbeatMarksManagerAliveOnlyWhenItSucceeds(t *testing.T) {
 	store, manager, token := newHeartbeatLivenessFixture(t)
 	liveness := &testManagerLiveness{connected: map[string]bool{}}
 	controller := NewSessionPoolController(store, nil).WithManagerLiveness(liveness)
 
 	store.fail = true
 	require.NotEqual(t, http.StatusOK, callHeartbeat(t, controller, manager.ID, token))
-	require.True(t, liveness.connected[manager.ID], "a failed heartbeat still proves the manager can reach the API")
-	require.Zero(t, liveness.heartbeats[manager.ID], "a failed heartbeat must not mark the manager as schedulable")
+	require.False(t, liveness.connected[manager.ID], "a failed heartbeat must not mark the manager alive")
 
 	store.fail = false
 	require.Equal(t, http.StatusOK, callHeartbeat(t, controller, manager.ID, token))
-	require.Equal(t, 1, liveness.heartbeats[manager.ID])
+	require.True(t, liveness.connected[manager.ID])
 }
 
-func TestSessionManagerHeartbeatFailsWhenCompletionCannotBeRecorded(t *testing.T) {
+func TestSessionManagerHeartbeatFailsWhenAliveMarkCannotBeWritten(t *testing.T) {
 	store, manager, token := newHeartbeatLivenessFixture(t)
-	liveness := &testManagerLiveness{connected: map[string]bool{}, recordError: errors.New("redis unavailable")}
+	liveness := &failingTouchLiveness{testManagerLiveness: testManagerLiveness{connected: map[string]bool{}}, err: errors.New("redis unavailable")}
 	controller := NewSessionPoolController(store, nil).WithManagerLiveness(liveness)
 
 	require.Equal(t, http.StatusServiceUnavailable, callHeartbeat(t, controller, manager.ID, token))
@@ -116,40 +127,29 @@ func TestSessionManagerHeartbeatDoesNotRevertConcurrentManagerChanges(t *testing
 	require.False(t, persisted.LastHeartbeatAt.IsZero())
 }
 
-func TestRunnerClaimRequiresSchedulableManagerNotOnlyControlConnection(t *testing.T) {
-	ctx := context.Background()
-	store, manager, _ := newHeartbeatLivenessFixture(t)
-	runnerToken, runnerTokenHash, err := newSessionRunnerToken()
-	require.NoError(t, err)
-	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: manager.ID, Pool: "linux", TokenHash: runnerTokenHash, Status: core.RunnerIdle}))
-	require.NoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux"}))
-	liveness := &testManagerLiveness{connected: map[string]bool{manager.ID: true}, unhealthy: map[string]bool{manager.ID: true}}
-	controller := NewSessionPoolController(store, nil).WithManagerLiveness(liveness)
-	headers := map[string]string{"Authorization": "Bearer " + runnerToken, "X-Session-Runner-ID": "runner-a"}
+func TestManagerControlPollingDoesNotMarkManagerAlive(t *testing.T) {
+	sessionRunners, manager, token := newHeartbeatLivenessFixture(t)
+	control := &runtimeControllerStore{}
+	controller := NewESMControlController(control, nil, sessionRunners)
 
-	stale := callSessionPoolHandler(t, controller.ClaimRunnerAllocation, http.MethodGet, "/internal/session-runners/allocations/next?wait=0s", nil, nil, headers)
-	require.Equal(t, http.StatusServiceUnavailable, stale.Code, stale.Body.String())
-
-	liveness.unhealthy[manager.ID] = false
-	claimed := callSessionPoolHandler(t, controller.ClaimRunnerAllocation, http.MethodGet, "/internal/session-runners/allocations/next?wait=0s", nil, nil, headers)
-	require.Equal(t, http.StatusOK, claimed.Code, claimed.Body.String())
-}
-
-func TestAvailablePoolsExcludeManagersWithStaleHeartbeat(t *testing.T) {
-	ctx := context.Background()
-	store, manager, _ := newHeartbeatLivenessFixture(t)
-	require.NoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "linux", SubjectType: core.SubjectUser, SubjectID: "alice", Enabled: true}))
-	liveness := &testManagerLiveness{connected: map[string]bool{manager.ID: true}, unhealthy: map[string]bool{manager.ID: true}}
-	resolver := core.NewResolver(store, 90*time.Second).WithManagerLiveness(liveness)
-	alice := core.Subject{Type: core.SubjectUser, ID: "alice"}
-
-	resolved, err := resolver.Resolve(ctx, alice, "", nil)
-	require.NoError(t, err)
-	require.Nil(t, resolved, "a manager whose heartbeat is stale must not receive new sessions")
-
-	liveness.unhealthy[manager.ID] = false
-	resolved, err = resolver.Resolve(ctx, alice, "", nil)
-	require.NoError(t, err)
-	require.NotNil(t, resolved)
-	require.Equal(t, "linux", resolved.Pool.Name)
+	for _, call := range []struct {
+		method  string
+		path    string
+		body    string
+		handler echo.HandlerFunc
+	}{
+		{http.MethodGet, "/internal/external-session-managers/manager-a/control/commands", "", controller.WaitCommands},
+		{http.MethodPost, "/internal/external-session-managers/manager-a/control/frames", `{"frames":[{"id":"frame-a","request_id":"request-a","sequence":1}]}`, controller.AppendFrames},
+	} {
+		req := httptest.NewRequest(call.method, call.path, bytes.NewBufferString(call.body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		ctx := echo.New().NewContext(req, rec)
+		ctx.SetParamNames("managerId")
+		ctx.SetParamValues(manager.ID)
+		require.NoError(t, call.handler(ctx))
+		require.Less(t, rec.Code, 300, "%s %s: %s", call.method, call.path, rec.Body.String())
+		require.Empty(t, control.touched, "%s must not mark the manager alive; only a completed heartbeat does", call.path)
+	}
 }

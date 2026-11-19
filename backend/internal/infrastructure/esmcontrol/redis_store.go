@@ -3,9 +3,7 @@ package esmcontrol
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -18,19 +16,14 @@ const (
 	// for longer than the manager heartbeat window. Keep its command, response,
 	// and ownership records long enough to survive Cloud Run SSE reconnects and
 	// long-running tools. The bounded streams and TTL still provide cleanup.
-	streamTTL          = 24 * time.Hour
-	connectionTTL      = 75 * time.Second
-	heartbeatFreshness = 90 * time.Second
-	heartbeatRecordTTL = 24 * time.Hour
+	streamTTL     = 24 * time.Hour
+	connectionTTL = 75 * time.Second
 )
 
-type RedisStore struct {
-	client *redis.Client
-	now    func() time.Time
-}
+type RedisStore struct{ client *redis.Client }
 
 func NewRedisStore(client *redis.Client) *RedisStore {
-	return &RedisStore{client: client, now: time.Now}
+	return &RedisStore{client: client}
 }
 
 func commandKey(managerID string) string {
@@ -38,9 +31,6 @@ func commandKey(managerID string) string {
 }
 func connectionKey(managerID string) string {
 	return "agentapi:esm:{" + managerID + "}:control-connection"
-}
-func heartbeatKey(managerID string) string {
-	return "agentapi:esm:{" + managerID + "}:heartbeat"
 }
 func commandAckKey(managerID string) string {
 	return "agentapi:esm:{" + managerID + "}:command-ack"
@@ -104,47 +94,6 @@ func (s *RedisStore) IsManagerConnected(ctx context.Context, managerID string) (
 		return false, fmt.Errorf("check ESM connection: %w", err)
 	}
 	return n > 0, nil
-}
-
-func (s *RedisStore) RecordManagerHeartbeat(ctx context.Context, managerID string) error {
-	if managerID == "" {
-		return fmt.Errorf("manager id is required")
-	}
-	value := strconv.FormatInt(s.clock().UnixMilli(), 10)
-	if err := s.client.Set(ctx, heartbeatKey(managerID), value, heartbeatRecordTTL).Err(); err != nil {
-		return fmt.Errorf("record ESM heartbeat: %w", err)
-	}
-	return nil
-}
-
-func (s *RedisStore) IsManagerSchedulable(ctx context.Context, managerID string) (bool, error) {
-	connected, err := s.IsManagerConnected(ctx, managerID)
-	if err != nil || !connected {
-		return false, err
-	}
-	raw, err := s.client.Get(ctx, heartbeatKey(managerID)).Result()
-	if errors.Is(err, redis.Nil) {
-		return true, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("check ESM heartbeat: %w", err)
-	}
-	return heartbeatIsFresh(raw, s.clock(), heartbeatFreshness), nil
-}
-
-func heartbeatIsFresh(raw string, now time.Time, freshness time.Duration) bool {
-	millis, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return false
-	}
-	return now.Sub(time.UnixMilli(millis)) <= freshness
-}
-
-func (s *RedisStore) clock() time.Time {
-	if s.now == nil {
-		return time.Now()
-	}
-	return s.now()
 }
 
 func (s *RedisStore) EnqueueCommand(ctx context.Context, managerID string, command core.Command) (string, error) {

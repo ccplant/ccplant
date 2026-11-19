@@ -260,7 +260,7 @@ func orderManagers(authorized []*sessionrunnercore.Manager) []*sessionrunnercore
 
 type tunnelLiveness struct{ tunnel ControlTunnel }
 
-func (l tunnelLiveness) IsManagerSchedulable(ctx context.Context, managerID string) (bool, error) {
+func (l tunnelLiveness) IsManagerConnected(ctx context.Context, managerID string) (bool, error) {
 	return l.tunnel.IsConnected(ctx, managerID), nil
 }
 

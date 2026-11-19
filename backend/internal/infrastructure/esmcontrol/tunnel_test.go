@@ -23,10 +23,6 @@ func (s *tunnelStore) TouchManager(context.Context, string, string) error { retu
 func (s *tunnelStore) IsManagerConnected(context.Context, string) (bool, error) {
 	return s.connected, nil
 }
-func (s *tunnelStore) RecordManagerHeartbeat(context.Context, string) error { return nil }
-func (s *tunnelStore) IsManagerSchedulable(context.Context, string) (bool, error) {
-	return s.connected, nil
-}
 func (s *tunnelStore) EnqueueCommand(_ context.Context, _ string, command core.Command) (string, error) {
 	s.command = command
 	s.commands = append(s.commands, command)

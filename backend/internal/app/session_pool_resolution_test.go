@@ -17,7 +17,7 @@ type connectedManagerStore struct {
 	connected bool
 }
 
-func (s connectedManagerStore) IsManagerSchedulable(context.Context, string) (bool, error) {
+func (s connectedManagerStore) IsManagerConnected(context.Context, string) (bool, error) {
 	return s.connected, nil
 }
 

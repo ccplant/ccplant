@@ -142,8 +142,6 @@ func (c *SessionPoolController) WithManagerTunnel(tunnel ESMControlTunnel) *Sess
 type managerLiveness interface {
 	TouchManager(context.Context, string, string) error
 	IsManagerConnected(context.Context, string) (bool, error)
-	RecordManagerHeartbeat(context.Context, string) error
-	IsManagerSchedulable(context.Context, string) (bool, error)
 }
 
 type managerScopedSessionRunnerStore interface {
@@ -1107,7 +1105,7 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 	}
 	available := core.ManagerAvailable(manager, sessionManagerHeartbeatTTL, c.now())
 	if c.liveness != nil {
-		available, err = c.liveness.IsManagerSchedulable(ctx.Request().Context(), manager.ID)
+		available, err = c.liveness.IsManagerConnected(ctx.Request().Context(), manager.ID)
 	}
 	if err != nil || !available {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager heartbeat is stale")
@@ -1218,13 +1216,6 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 	}
 	requestCtx := ctx.Request().Context()
 	telemetry.SetAttributes(requestCtx, telemetry.String("session_manager.id", manager.ID))
-	if c.liveness != nil {
-		if err := telemetry.LoggedOperationErr(requestCtx, "session_pool.heartbeat.touch_manager_liveness", func(operationCtx context.Context) error {
-			return c.liveness.TouchManager(operationCtx, manager.ID, "runner")
-		}, telemetry.String("session_manager.id", manager.ID)); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh session manager liveness").SetInternal(err)
-		}
-	}
 	var heartbeat struct {
 		LocalRunnerIDs  *[]string         `json:"local_runner_ids"`
 		SessionStatuses map[string]string `json:"session_statuses"`
@@ -1382,10 +1373,10 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 
 func (c *SessionPoolController) recordManagerHeartbeat(ctx context.Context, manager *core.Manager) error {
 	if c.liveness != nil {
-		if err := telemetry.LoggedOperationErr(ctx, "session_pool.heartbeat.record_manager_heartbeat", func(operationCtx context.Context) error {
-			return c.liveness.RecordManagerHeartbeat(operationCtx, manager.ID)
+		if err := telemetry.LoggedOperationErr(ctx, "session_pool.heartbeat.touch_manager_liveness", func(operationCtx context.Context) error {
+			return c.liveness.TouchManager(operationCtx, manager.ID, "runner")
 		}, telemetry.String("session_manager.id", manager.ID)); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to record session manager heartbeat").SetInternal(err)
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh session manager liveness").SetInternal(err)
 		}
 		return nil
 	}
