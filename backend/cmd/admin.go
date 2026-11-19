@@ -25,15 +25,22 @@ type adminOptions struct {
 }
 
 type adminRunner struct {
-	ID          string    `json:"id"`
-	ManagerID   string    `json:"manager_id"`
-	ManagerName string    `json:"manager_name,omitempty"`
-	Pool        string    `json:"pool,omitempty"`
-	FromPool    bool      `json:"from_pool"`
-	Status      string    `json:"status"`
-	SessionID   string    `json:"session_id,omitempty"`
-	Online      bool      `json:"online"`
-	LastSeen    time.Time `json:"last_seen,omitempty"`
+	ID           string `json:"id"`
+	ManagerID    string `json:"manager_id"`
+	ManagerName  string `json:"manager_name,omitempty"`
+	Pool         string `json:"pool,omitempty"`
+	FromPool     bool   `json:"from_pool"`
+	Status       string `json:"status"`
+	SessionID    string `json:"session_id,omitempty"`
+	Online       bool   `json:"online"`
+	Connectivity struct {
+		State  string `json:"state"`
+		Source string `json:"source,omitempty"`
+	} `json:"connectivity"`
+	WorkloadState       string    `json:"workload_state,omitempty"`
+	ManagerOnline       *bool     `json:"manager_online,omitempty"`
+	ManagerConnectivity string    `json:"manager_connectivity,omitempty"`
+	LastSeen            time.Time `json:"last_seen,omitempty"`
 }
 
 type adminRunnerList struct {
@@ -83,13 +90,13 @@ or ~/.ccplant/config.yaml. The API token must have admin permission.`,
 			return writeJSON(cmd.OutOrStdout(), adminRunnerList{Runners: items})
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "RUNNER ID\tSTATUS\tONLINE\tSESSION ID\tMANAGER\tPOOL\tLAST SEEN")
+		_, _ = fmt.Fprintln(w, "RUNNER ID\tLIFECYCLE\tRUNNER\tWORKLOAD\tMANAGER\tSESSION ID\tMANAGER NAME\tPOOL\tLAST SEEN")
 		for _, item := range items {
 			manager := item.ManagerName
 			if manager == "" {
 				manager = item.ManagerID
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%s\t%s\t%s\n", item.ID, item.Status, item.Online, emptyDash(item.SessionID), manager, emptyDash(item.Pool), formatAdminTime(item.LastSeen))
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, item.Status, adminRunnerConnectivity(item), emptyDash(item.WorkloadState), adminRunnerManagerConnectivity(item), emptyDash(item.SessionID), manager, emptyDash(item.Pool), formatAdminTime(item.LastSeen))
 		}
 		return w.Flush()
 	}
@@ -186,7 +193,11 @@ may leave resources in the manager cluster.`,
 			if err != nil {
 				return err
 			}
-			if !runner.Online && !force {
+			managerState := adminRunnerManagerConnectivity(*runner)
+			if managerState == "unknown" {
+				return errors.New("runner's session manager connectivity is unknown; refusing deletion until it can be determined")
+			}
+			if managerState == "offline" && !force {
 				return errors.New("runner's session manager is offline; pass --force to remove parent-side metadata only")
 			}
 			if err := api.deleteRunner(cmd.Context(), *runner, force); err != nil {
@@ -229,7 +240,7 @@ offline managers will not recover.`,
 			}
 			offline := make([]adminRunner, 0)
 			for _, item := range items {
-				if !item.Online {
+				if adminRunnerManagerOffline(item) {
 					offline = append(offline, item)
 				}
 			}
@@ -284,6 +295,45 @@ offline managers will not recover.`,
 	}
 	command.Flags().BoolVar(&confirm, "confirm", false, "delete all matching offline runners")
 	return command
+}
+
+func adminRunnerManagerOnline(item adminRunner) bool {
+	if item.ManagerConnectivity != "" {
+		return item.ManagerConnectivity == "online"
+	}
+	if item.ManagerOnline != nil {
+		return *item.ManagerOnline
+	}
+	// Older APIs exposed only online, where manager reachability and runner
+	// reachability were conflated. Preserve compatibility during a rolling update.
+	return item.Online
+}
+
+func adminRunnerConnectivity(item adminRunner) string {
+	if item.Connectivity.State != "" {
+		return item.Connectivity.State
+	}
+	if item.Online {
+		return "online"
+	}
+	return "unknown"
+}
+
+func adminRunnerManagerConnectivity(item adminRunner) string {
+	if item.ManagerConnectivity != "" {
+		return item.ManagerConnectivity
+	}
+	if adminRunnerManagerOnline(item) {
+		return "online"
+	}
+	return "offline"
+}
+
+func adminRunnerManagerOffline(item adminRunner) bool {
+	if item.ManagerConnectivity != "" {
+		return item.ManagerConnectivity == "offline"
+	}
+	return !adminRunnerManagerOnline(item)
 }
 
 func newAdminLogsCommand(opts *adminOptions, use, short string, get func(context.Context, *adminAPI, string) (*adminLogs, error)) *cobra.Command {

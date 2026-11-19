@@ -29,7 +29,7 @@ func TestAdminRunners(t *testing.T) {
 		if got := r.URL.Query().Get("scope"); got != "system" {
 			t.Fatalf("scope = %q", got)
 		}
-		_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","manager_name":"native","pool":"default","status":"running","session_id":"session-1","online":true}]}`))
+		_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","manager_name":"native","pool":"default","status":"running","session_id":"session-1","online":true,"connectivity":{"state":"online","source":"direct_runtime"},"workload_state":"present","manager_connectivity":"offline"}]}`))
 	}))
 	defer server.Close()
 
@@ -37,10 +37,25 @@ func TestAdminRunners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"RUNNER ID", "runner-1", "running", "session-1", "native", "default"} {
+	for _, expected := range []string{"RUNNER ID", "LIFECYCLE", "RUNNER", "WORKLOAD", "MANAGER", "runner-1", "running", "online", "present", "offline", "session-1", "native", "default"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("output %q does not contain %q", output, expected)
 		}
+	}
+}
+
+func TestAdminDeleteRunnerRejectsUnknownManagerConnectivity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":true,"manager_connectivity":"unknown"}]}`))
+	}))
+	defer server.Close()
+
+	_, err := executeAdmin(t, server, "runners", "delete", "runner-1", "--confirm", "--force")
+	if err == nil || !strings.Contains(err.Error(), "connectivity is unknown") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -139,7 +154,7 @@ func TestAdminCleanupOfflineRunnersConfirmed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"session_runners":[{"id":"offline/1","manager_id":"manager-1","online":false},{"id":"offline-2","manager_id":"manager-2","online":false},{"id":"online-1","manager_id":"manager-1","online":true}]}`))
+			_, _ = w.Write([]byte(`{"session_runners":[{"id":"offline/1","manager_id":"manager-1","online":false},{"id":"offline-2","manager_id":"manager-2","online":false},{"id":"online-1","manager_id":"manager-1","online":true},{"id":"unknown-1","manager_id":"manager-3","online":false,"manager_connectivity":"unknown"}]}`))
 		case http.MethodDelete:
 			if r.URL.Query().Get("force") != "true" || r.URL.Query().Get("manager_id") == "" {
 				t.Fatalf("query = %v", r.URL.Query())
@@ -156,7 +171,7 @@ func TestAdminCleanupOfflineRunnersConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deleted) != 2 || !strings.Contains(deleted[0], "offline%2F1") || !strings.Contains(output, "Cleaned up 2 of 2") || strings.Contains(output, "online-1") {
+	if len(deleted) != 2 || !strings.Contains(deleted[0], "offline%2F1") || !strings.Contains(output, "Cleaned up 2 of 2") || strings.Contains(output, "online-1") || strings.Contains(output, "unknown-1") {
 		t.Fatalf("deleted = %v, output = %q", deleted, output)
 	}
 }

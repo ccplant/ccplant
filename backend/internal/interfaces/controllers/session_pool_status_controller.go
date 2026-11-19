@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,18 +20,37 @@ import (
 )
 
 type adminRunnerInventoryItem struct {
-	ID          string            `json:"id"`
-	ManagerID   string            `json:"manager_id"`
-	ManagerName string            `json:"manager_name,omitempty"`
-	Pool        string            `json:"pool,omitempty"`
-	FromPool    bool              `json:"from_pool"`
-	Status      core.RunnerStatus `json:"status"`
-	SessionID   string            `json:"session_id,omitempty"`
-	Online      bool              `json:"online"`
-	CreatedAt   time.Time         `json:"created_at,omitempty"`
-	UpdatedAt   time.Time         `json:"updated_at,omitempty"`
-	LastSeen    time.Time         `json:"last_seen,omitempty"`
+	ID                  string             `json:"id"`
+	ManagerID           string             `json:"manager_id"`
+	ManagerName         string             `json:"manager_name,omitempty"`
+	Pool                string             `json:"pool,omitempty"`
+	FromPool            bool               `json:"from_pool"`
+	Status              core.RunnerStatus  `json:"status"`
+	SessionID           string             `json:"session_id,omitempty"`
+	Online              bool               `json:"online"`
+	Connectivity        runnerConnectivity `json:"connectivity"`
+	WorkloadState       string             `json:"workload_state"`
+	ManagerOnline       bool               `json:"manager_online"`
+	ManagerConnectivity string             `json:"manager_connectivity"`
+	CreatedAt           time.Time          `json:"created_at,omitempty"`
+	UpdatedAt           time.Time          `json:"updated_at,omitempty"`
+	LastSeen            time.Time          `json:"last_seen,omitempty"`
 }
+
+type runnerConnectivity struct {
+	State      string     `json:"state"`
+	Source     string     `json:"source,omitempty"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+}
+
+const (
+	runnerConnectivityOnline  = "online"
+	runnerConnectivityOffline = "offline"
+	runnerConnectivityUnknown = "unknown"
+	workloadPresent           = "present"
+	workloadMissing           = "missing"
+	workloadUnknown           = "unknown"
+)
 
 type managerRunnerStatus struct {
 	RunningRunnerIDs []string `json:"running_runner_ids"`
@@ -189,12 +209,14 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 
 	managerNames := make(map[string]string, len(managers))
 	visibleManagers := make(map[string]bool, len(managers))
+	managerConnectivity := make(map[string]string, len(managers))
 	items := make(map[string]*adminRunnerInventoryItem, len(runners))
 	sessionItems := make(map[string]*adminRunnerInventoryItem, len(allocations))
 	draining := make(map[string]bool)
 	for _, manager := range managers {
 		managerNames[manager.ID] = manager.Name
 		visibleManagers[manager.ID] = true
+		managerConnectivity[manager.ID] = c.connectionState(requestCtx, manager.ID)
 	}
 	for _, runner := range runners {
 		if !visibleManagers[runner.ManagerID] {
@@ -235,12 +257,13 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	managerStatusKnown := make(map[string]bool, len(managers))
 	for _, manager := range managers {
 		manager := manager
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if c.managerTunnel == nil || !c.managerTunnel.IsConnected(requestCtx, manager.ID) {
+			if c.managerTunnel == nil || managerConnectivity[manager.ID] != runnerConnectivityOnline {
 				return
 			}
 			req, _ := http.NewRequestWithContext(requestCtx, http.MethodGet, "http://manager/internal/esm-management/status", nil)
@@ -262,20 +285,21 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 			}
 			mu.Lock()
 			defer mu.Unlock()
+			managerStatusKnown[manager.ID] = true
 			for _, id := range status.RunningRunnerIDs {
 				key := manager.ID + "\x00" + id
 				if draining[key] {
 					continue
 				}
 				if item := items[key]; item != nil {
-					item.Online = true
+					item.WorkloadState = workloadPresent
 					continue
 				}
 				if item := sessionItems[key]; item != nil {
-					item.Online = true
+					item.WorkloadState = workloadPresent
 					continue
 				}
-				item := &adminRunnerInventoryItem{ID: id, ManagerID: manager.ID, ManagerName: manager.Name, FromPool: false, Status: core.RunnerIdle, Online: true}
+				item := &adminRunnerInventoryItem{ID: id, ManagerID: manager.ID, ManagerName: manager.Name, FromPool: false, Status: core.RunnerIdle, WorkloadState: workloadPresent}
 				if used[id] {
 					item.Status = core.RunnerRunning
 					item.SessionID = id
@@ -288,9 +312,16 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 
 	result := make([]*adminRunnerInventoryItem, 0, len(items))
 	for _, item := range items {
-		if !item.Online && item.Status != core.RunnerDraining {
-			item.Status = core.RunnerOffline
+		item.ManagerConnectivity = managerConnectivity[item.ManagerID]
+		item.ManagerOnline = item.ManagerConnectivity == runnerConnectivityOnline
+		if item.WorkloadState == "" {
+			item.WorkloadState = workloadUnknown
+			if managerStatusKnown[item.ManagerID] {
+				item.WorkloadState = workloadMissing
+			}
 		}
+		item.Connectivity = c.runnerConnectivity(requestCtx, item)
+		item.Online = item.Connectivity.State == runnerConnectivityOnline
 		result = append(result, item)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -300,6 +331,46 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 		return result[i].ID < result[j].ID
 	})
 	return ctx.JSON(http.StatusOK, map[string]any{"session_runners": result})
+}
+
+func (c *SessionPoolController) connectionState(ctx context.Context, id string) string {
+	if c.liveness != nil {
+		connected, err := c.liveness.IsManagerConnected(ctx, id)
+		if err != nil {
+			return runnerConnectivityUnknown
+		}
+		if connected {
+			return runnerConnectivityOnline
+		}
+		return runnerConnectivityOffline
+	}
+	if c.managerTunnel == nil {
+		return runnerConnectivityUnknown
+	}
+	if c.managerTunnel.IsConnected(ctx, id) {
+		return runnerConnectivityOnline
+	}
+	return runnerConnectivityOffline
+}
+
+func (c *SessionPoolController) runnerConnectivity(ctx context.Context, item *adminRunnerInventoryItem) runnerConnectivity {
+	if item == nil {
+		return runnerConnectivity{State: runnerConnectivityUnknown}
+	}
+	if item.Status == core.RunnerRunning {
+		if item.SessionID == "" {
+			return runnerConnectivity{State: runnerConnectivityUnknown, Source: "direct_runtime"}
+		}
+		return runnerConnectivity{State: c.connectionState(ctx, item.SessionID), Source: "direct_runtime"}
+	}
+	if item.LastSeen.IsZero() {
+		return runnerConnectivity{State: runnerConnectivityUnknown, Source: "runner_api"}
+	}
+	observed := item.LastSeen
+	if c.now().Sub(observed) <= sessionManagerHeartbeatTTL {
+		return runnerConnectivity{State: runnerConnectivityOnline, Source: "runner_api", ObservedAt: &observed}
+	}
+	return runnerConnectivity{State: runnerConnectivityOffline, Source: "runner_api", ObservedAt: &observed}
 }
 
 func (c *SessionPoolController) GetAdminRunnerLogs(ctx echo.Context) error {

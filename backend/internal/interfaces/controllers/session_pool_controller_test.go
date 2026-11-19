@@ -231,7 +231,9 @@ func TestAdminRunnerInventoryIncludesPooledAndDirectRunners(t *testing.T) {
 	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "retired-runner", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerDraining}))
 	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
 	tunnel := &runnerInventoryTunnel{statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": true}}}
-	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel)
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel).WithManagerLiveness(&testManagerLiveness{
+		connected: map[string]bool{"manager-a": true, "session-a": true, "direct-session": true},
+	})
 
 	rec := callSessionPoolHandler(t, controller.ListAdminRunners, http.MethodGet, "/admin/session-runners", nil, nil, nil)
 	if rec.Code != http.StatusOK {
@@ -248,16 +250,65 @@ func TestAdminRunnerInventoryIncludesPooledAndDirectRunners(t *testing.T) {
 	for _, runner := range result.Runners {
 		byID[runner.ID] = runner
 	}
-	if pooled := byID["runner-a"]; !pooled.FromPool || pooled.Pool != "linux" || pooled.SessionID != "session-a" || !pooled.Online {
+	if pooled := byID["runner-a"]; !pooled.FromPool || pooled.Pool != "linux" || pooled.SessionID != "session-a" || !pooled.Online || pooled.Connectivity.Source != "direct_runtime" || pooled.WorkloadState != workloadPresent || !pooled.ManagerOnline || pooled.ManagerConnectivity != runnerConnectivityOnline {
 		t.Fatalf("pooled=%+v", pooled)
 	}
-	if direct := byID["direct-session"]; direct.FromPool || direct.SessionID != "direct-session" || direct.Status != core.RunnerRunning {
+	if direct := byID["direct-session"]; direct.FromPool || direct.SessionID != "direct-session" || direct.Status != core.RunnerRunning || !direct.Online {
 		t.Fatalf("direct=%+v", direct)
 	}
 
 	logs := callSessionPoolHandler(t, controller.GetAdminRunnerLogs, http.MethodGet, "/admin/session-runners/direct-session/logs?manager_id=manager-a", nil, map[string]string{"id": "direct-session"}, nil)
 	if logs.Code != http.StatusOK || !strings.Contains(logs.Body.String(), "hello") {
 		t.Fatalf("logs status=%d body=%s", logs.Code, logs.Body.String())
+	}
+}
+
+func TestAdminRunnerInventoryUsesDirectRuntimeWhenManagerIsUnconfirmed(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	ctx := context.Background()
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerRunning}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(&runnerInventoryTunnel{
+		statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": false}},
+	}).WithManagerLiveness(&testManagerLiveness{connected: map[string]bool{"session-a": true}})
+
+	rec := callSessionPoolHandler(t, controller.ListAdminRunners, http.MethodGet, "/admin/session-runners", nil, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Runners []adminRunnerInventoryItem `json:"session_runners"`
+	}
+	decodeRecorder(t, rec, &result)
+	if len(result.Runners) != 1 {
+		t.Fatalf("runners=%+v", result.Runners)
+	}
+	runner := result.Runners[0]
+	if !runner.Online || runner.Status != core.RunnerRunning || runner.Connectivity.State != runnerConnectivityOnline || runner.Connectivity.Source != "direct_runtime" || runner.ManagerOnline || runner.WorkloadState != workloadUnknown {
+		t.Fatalf("runner=%+v", runner)
+	}
+}
+
+func TestAdminRunnerInventoryUsesRunnerAPILivenessForIdleRunner(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	ctx := context.Background()
+	now := time.Now().UTC()
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerIdle}))
+	controller := NewSessionPoolController(store, nil)
+	controller.now = func() time.Time { return now }
+
+	rec := callSessionPoolHandler(t, controller.ListAdminRunners, http.MethodGet, "/admin/session-runners", nil, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Runners []adminRunnerInventoryItem `json:"session_runners"`
+	}
+	decodeRecorder(t, rec, &result)
+	if len(result.Runners) != 1 || !result.Runners[0].Online || result.Runners[0].Connectivity.Source != "runner_api" || result.Runners[0].ManagerOnline {
+		t.Fatalf("runners=%+v", result.Runners)
 	}
 }
 
