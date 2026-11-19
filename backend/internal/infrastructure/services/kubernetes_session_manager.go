@@ -3663,7 +3663,7 @@ func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
 }
 
 // SendMessage sends a message to an existing session.
-// For ACP sessions (claude-acp, codex-acp, pi, cursor) it uses the ACP JSON-RPC 2.0
+// For ACP sessions (claude-acp, codex-acp, pi, cursor, antigravity) it uses the ACP JSON-RPC 2.0
 // POST /rpc endpoint with session/prompt; for standard agentapi sessions it
 // uses the agentapi-compatible POST /message endpoint.
 func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
@@ -3967,12 +3967,12 @@ func (m *KubernetesSessionManager) connectedSessionControlStore(ctx context.Cont
 }
 
 func isACPAgentType(agentType string) bool {
-	return agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi" || agentType == "cursor"
+	return agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi" || agentType == "cursor" || agentType == "antigravity"
 }
 
 func supportedAgentTypeOrDefault(agentType string) string {
 	switch agentType {
-	case "claude-acp", "codex-acp", "pi", "cursor":
+	case "claude-acp", "codex-acp", "pi", "cursor", "antigravity":
 		return agentType
 	default:
 		return ""
@@ -8200,6 +8200,18 @@ fi`,
 				"agent", "acp",
 			},
 		}
+	case "antigravity":
+		// Antigravity CLI exposes its native ACP v1 server over stdio.
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{proxybinary.FromMap(env)},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--auto-approve",
+				"--",
+				"agy", "acp",
+			},
+		}
 	default:
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi", "server"},
@@ -8443,7 +8455,7 @@ func profileSystemPromptFile(agentType, content string) *sessionsettings.Managed
 		path = "/home/agentapi/.codex/AGENTS.md"
 	case "pi":
 		path = "/home/agentapi/.pi/agent/AGENTS.md"
-	case "cursor":
+	case "cursor", "antigravity":
 		path = "/home/agentapi/workdir/repo/AGENTS.md"
 	default:
 		return nil

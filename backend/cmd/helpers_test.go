@@ -38,6 +38,13 @@ func TestBuildStartupConfigCursor(t *testing.T) {
 	assert.Equal(t, []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}, config.Args)
 }
 
+func TestBuildStartupConfigAntigravity(t *testing.T) {
+	config := buildStartupConfig("antigravity", nil)
+
+	assert.Equal(t, []string{"ccplant"}, config.Command)
+	assert.Equal(t, []string{"acp-server", "--", "agy", "acp"}, config.Args)
+}
+
 func TestBuildStartupConfigPi(t *testing.T) {
 	config := buildStartupConfig("pi", nil)
 

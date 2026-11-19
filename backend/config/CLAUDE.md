@@ -28,7 +28,7 @@ mise コマンドを利用することができます。言語のインタプリ
 
 このセッションの標準 agent image には、主に以下のソフトウェアが同梱されています。追加インストールの前に、利用可能なコマンドを確認してください。
 
-- Agent CLI: Claude Agent SDK の `claude`、`codex`、`agent` / `cursor-agent`、`pi`
+- Agent CLI: Claude Agent SDK の `claude`、`codex`、`agent` / `cursor-agent`、`pi`、`agy`
 - Agent Client Protocol adapter: `claude-agent-acp`、`codex-acp`、`pi-acp`、Pi 用 MCP adapter
 - セッション・連携: `ccplant`、`acp-posts`、`github-mcp-server`、`skills`
 - 永続ターミナル: herdr-core の `hc`。バックグラウンド実行、detach/attach、画面履歴の取得、別 agent の起動や待機に利用できます。agent 向けの利用方法は `hc --skill`、コマンド一覧は `hc --help` で確認してください。

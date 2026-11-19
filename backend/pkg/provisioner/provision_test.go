@@ -131,6 +131,22 @@ func TestBuildAgentCommandPi(t *testing.T) {
 	}
 }
 
+func TestBuildAgentCommandAntigravity(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+
+	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "antigravity"},
+	}, map[string]string{})
+
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
+	}
+	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "agy", "--dangerously-skip-permissions", "acp"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestBuildAgentCommandPiPreservesExplicitModel(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
 	env := map[string]string{
@@ -274,6 +290,50 @@ func TestPiMCPServersPrefersCodexThenClaude(t *testing.T) {
 	})
 	if !reflect.DeepEqual(got, claudeServers) {
 		t.Fatalf("piMCPServers should fall back to Claude MCP servers, got %#v", got)
+	}
+}
+
+func TestWriteAntigravitySettingsDisablesPromptsAndSandbox(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".gemini", "antigravity-cli", "settings.json")
+	if err := writeAntigravitySettings(path, "/workspace/repo"); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]interface{}
+	data, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(data, &got) != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	if got["enableTerminalSandbox"] != false || got["toolPermission"] != "always-proceed" {
+		t.Fatalf("permission settings = %#v", got)
+	}
+	wantTrust := []interface{}{interface{}("/workspace/repo")}
+	if !reflect.DeepEqual(got["trustedWorkspaces"], wantTrust) {
+		t.Fatalf("trustedWorkspaces = %#v", got["trustedWorkspaces"])
+	}
+}
+
+func TestWriteAntigravityMCPConfigNormalizesRemoteServer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".gemini", "config", "mcp_config.json")
+	servers := map[string]interface{}{
+		"remote": map[string]interface{}{"type": "http", "url": "https://mcp.example", "headers": map[string]interface{}{"X-Test": "yes"}},
+		"stdio":  map[string]interface{}{"type": "stdio", "command": "demo-mcp", "args": []interface{}{"serve"}},
+	}
+	if err := writeAntigravityMCPConfig(path, servers); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]interface{}
+	data, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(data, &got) != nil {
+		t.Fatalf("read MCP config: %v", err)
+	}
+	configured := got["mcpServers"].(map[string]interface{})
+	remote := configured["remote"].(map[string]interface{})
+	if remote["serverUrl"] != "https://mcp.example" || remote["url"] != nil || remote["type"] != nil {
+		t.Fatalf("remote MCP config = %#v", remote)
+	}
+	stdio := configured["stdio"].(map[string]interface{})
+	if stdio["command"] != "demo-mcp" || stdio["type"] != nil {
+		t.Fatalf("stdio MCP config = %#v", stdio)
 	}
 }
 

@@ -97,6 +97,10 @@ func Sync(opts SyncOptions) error {
 			log.Printf("[SYNC] Skills packages are not supported for agent type %s; skipping", opts.AgentType)
 		} else if err := installSkillsPackages(opts.OutputDir, agent, claudeSettings.Skills); err != nil {
 			return err
+		} else if agent == "antigravity-cli" {
+			if err := syncAntigravitySkills(opts.OutputDir); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -305,11 +309,46 @@ func resolveSkillsAgent(agentType string) (string, error) {
 		return "claude-code", nil
 	case "codex", "codex-acp":
 		return "codex", nil
+	case "antigravity":
+		return "antigravity-cli", nil
 	case "pi", "cursor":
 		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported agent type for skills: %s", agentType)
 	}
+}
+
+// syncAntigravitySkills handles older skills CLI releases that install global
+// Antigravity CLI skills into the universal ~/.agents/skills directory. Keep
+// that compatible copy while also populating Antigravity's documented global
+// discovery directory.
+func syncAntigravitySkills(outputDir string) error {
+	sourceRoot := filepath.Join(outputDir, ".agents", "skills")
+	entries, err := os.ReadDir(sourceRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read Antigravity skills source: %w", err)
+	}
+	destinationRoot := filepath.Join(outputDir, ".gemini", "antigravity-cli", "skills")
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		source := filepath.Join(sourceRoot, entry.Name())
+		if _, err := os.Stat(filepath.Join(source, "SKILL.md")); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("inspect Antigravity skill %s: %w", entry.Name(), err)
+		}
+		if err := copySkillDir(source, filepath.Join(destinationRoot, entry.Name())); err != nil {
+			return fmt.Errorf("copy Antigravity skill %s: %w", entry.Name(), err)
+		}
+	}
+	log.Printf("[SYNC] Synchronized Antigravity CLI skills to %s", destinationRoot)
+	return nil
 }
 
 // removeTempDir removes a temporary directory, logging a warning on failure.

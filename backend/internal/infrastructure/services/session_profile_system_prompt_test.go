@@ -11,6 +11,7 @@ func TestProfileSystemPromptFile(t *testing.T) {
 		{agentType: "codex-acp", wantPath: "/home/agentapi/.codex/AGENTS.md"},
 		{agentType: "pi", wantPath: "/home/agentapi/.pi/agent/AGENTS.md"},
 		{agentType: "cursor", wantPath: "/home/agentapi/workdir/repo/AGENTS.md"},
+		{agentType: "antigravity", wantPath: "/home/agentapi/workdir/repo/AGENTS.md"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.agentType, func(t *testing.T) {

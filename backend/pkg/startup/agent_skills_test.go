@@ -10,7 +10,7 @@ import (
 func TestResolveSkillsAgent(t *testing.T) {
 	tests := map[string]string{
 		"claude-acp": "claude-code", "claude-legacy": "claude-code",
-		"codex-acp": "codex", "pi": "", "cursor": "",
+		"codex-acp": "codex", "pi": "", "cursor": "", "antigravity": "antigravity-cli",
 	}
 	for agentType, want := range tests {
 		got, err := resolveSkillsAgent(agentType)
@@ -123,6 +123,29 @@ func TestCopySkillDirRecursivelyCopiesResources(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(destination, "references", "guide.md"))
 	if err != nil || string(got) != "guide" {
 		t.Fatalf("nested resource = %q, err=%v", string(got), err)
+	}
+}
+
+func TestSyncAntigravitySkillsCopiesUniversalGlobalInstall(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, ".agents", "skills", "demo")
+	if err := os.MkdirAll(filepath.Join(source, "references"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte("demo"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "references", "guide.md"), []byte("guide"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncAntigravitySkills(dir); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(dir, ".gemini", "antigravity-cli", "skills", "demo")
+	got, err := os.ReadFile(filepath.Join(destination, "references", "guide.md"))
+	if err != nil || string(got) != "guide" {
+		t.Fatalf("copied resource = %q, err=%v", string(got), err)
 	}
 }
 

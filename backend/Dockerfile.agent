@@ -6,7 +6,7 @@ FROM node:22-bookworm-slim AS node-runtime
 FROM ubuntu:24.04
 
 # Bump to intentionally refresh installers whose upstream version is unpinned.
-ARG ASSET_REVISION=2
+ARG ASSET_REVISION=3
 
 # Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -176,6 +176,12 @@ RUN curl https://cursor.com/install -fsS | bash && \
     rm -rf /home/agentapi/.local/share/cursor-agent /home/agentapi/.local/bin/agent /home/agentapi/.local/bin/cursor-agent 2>/dev/null || true && \
     ln -sf /opt/cursor/bin/agent /home/agentapi/.local/bin/agent && \
     ln -sf /opt/cursor/bin/cursor-agent /home/agentapi/.local/bin/cursor-agent
+
+# Install Google Antigravity CLI. Its native ACP server is exposed through
+# `agy acp` and is bridged by ccplant's acp-server at session startup.
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash && \
+    agy --version && \
+    agy acp --help >/dev/null
 
 # Install claude-agent-sdk CLI and create arch-agnostic symlink.
 ARG CLAUDE_AGENT_SDK_VERSION=latest

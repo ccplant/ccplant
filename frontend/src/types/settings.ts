@@ -241,7 +241,8 @@ export interface FontSettings {
 // 'codex-acp': codex-acp を使用
 // 'pi': Pi + pi-acp + pi-cloud を使用
 // 'cursor': Cursor ACP を使用
-export type AgentApiType = 'default' | 'auto' | 'claude-legacy' | 'claude-acp' | 'codex-acp' | 'pi' | 'cursor'
+// 'antigravity': Google Antigravity を使用
+export type AgentApiType = 'default' | 'auto' | 'claude-legacy' | 'claude-acp' | 'codex-acp' | 'pi' | 'cursor' | 'antigravity'
 
 export interface GlobalSettings {
   agentApiProxy: AgentApiProxySettings
@@ -830,7 +831,8 @@ export const getAgentApiType = (): AgentApiType => {
     settings.agentApiType === 'claude-acp' ||
     settings.agentApiType === 'codex-acp' ||
     settings.agentApiType === 'pi' ||
-    settings.agentApiType === 'cursor'
+    settings.agentApiType === 'cursor' ||
+    settings.agentApiType === 'antigravity'
   ) {
     return settings.agentApiType
   }
