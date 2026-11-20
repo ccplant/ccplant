@@ -5881,7 +5881,7 @@
         "tags": ["Antigravity"],
         "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
         "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["input"], "properties": {"input": {"type": "string"}}}}}},
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"input": {"type": "string", "description": "Authorization code, redirect URL, or other text input."}, "action": {"type": "string", "enum": ["up", "down", "enter"], "description": "Terminal key action used by interactive subscription selection."}, "oneOf": [{"required": ["input"]}, {"required": ["action"]}]}}}}},
         "responses": {"204": {"description": "Input accepted"}, "404": {"description": "Attempt not found"}, "409": {"description": "Attempt is not waiting for input"}}
       }
     },

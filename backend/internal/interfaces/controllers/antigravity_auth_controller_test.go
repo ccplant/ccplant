@@ -94,3 +94,13 @@ func TestAntigravityFailedWorkloadExposesDiagnosticAndIsRetained(t *testing.T) {
 	require.Equal(t, "antigravity_login_failed", response.ErrorCode)
 	require.Equal(t, "agy executable was not found", response.ErrorMessage)
 }
+
+func TestValidAntigravityInput(t *testing.T) {
+	require.True(t, validAntigravityInput(antigravityAuthInputRequest{Input: "authorization-code"}))
+	for _, action := range []string{"up", "down", "enter"} {
+		require.True(t, validAntigravityInput(antigravityAuthInputRequest{Action: action}))
+	}
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{Input: "code", Action: "enter"}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{Action: "escape"}))
+}

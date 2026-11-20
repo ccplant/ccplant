@@ -2296,8 +2296,8 @@ export class AgentAPIProxyClient {
     return await this.makeRequest<AntigravityAuthAttempt>(`/antigravity/auth/${encodeURIComponent(attemptId)}`);
   }
 
-  async submitAntigravityAuthInput(attemptId: string, input: string): Promise<void> {
-    await this.makeRequest<void>(`/antigravity/auth/${encodeURIComponent(attemptId)}/input`, { method: 'POST', body: JSON.stringify({ input }) });
+  async submitAntigravityAuthInput(attemptId: string, input?: string, action?: 'up' | 'down' | 'enter'): Promise<void> {
+    await this.makeRequest<void>(`/antigravity/auth/${encodeURIComponent(attemptId)}/input`, { method: 'POST', body: JSON.stringify(action ? { action } : { input }) });
   }
 
   async cancelAntigravityAuth(attemptId: string): Promise<void> {

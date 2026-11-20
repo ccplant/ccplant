@@ -39,7 +39,8 @@ type AntigravityAuthResponse struct {
 }
 
 type antigravityAuthInputRequest struct {
-	Input string `json:"input"`
+	Input  string `json:"input"`
+	Action string `json:"action"`
 }
 type antigravityAuthInputResponse struct {
 	Input   string `json:"input"`
@@ -128,7 +129,7 @@ func (c *AntigravityAuthController) SubmitInput(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Antigravity authentication attempt not found")
 	}
 	var request antigravityAuthInputRequest
-	if err := bindLimitedJSON(ctx, &request); err != nil || strings.TrimSpace(request.Input) == "" || len(request.Input) > 8192 {
+	if err := bindLimitedJSON(ctx, &request); err != nil || !validAntigravityInput(request) {
 		return echo.NewHTTPError(http.StatusBadRequest, "Input is required")
 	}
 	attempt.mu.Lock()
@@ -136,13 +137,26 @@ func (c *AntigravityAuthController) SubmitInput(ctx echo.Context) error {
 		attempt.mu.Unlock()
 		return ctx.NoContent(http.StatusConflict)
 	}
-	attempt.Input = strings.TrimSpace(request.Input)
+	if request.Action != "" {
+		attempt.Input = antigravityInputActionPrefix + request.Action
+	} else {
+		attempt.Input = strings.TrimSpace(request.Input)
+	}
 	attempt.InputVersion++
 	attempt.mu.Unlock()
 	if err := c.persistAttempt(ctx.Request().Context(), attempt); err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to submit authentication input")
 	}
 	return ctx.NoContent(http.StatusNoContent)
+}
+
+const antigravityInputActionPrefix = "\x00key:"
+
+func validAntigravityInput(request antigravityAuthInputRequest) bool {
+	if request.Action != "" {
+		return strings.TrimSpace(request.Input) == "" && (request.Action == "up" || request.Action == "down" || request.Action == "enter")
+	}
+	return strings.TrimSpace(request.Input) != "" && len(request.Input) <= 8192
 }
 
 func (c *AntigravityAuthController) WorkerInput(ctx echo.Context) error {

@@ -67,6 +67,18 @@ export function AntigravityAuthSection() {
     } finally { setSubmitting(false) }
   }
 
+  const submitAction = async (action: 'up' | 'down' | 'enter') => {
+    if (!attempt) return
+    setSubmitting(true)
+    try {
+      await createAgentAPIProxyClientFromStorage().submitAntigravityAuthInput(attempt.attempt_id, undefined, action)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'サブスクリプションを選択できませんでした', 'error')
+    } finally { setSubmitting(false) }
+  }
+
+  const selectingSubscription = attempt?.transcript?.includes('Select available subscription') || attempt?.transcript?.includes("Can't find your subscription")
+
   const readADC = (file: File) => {
     const reader = new FileReader()
     reader.onload = () => validateADC(String(reader.result || ''))
@@ -109,6 +121,12 @@ export function AntigravityAuthSection() {
         {attempt && !terminal.has(attempt.status) && <div className="mt-4 space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
           {attempt.verification_uri && <a href={attempt.verification_uri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">Googleの認証画面を開く<ExternalLink className="h-4 w-4" /></a>}
           {attempt.transcript && <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded-md bg-gray-950 p-3 text-xs leading-5 text-gray-200">{attempt.transcript}</pre>}
+          {selectingSubscription && <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-sm text-gray-600 dark:text-gray-300">利用するサブスクリプションを選択:</span>
+            <button type="button" onClick={() => void submitAction('up')} disabled={submitting} className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600">↑</button>
+            <button type="button" onClick={() => void submitAction('down')} disabled={submitting} className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600">↓</button>
+            <button type="button" onClick={() => void submitAction('enter')} disabled={submitting} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">選択する</button>
+          </div>}
           <div className="flex gap-2">
             <input aria-label="認証コードまたは応答" value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void submitInput() }} placeholder="認証コード、リダイレクトURL、または選択肢" className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900" />
             <button type="button" onClick={submitInput} disabled={!input.trim() || submitting} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">送信</button>
