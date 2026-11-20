@@ -51,6 +51,9 @@ type antigravityAuthBundleFile struct {
 }
 
 func runAntigravityAuthWorker(_ *cobra.Command, _ []string) error {
+	if err := configureAntigravityHerdr(); err != nil {
+		return fmt.Errorf("configure antigravity terminal: %w", err)
+	}
 	data, err := os.ReadFile(antigravityAuthRequestFile)
 	if err != nil {
 		return fmt.Errorf("read request: %w", err)
@@ -75,6 +78,27 @@ func runAntigravityAuthWorker(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("report result: %w", err)
 	}
 	return runErr
+}
+
+func configureAntigravityHerdr() error {
+	// Authentication workers run with a read-only root filesystem. herdr-core
+	// normally writes below $HOME/.local/state, so keep its isolated state and
+	// socket below the worker's writable /tmp volume instead.
+	root := filepath.Join(os.TempDir(), "ccplant-antigravity-herdr")
+	stateDir := filepath.Join(root, "state")
+	runtimeDir := filepath.Join(root, "runtime")
+	for _, dir := range []string{stateDir, runtimeDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	if err := os.Setenv("XDG_STATE_HOME", stateDir); err != nil {
+		return err
+	}
+	return os.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 }
 
 func boundedAntigravityError(err error) string {
@@ -254,8 +278,13 @@ func cleanupAntigravityTerminal(terminal string) {
 
 func runHCJSON(ctx context.Context, value any, args ...string) error {
 	cmd := exec.CommandContext(ctx, "hc", args...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
 		return err
 	}
 	if value == nil {
