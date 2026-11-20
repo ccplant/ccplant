@@ -235,13 +235,20 @@ func startAntigravityTerminal(ctx context.Context, agyPath, attemptID string) (s
 }
 
 func readAntigravityTerminal(ctx context.Context, terminal string) (string, bool, int, error) {
-	var screen hcReadResult
-	if err := runHCJSON(ctx, &screen, "read", terminal, "--json", "--lines", "0"); err != nil {
-		return "", false, 0, fmt.Errorf("read antigravity terminal: %w", err)
-	}
 	var state hcTerminalResult
 	if err := runHCJSON(ctx, &state, "get", terminal, "--json"); err != nil {
 		return "", false, 0, fmt.Errorf("inspect antigravity terminal: %w", err)
+	}
+	lines := "0"
+	if state.State == "finished" {
+		// The single-subscription picker can disappear before the next poll when
+		// agy automatically finishes. Read scrollback after exit so the UI still
+		// receives the options and can require explicit confirmation.
+		lines = "200"
+	}
+	var screen hcReadResult
+	if err := runHCJSON(ctx, &screen, "read", terminal, "--json", "--lines", lines); err != nil {
+		return "", false, 0, fmt.Errorf("read antigravity terminal: %w", err)
 	}
 	exitCode := 0
 	if state.ExitCode != nil {

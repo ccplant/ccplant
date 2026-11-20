@@ -92,3 +92,35 @@ func TestSendAntigravitySubscriptionSelectsAndConfirms(t *testing.T) {
 		t.Fatalf("hc arguments = %q, want %q", got, want)
 	}
 }
+
+func TestReadAntigravityTerminalIncludesScrollbackAfterExit(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$HC_TEST_ARGS"
+case "$1" in
+  get) printf '%s\n' '{"state":"finished","exit_code":0}' ;;
+  read) printf '%s\n' '{"text":"Select available subscription:\n1. Gemini Enterprise"}' ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "hc"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HC_TEST_ARGS", argsPath)
+
+	transcript, finished, exitCode, err := readAntigravityTerminal(t.Context(), "t-auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !finished || exitCode != 0 || !strings.Contains(transcript, "Gemini Enterprise") {
+		t.Fatalf("unexpected terminal result: transcript=%q finished=%v exit=%d", transcript, finished, exitCode)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(args), "get t-auth --json\nread t-auth --json --lines 200\n"; got != want {
+		t.Fatalf("hc arguments = %q, want %q", got, want)
+	}
+}
