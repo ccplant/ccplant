@@ -42,15 +42,17 @@ func TestBoundedAntigravityError(t *testing.T) {
 	}
 }
 
-func TestSendHCTextUsesKeysWithoutDraftWait(t *testing.T) {
+func TestSendHCTextPastesExactInput(t *testing.T) {
 	dir := t.TempDir()
 	argsPath := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HC_TEST_ARGS\"\nprintf '%s\\n' '{}'\n"
+	requestPath := filepath.Join(dir, "request")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HC_TEST_ARGS\"\ncat > \"$HC_TEST_REQUEST\"\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\n"
 	if err := os.WriteFile(filepath.Join(dir, "hc"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HC_TEST_ARGS", argsPath)
+	t.Setenv("HC_TEST_REQUEST", requestPath)
 	if err := sendHCText(t.Context(), "t-secret", "Ab:/?x=1&y_z"); err != nil {
 		t.Fatal(err)
 	}
@@ -58,9 +60,26 @@ func TestSendHCTextUsesKeysWithoutDraftWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "keys\nt-secret\nshift+a\nb\nshift+;\n/\nshift+/\nx\n=\n1\nshift+7\ny\nshift+-\nz\nenter\n--json\n"
+	want := "connect\n"
 	if string(args) != want {
 		t.Fatalf("hc arguments = %q", args)
+	}
+	request, err := os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rpc struct {
+		Method string `json:"method"`
+		Params struct {
+			Text  string `json:"text"`
+			Force bool   `json:"force"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(request, &rpc); err != nil {
+		t.Fatal(err)
+	}
+	if rpc.Method != "terminal.send" || rpc.Params.Text != "Ab:/?x=1&y_z" || !rpc.Params.Force {
+		t.Fatalf("RPC request did not contain exact terminal input: %s", request)
 	}
 }
 

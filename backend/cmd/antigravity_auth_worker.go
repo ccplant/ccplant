@@ -87,7 +87,9 @@ func configureAntigravityHerdr() error {
 	root := filepath.Join(os.TempDir(), "ccplant-antigravity-herdr")
 	stateDir := filepath.Join(root, "state")
 	runtimeDir := filepath.Join(root, "runtime")
-	for _, dir := range []string{stateDir, runtimeDir} {
+	configDir := filepath.Join(root, "config")
+	herdrConfigDir := filepath.Join(configDir, "herdr-core")
+	for _, dir := range []string{stateDir, runtimeDir, herdrConfigDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
@@ -98,7 +100,16 @@ func configureAntigravityHerdr() error {
 	if err := os.Setenv("XDG_STATE_HOME", stateDir); err != nil {
 		return err
 	}
-	return os.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	if err := os.Setenv("XDG_RUNTIME_DIR", runtimeDir); err != nil {
+		return err
+	}
+	if err := os.Setenv("XDG_CONFIG_HOME", configDir); err != nil {
+		return err
+	}
+	// No person attaches to these isolated terminals, so a pending draft must
+	// never delay programmatic paste delivery. terminal.send still waits for
+	// the normal short quiet period before pasting the input exactly.
+	return os.WriteFile(filepath.Join(herdrConfigDir, "config.toml"), []byte("draft_wait = 0\n"), 0o600)
 }
 
 func boundedAntigravityError(err error) string {
@@ -189,7 +200,7 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 			}
 			if finished {
 				if exitCode != 0 {
-					return codexauth.Result{Status: codexauth.StatusDenied, ErrorCode: "authorization_denied"}, fmt.Errorf("antigravity login exited with status %d", exitCode)
+					return codexauth.Result{Status: codexauth.StatusDenied, ErrorCode: "authorization_denied"}, fmt.Errorf("antigravity login exited with status %d: %s", exitCode, strings.TrimSpace(clean))
 				}
 				if pendingBundle == nil {
 					pendingBundle, err = collectAntigravityAuthBundle()
@@ -286,37 +297,32 @@ func sendAntigravityTerminalInput(ctx context.Context, terminal, input string) e
 }
 
 func sendHCText(ctx context.Context, terminal, input string) error {
-	keys := []string{"keys", terminal}
-	for _, character := range input {
-		key, ok := antigravityKeyName(character)
-		if !ok {
-			return fmt.Errorf("unsupported character in antigravity authentication input: %U", character)
-		}
-		keys = append(keys, key)
+	request := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "terminal.send",
+		"params":  map[string]any{"terminal": terminal, "text": input, "force": true},
 	}
-	keys = append(keys, "enter", "--json")
-	return runHCJSON(ctx, nil, keys...)
-}
-
-func antigravityKeyName(character rune) (string, bool) {
-	switch {
-	case character >= 'a' && character <= 'z', character >= '0' && character <= '9':
-		return string(character), true
-	case character >= 'A' && character <= 'Z':
-		return "shift+" + strings.ToLower(string(character)), true
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
 	}
-	if key, ok := map[rune]string{
-		' ': "space", '`': "`", '-': "-", '=': "=", '[': "[", ']': "]", '\\': "backslash",
-		';': ";", '\'': "'", ',': ",", '.': ".", '/': "/",
-		'~': "shift+`", '!': "shift+1", '@': "shift+2", '#': "shift+3", '$': "shift+4",
-		'%': "shift+5", '^': "shift+6", '&': "shift+7", '*': "shift+8", '(': "shift+9",
-		')': "shift+0", '_': "shift+-", '+': "shift+=", '{': "shift+[", '}': "shift+]",
-		'|': "shift+backslash", ':': "shift+;", '"': "shift+'", '<': "shift+,", '>': "shift+.",
-		'?': "shift+/",
-	}[character]; ok {
-		return key, true
+	cmd := exec.CommandContext(ctx, "hc", "connect")
+	cmd.Stdin = strings.NewReader(string(payload) + "\n")
+	output, err := cmd.Output()
+	if err != nil {
+		return err
 	}
-	return "", false
+	var response struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return err
+	}
+	if len(response.Error) != 0 && string(response.Error) != "null" {
+		return errors.New("hc rejected antigravity terminal input")
+	}
+	return nil
 }
 
 func cleanupAntigravityTerminal(terminal string) {
