@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,5 +32,19 @@ func TestCollectAntigravityAuthBundleExcludesRuntimeData(t *testing.T) {
 	}
 	if len(bundle.Files) != 1 || bundle.Files[0].Path != "auth-token.json" {
 		t.Fatalf("unexpected bundle: %+v", bundle)
+	}
+}
+
+func TestAntigravityAuthEnvironmentUsesValidSSHConnection(t *testing.T) {
+	environment := antigravityAuthEnvironment([]string{"PATH=/usr/bin"})
+	if got, want := environment[len(environment)-1], "SSH_CONNECTION=127.0.0.1 65535 127.0.0.1 22"; got != want {
+		t.Fatalf("SSH_CONNECTION = %q, want %q", got, want)
+	}
+}
+
+func TestBoundedAntigravityError(t *testing.T) {
+	message := boundedAntigravityError(errors.New(strings.Repeat("x", 4096)))
+	if len(message) != 2048 {
+		t.Fatalf("bounded error length = %d", len(message))
 	}
 }

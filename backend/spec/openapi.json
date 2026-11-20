@@ -5853,7 +5853,7 @@
         "tags": ["Antigravity"],
         "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
         "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "properties": {"scope": {"type": "string", "enum": ["user", "team"]}, "team_id": {"type": "string"}, "replace": {"type": "boolean"}}}}}},
-        "responses": {"202": {"description": "Business SSO workload accepted"}, "401": {"description": "Unauthorized"}, "409": {"description": "Authentication already active"}, "503": {"description": "Authentication workload unavailable"}}
+        "responses": {"202": {"description": "Business SSO workload accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AntigravityAuthAttempt"}}}}, "401": {"description": "Unauthorized"}, "409": {"description": "Authentication already active"}, "503": {"description": "Authentication workload unavailable"}}
       }
     },
     "/antigravity/auth/{attemptId}": {
@@ -5863,7 +5863,7 @@
         "tags": ["Antigravity"],
         "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
         "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "responses": {"200": {"description": "Current authentication state"}, "404": {"description": "Attempt not found"}}
+        "responses": {"200": {"description": "Current authentication state", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AntigravityAuthAttempt"}}}}, "404": {"description": "Attempt not found"}}
       },
       "delete": {
         "summary": "Cancel an Antigravity authentication attempt",
@@ -7618,6 +7618,20 @@
   },
   "components": {
     "schemas": {
+      "AntigravityAuthAttempt": {
+        "type": "object",
+        "required": ["attempt_id", "status", "expires_at", "poll_after_ms"],
+        "properties": {
+          "attempt_id": {"type": "string"},
+          "status": {"type": "string", "enum": ["starting", "waiting_for_user", "authorized", "denied", "failed", "cancelled"]},
+          "verification_uri": {"type": "string", "format": "uri"},
+          "transcript": {"type": "string"},
+          "expires_at": {"type": "string", "format": "date-time"},
+          "poll_after_ms": {"type": "integer"},
+          "error_code": {"type": "string"},
+          "error_message": {"type": "string", "description": "Bounded diagnostic detail for a failed authentication workload."}
+        }
+      },
       "SecretProjection": {
         "type":"object","required":["key","type"],"properties":{"key":{"type":"string"},"type":{"type":"string","enum":["env","file"]},"env_name":{"type":"string"},"path":{"type":"string"},"permissions":{"type":"string","enum":["0400","0600"]}}
       },

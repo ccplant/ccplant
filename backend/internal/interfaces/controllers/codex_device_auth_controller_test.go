@@ -18,13 +18,19 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 )
 
-type fakeCodexAuthLauncher struct{ request codexauth.WorkloadRequest }
+type fakeCodexAuthLauncher struct {
+	request     codexauth.WorkloadRequest
+	cancelCount int
+}
 
 func (f *fakeCodexAuthLauncher) StartCodexDeviceAuth(_ context.Context, request codexauth.WorkloadRequest) error {
 	f.request = request
 	return nil
 }
-func (f *fakeCodexAuthLauncher) CancelCodexDeviceAuth(context.Context, string) error { return nil }
+func (f *fakeCodexAuthLauncher) CancelCodexDeviceAuth(context.Context, string) error {
+	f.cancelCount++
+	return nil
+}
 
 type fakeCodexCredentialsRepository struct{ saved *entities.Credentials }
 

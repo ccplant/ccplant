@@ -121,6 +121,8 @@ export interface AntigravityAuthAttempt {
   transcript?: string;
   expires_at: string;
   poll_after_ms: number;
+  error_code?: string;
+  error_message?: string;
 }
 
 export type TransferableResourceType = 'webhook' | 'slackbot' | 'session_profile' | 'sandbox_policy';
