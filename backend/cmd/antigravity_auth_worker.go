@@ -93,7 +93,7 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 		return codexauth.Result{}, errors.New("antigravity CLI is unavailable")
 	}
 	cmd := exec.CommandContext(ctx, path, "acp", "--login")
-	cmd.Env = append(os.Environ(), "SSH_CONNECTION=ccplant-auth-workload")
+	cmd.Env = antigravityAuthEnvironment(os.Environ())
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return codexauth.Result{}, err
@@ -171,6 +171,13 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 		return codexauth.Result{}, err
 	}
 	return codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: bundle}, nil
+}
+
+func antigravityAuthEnvironment(environment []string) []string {
+	// Antigravity uses SSH_CONNECTION to select its remote/headless OAuth flow.
+	// Keep the conventional four-field shape because the CLI may parse the
+	// value rather than only checking whether it is present.
+	return append(environment, "SSH_CONNECTION=127.0.0.1 65535 127.0.0.1 22")
 }
 
 func fetchAntigravityInput(ctx context.Context, request codexauth.WorkloadRequest, after int64) (antigravityInput, error) {

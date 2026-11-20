@@ -35,6 +35,13 @@ func TestCollectAntigravityAuthBundleExcludesRuntimeData(t *testing.T) {
 	}
 }
 
+func TestAntigravityAuthEnvironmentUsesValidSSHConnection(t *testing.T) {
+	environment := antigravityAuthEnvironment([]string{"PATH=/usr/bin"})
+	if got, want := environment[len(environment)-1], "SSH_CONNECTION=127.0.0.1 65535 127.0.0.1 22"; got != want {
+		t.Fatalf("SSH_CONNECTION = %q, want %q", got, want)
+	}
+}
+
 func TestBoundedAntigravityError(t *testing.T) {
 	message := boundedAntigravityError(errors.New(strings.Repeat("x", 4096)))
 	if len(message) != 2048 {
