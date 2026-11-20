@@ -286,32 +286,37 @@ func sendAntigravityTerminalInput(ctx context.Context, terminal, input string) e
 }
 
 func sendHCText(ctx context.Context, terminal, input string) error {
-	request := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "terminal.send",
-		"params":  map[string]string{"terminal": terminal, "text": input},
+	keys := []string{"keys", terminal}
+	for _, character := range input {
+		key, ok := antigravityKeyName(character)
+		if !ok {
+			return fmt.Errorf("unsupported character in antigravity authentication input: %U", character)
+		}
+		keys = append(keys, key)
 	}
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return err
+	keys = append(keys, "enter", "--json")
+	return runHCJSON(ctx, nil, keys...)
+}
+
+func antigravityKeyName(character rune) (string, bool) {
+	switch {
+	case character >= 'a' && character <= 'z', character >= '0' && character <= '9':
+		return string(character), true
+	case character >= 'A' && character <= 'Z':
+		return "shift+" + strings.ToLower(string(character)), true
 	}
-	cmd := exec.CommandContext(ctx, "hc", "connect")
-	cmd.Stdin = strings.NewReader(string(payload) + "\n")
-	output, err := cmd.Output()
-	if err != nil {
-		return err
+	if key, ok := map[rune]string{
+		' ': "space", '`': "`", '-': "-", '=': "=", '[': "[", ']': "]", '\\': "backslash",
+		';': ";", '\'': "'", ',': ",", '.': ".", '/': "/",
+		'~': "shift+`", '!': "shift+1", '@': "shift+2", '#': "shift+3", '$': "shift+4",
+		'%': "shift+5", '^': "shift+6", '&': "shift+7", '*': "shift+8", '(': "shift+9",
+		')': "shift+0", '_': "shift+-", '+': "shift+=", '{': "shift+[", '}': "shift+]",
+		'|': "shift+backslash", ':': "shift+;", '"': "shift+'", '<': "shift+,", '>': "shift+.",
+		'?': "shift+/",
+	}[character]; ok {
+		return key, true
 	}
-	var response struct {
-		Error json.RawMessage `json:"error"`
-	}
-	if err := json.Unmarshal(output, &response); err != nil {
-		return err
-	}
-	if len(response.Error) != 0 && string(response.Error) != "null" {
-		return errors.New("hc rejected antigravity terminal input")
-	}
-	return nil
+	return "", false
 }
 
 func cleanupAntigravityTerminal(terminal string) {

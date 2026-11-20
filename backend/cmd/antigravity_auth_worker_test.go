@@ -42,33 +42,25 @@ func TestBoundedAntigravityError(t *testing.T) {
 	}
 }
 
-func TestSendHCTextUsesRPCStdin(t *testing.T) {
+func TestSendHCTextUsesKeysWithoutDraftWait(t *testing.T) {
 	dir := t.TempDir()
 	argsPath := filepath.Join(dir, "args")
-	requestPath := filepath.Join(dir, "request")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HC_TEST_ARGS\"\ncat > \"$HC_TEST_REQUEST\"\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HC_TEST_ARGS\"\nprintf '%s\\n' '{}'\n"
 	if err := os.WriteFile(filepath.Join(dir, "hc"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HC_TEST_ARGS", argsPath)
-	t.Setenv("HC_TEST_REQUEST", requestPath)
-	if err := sendHCText(t.Context(), "t-secret", "authorization-code"); err != nil {
+	if err := sendHCText(t.Context(), "t-secret", "Ab:/?x=1&y_z"); err != nil {
 		t.Fatal(err)
 	}
 	args, err := os.ReadFile(argsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(args) != "connect\n" {
+	want := "keys\nt-secret\nshift+a\nb\nshift+;\n/\nshift+/\nx\n=\n1\nshift+7\ny\nshift+-\nz\nenter\n--json\n"
+	if string(args) != want {
 		t.Fatalf("hc arguments = %q", args)
-	}
-	request, err := os.ReadFile(requestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(request), `"text":"authorization-code"`) {
-		t.Fatalf("RPC request did not contain terminal input: %s", request)
 	}
 }
 
