@@ -5881,7 +5881,7 @@
         "tags": ["Antigravity"],
         "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
         "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"input": {"type": "string", "description": "Authorization code, redirect URL, or other text input."}, "action": {"type": "string", "enum": ["up", "down", "enter"], "description": "Terminal key action used by interactive subscription selection."}, "oneOf": [{"required": ["input"]}, {"required": ["action"]}]}}}}},
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"input": {"type": "string", "description": "Authorization code, redirect URL, or other text input."}, "subscription_index": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Zero-based subscription option to select and confirm."}, "oneOf": [{"required": ["input"]}, {"required": ["subscription_index"]}]}}}}},
         "responses": {"204": {"description": "Input accepted"}, "404": {"description": "Attempt not found"}, "409": {"description": "Attempt is not waiting for input"}}
       }
     },

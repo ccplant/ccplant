@@ -97,10 +97,11 @@ func TestAntigravityFailedWorkloadExposesDiagnosticAndIsRetained(t *testing.T) {
 
 func TestValidAntigravityInput(t *testing.T) {
 	require.True(t, validAntigravityInput(antigravityAuthInputRequest{Input: "authorization-code"}))
-	for _, action := range []string{"up", "down", "enter"} {
-		require.True(t, validAntigravityInput(antigravityAuthInputRequest{Action: action}))
-	}
+	first, last, negative, tooLarge := 0, 100, -1, 101
+	require.True(t, validAntigravityInput(antigravityAuthInputRequest{SubscriptionIndex: &first}))
+	require.True(t, validAntigravityInput(antigravityAuthInputRequest{SubscriptionIndex: &last}))
 	require.False(t, validAntigravityInput(antigravityAuthInputRequest{}))
-	require.False(t, validAntigravityInput(antigravityAuthInputRequest{Input: "code", Action: "enter"}))
-	require.False(t, validAntigravityInput(antigravityAuthInputRequest{Action: "escape"}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{Input: "code", SubscriptionIndex: &first}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{SubscriptionIndex: &negative}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{SubscriptionIndex: &tooLarge}))
 }

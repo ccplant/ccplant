@@ -71,3 +71,24 @@ func TestSendHCTextUsesRPCStdin(t *testing.T) {
 		t.Fatalf("RPC request did not contain terminal input: %s", request)
 	}
 }
+
+func TestSendAntigravitySubscriptionSelectsAndConfirms(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HC_TEST_ARGS\"\nprintf '%s\\n' '{}'\n"
+	if err := os.WriteFile(filepath.Join(dir, "hc"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HC_TEST_ARGS", argsPath)
+	if err := sendAntigravityTerminalInput(t.Context(), "t-auth", antigravitySubscriptionPrefix+"2"); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(args), "keys\nt-auth\ndown\ndown\nenter\n--json\n"; got != want {
+		t.Fatalf("hc arguments = %q, want %q", got, want)
+	}
+}

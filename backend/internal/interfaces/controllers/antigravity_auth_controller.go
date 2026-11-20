@@ -39,8 +39,8 @@ type AntigravityAuthResponse struct {
 }
 
 type antigravityAuthInputRequest struct {
-	Input  string `json:"input"`
-	Action string `json:"action"`
+	Input             string `json:"input"`
+	SubscriptionIndex *int   `json:"subscription_index"`
 }
 type antigravityAuthInputResponse struct {
 	Input   string `json:"input"`
@@ -137,8 +137,8 @@ func (c *AntigravityAuthController) SubmitInput(ctx echo.Context) error {
 		attempt.mu.Unlock()
 		return ctx.NoContent(http.StatusConflict)
 	}
-	if request.Action != "" {
-		attempt.Input = antigravityInputActionPrefix + request.Action
+	if request.SubscriptionIndex != nil {
+		attempt.Input = fmt.Sprintf("%s%d", antigravitySubscriptionPrefix, *request.SubscriptionIndex)
 	} else {
 		attempt.Input = strings.TrimSpace(request.Input)
 	}
@@ -150,11 +150,11 @@ func (c *AntigravityAuthController) SubmitInput(ctx echo.Context) error {
 	return ctx.NoContent(http.StatusNoContent)
 }
 
-const antigravityInputActionPrefix = "\x00key:"
+const antigravitySubscriptionPrefix = "\x00subscription:"
 
 func validAntigravityInput(request antigravityAuthInputRequest) bool {
-	if request.Action != "" {
-		return strings.TrimSpace(request.Input) == "" && (request.Action == "up" || request.Action == "down" || request.Action == "enter")
+	if request.SubscriptionIndex != nil {
+		return strings.TrimSpace(request.Input) == "" && *request.SubscriptionIndex >= 0 && *request.SubscriptionIndex <= 100
 	}
 	return strings.TrimSpace(request.Input) != "" && len(request.Input) <= 8192
 }

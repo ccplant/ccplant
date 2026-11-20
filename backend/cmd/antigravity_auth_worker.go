@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,7 +38,7 @@ type antigravityInput struct {
 	Version int64  `json:"version"`
 }
 
-const antigravityInputActionPrefix = "\x00key:"
+const antigravitySubscriptionPrefix = "\x00subscription:"
 
 type antigravityAuthBundle struct {
 	Version int                         `json:"version"`
@@ -126,7 +127,7 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 				input, err := fetchAntigravityInput(ctx, request, inputVersion)
 				if err == nil && input.Version > inputVersion {
 					inputVersion = input.Version
-					suppressTranscript = !strings.HasPrefix(input.Input, antigravityInputActionPrefix)
+					suppressTranscript = !strings.HasPrefix(input.Input, antigravitySubscriptionPrefix)
 					if err := sendAntigravityTerminalInput(ctx, terminal, input.Input); err != nil {
 						return codexauth.Result{}, err
 					}
@@ -200,12 +201,17 @@ func readAntigravityTerminal(ctx context.Context, terminal string) (string, bool
 }
 
 func sendAntigravityTerminalInput(ctx context.Context, terminal, input string) error {
-	if strings.HasPrefix(input, antigravityInputActionPrefix) {
-		action := strings.TrimPrefix(input, antigravityInputActionPrefix)
-		if action != "up" && action != "down" && action != "enter" {
-			return errors.New("invalid antigravity terminal action")
+	if strings.HasPrefix(input, antigravitySubscriptionPrefix) {
+		index, err := strconv.Atoi(strings.TrimPrefix(input, antigravitySubscriptionPrefix))
+		if err != nil || index < 0 || index > 100 {
+			return errors.New("invalid antigravity subscription index")
 		}
-		return runHCJSON(ctx, nil, "keys", terminal, action, "--json")
+		keys := []string{"keys", terminal}
+		for range index {
+			keys = append(keys, "down")
+		}
+		keys = append(keys, "enter", "--json")
+		return runHCJSON(ctx, nil, keys...)
 	}
 	return sendHCText(ctx, terminal, input)
 }
