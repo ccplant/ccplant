@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CheckCircle2, ExternalLink, FileJson2, Loader2 } from 'lucide-react'
-import { ImmediateSaveNotice, SettingsPageHeader, SettingsSubsection } from '@/components/settings'
+import { DangerZone, ImmediateSaveNotice, SettingsPageHeader, SettingsSubsection } from '@/components/settings'
 import { AntigravityAuthAttempt, createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
 import { useToast } from '@/contexts/ToastContext'
 import { useSettingsScope } from '../SettingsScopeContext'
@@ -20,6 +20,7 @@ export function AntigravityAuthSection() {
   const [adcText, setAdcText] = useState('')
   const [adcError, setAdcError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [deletingSSO, setDeletingSSO] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const hasSSO = !!credentialsMetadata?.files?.find(file => file.type === 'antigravity_auth' && file.has_data)
@@ -109,6 +110,19 @@ export function AntigravityAuthSection() {
     } finally { setUploading(false) }
   }
 
+  const deleteSSO = async () => {
+    if (!confirm('保存済みのAntigravity Business SSO認証情報を削除しますか？')) return
+    setDeletingSSO(true)
+    try {
+      await createAgentAPIProxyClientFromStorage().deleteCredentials(scopeId, 'antigravity_auth')
+      setAttempt(null)
+      await reloadCredentials()
+      showToast('Antigravity認証情報を削除しました', 'success')
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Antigravity認証情報を削除できませんでした', 'error')
+    } finally { setDeletingSSO(false) }
+  }
+
   return <>
     <SettingsPageHeader title="Antigravity 認証" description="Gemini Enterprise のBusiness SSO、またはGoogle Cloud ADCでAntigravityを認証します。認証情報はセッション開始時に自動配置されます。" />
     <ImmediateSaveNotice />
@@ -138,6 +152,7 @@ export function AntigravityAuthSection() {
         </div>}
         {attempt && terminal.has(attempt.status) && <div className={`mt-4 rounded-md px-3 py-2 text-sm ${attempt.status === 'authorized' ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300' : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300'}`}>{attempt.status === 'authorized' ? 'Business SSOが完了しました。' : <><p>認証を完了できませんでした。もう一度お試しください。</p>{attempt.error_message && <pre className="mt-2 whitespace-pre-wrap text-xs">{attempt.error_message}</pre>}{attempt.error_code && <p className="mt-1 text-xs opacity-75">エラーコード: {attempt.error_code}</p>}</>}</div>}
       </div>
+      {hasSSO && <DangerZone><div className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium text-gray-900 dark:text-white">Business SSO認証情報を削除</p><p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">削除すると、このスコープのAntigravityセッションでBusiness SSOを利用できなくなります</p></div><button type="button" onClick={() => void deleteSSO()} disabled={deletingSSO} className="flex-shrink-0 rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20">{deletingSSO ? '削除中...' : '削除'}</button></div></DangerZone>}
     </SettingsSubsection>
 
     <SettingsSubsection title="Application Default Credentials" description="ヘッドレス実行用の application_default_credentials.json を登録します。AntigravityセッションではADCモードが自動で有効になります。">

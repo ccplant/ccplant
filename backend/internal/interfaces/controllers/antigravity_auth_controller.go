@@ -219,6 +219,14 @@ func (c *AntigravityAuthController) ReportResult(ctx echo.Context) error {
 		}
 		return ctx.NoContent(http.StatusNoContent)
 	}
+	attempt.mu.RLock()
+	subscriptionSelected := strings.HasPrefix(attempt.Input, antigravitySubscriptionPrefix)
+	attempt.mu.RUnlock()
+	if !subscriptionSelected {
+		c.finishAttemptWithError(attempt, codexauth.StatusFailed, "subscription_selection_required", "Select a Gemini Enterprise subscription before completing authentication")
+		log.Printf("[ANTIGRAVITY_AUTH] Rejected authorized result without an explicit subscription selection for attempt %s", attempt.ID)
+		return ctx.NoContent(http.StatusNoContent)
+	}
 	if len(result.AuthJSON) == 0 || len(result.AuthJSON) > maxAntigravityAuthBundleBytes || !validAntigravityBundle(result.AuthJSON) {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid Antigravity authentication bundle")
 	}

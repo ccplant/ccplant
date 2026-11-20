@@ -94,6 +94,34 @@ func TestKubernetesCredentialsRepository_SavePreservesOtherFileTypes(t *testing.
 	}
 }
 
+func TestKubernetesCredentialsRepository_DeleteFilePreservesOtherFileTypes(t *testing.T) {
+	ctx := context.Background()
+	repo, cleanup := newCredentialsRepoWithLibSQL(t)
+	defer cleanup()
+
+	for fileType, raw := range map[string]json.RawMessage{
+		sessionsettings.FileTypeCodexAuth:       json.RawMessage(`{"auth_mode":"chatgpt"}`),
+		sessionsettings.FileTypeAntigravityAuth: json.RawMessage(`{"version":1,"files":[]}`),
+	} {
+		credential := entities.NewCredentials("alice", raw)
+		credential.SetFileType(fileType)
+		if err := repo.Save(ctx, credential); err != nil {
+			t.Fatalf("save %s: %v", fileType, err)
+		}
+	}
+
+	if err := repo.DeleteFile(ctx, "alice", sessionsettings.FileTypeAntigravityAuth); err != nil {
+		t.Fatalf("delete Antigravity auth: %v", err)
+	}
+	loaded, err := repo.FindByName(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Files()) != 1 || loaded.Files()[0].Path != sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth] {
+		t.Fatalf("unexpected remaining credentials: %+v", loaded.Files())
+	}
+}
+
 func TestCredentialSyncRejectsOlderSessionSnapshot(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	repo := NewKubernetesCredentialsRepository(client, "test")

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+type credentialFileDeleter interface {
+	DeleteFile(context.Context, string, string) error
+}
 
 // CredentialsController handles credentials-related HTTP requests
 type CredentialsController struct {
@@ -178,7 +183,20 @@ func (c *CredentialsController) DeleteCredentials(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
 	}
 
-	err := c.repo.Delete(ctx.Request().Context(), name)
+	fileType := strings.TrimSpace(ctx.QueryParam("type"))
+	var err error
+	if fileType == "" {
+		err = c.repo.Delete(ctx.Request().Context(), name)
+	} else {
+		if _, ok := sessionsettings.ManagedFileTypes[fileType]; !ok {
+			return echo.NewHTTPError(http.StatusBadRequest, "Unknown credential file type")
+		}
+		deleter, ok := c.repo.(credentialFileDeleter)
+		if !ok {
+			return echo.NewHTTPError(http.StatusNotImplemented, "Deleting an individual credential file is unavailable")
+		}
+		err = deleter.DeleteFile(ctx.Request().Context(), name, fileType)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return echo.NewHTTPError(http.StatusNotFound, "Credentials not found")

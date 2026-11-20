@@ -127,8 +127,12 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 	var verificationURI string
 	var inputVersion int64
 	suppressTranscript := false
-	poll := time.NewTicker(time.Second)
+	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
+	var pendingBundle []byte
+	var subscriptionTranscript string
+	var lastChallengeTranscript string
+	subscriptionSelected := false
 	for {
 		select {
 		case <-poll.C:
@@ -142,18 +146,35 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 			}
 			if strings.Contains(clean, "Select available subscription") {
 				suppressTranscript = false
+				subscriptionTranscript = clean
 			}
-			if verificationURI != "" && !suppressTranscript {
-				challenge := codexauth.Challenge{VerificationURI: verificationURI, Transcript: clean}
+			challengeTranscript := clean
+			if finished && !subscriptionSelected && subscriptionTranscript != "" {
+				challengeTranscript = subscriptionTranscript
+			}
+			if verificationURI != "" && !suppressTranscript && challengeTranscript != lastChallengeTranscript {
+				challenge := codexauth.Challenge{VerificationURI: verificationURI, Transcript: challengeTranscript}
 				_ = postCodexAuthJSON(ctx, request, "challenge", challenge)
+				lastChallengeTranscript = challengeTranscript
 			}
 			if verificationURI != "" {
 				input, err := fetchAntigravityInput(ctx, request, inputVersion)
 				if err == nil && input.Version > inputVersion {
 					inputVersion = input.Version
-					suppressTranscript = !strings.HasPrefix(input.Input, antigravitySubscriptionPrefix)
-					if err := sendAntigravityTerminalInput(ctx, terminal, input.Input); err != nil {
-						return codexauth.Result{}, err
+					isSubscription := strings.HasPrefix(input.Input, antigravitySubscriptionPrefix)
+					suppressTranscript = !isSubscription
+					if isSubscription {
+						subscriptionSelected = true
+					}
+					// Agy may automatically finish when only one subscription is
+					// available. In that case the UI selection is an explicit
+					// confirmation; there is no live terminal left to receive keys.
+					if !finished {
+						if err := sendAntigravityTerminalInput(ctx, terminal, input.Input); err != nil {
+							return codexauth.Result{}, err
+						}
+					} else if !isSubscription {
+						return codexauth.Result{}, errors.New("antigravity login finished before authentication input was submitted")
 					}
 				}
 			}
@@ -161,11 +182,16 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 				if exitCode != 0 {
 					return codexauth.Result{Status: codexauth.StatusDenied, ErrorCode: "authorization_denied"}, fmt.Errorf("antigravity login exited with status %d", exitCode)
 				}
-				bundle, err := collectAntigravityAuthBundle()
-				if err != nil {
-					return codexauth.Result{}, err
+				if pendingBundle == nil {
+					pendingBundle, err = collectAntigravityAuthBundle()
+					if err != nil {
+						return codexauth.Result{}, err
+					}
 				}
-				return codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: bundle}, nil
+				if !subscriptionSelected {
+					continue
+				}
+				return codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: pendingBundle}, nil
 			}
 		case <-ctx.Done():
 			return codexauth.Result{}, ctx.Err()

@@ -2229,11 +2229,12 @@ export class AgentAPIProxyClient {
    * Delete credentials
    * DELETE /credentials/{name}
    */
-  async deleteCredentials(name: string): Promise<void> {
+  async deleteCredentials(name: string, type?: string): Promise<void> {
     if (this.debug) {
       console.log(`[AgentAPIProxy] Deleting credentials: ${name}`);
     }
-    await this.makeRequest<void>(`/credentials/${encodeURIComponent(name)}`, {
+    const query = type ? `?type=${encodeURIComponent(type)}` : '';
+    await this.makeRequest<void>(`/credentials/${encodeURIComponent(name)}${query}`, {
       method: 'DELETE',
     });
   }
