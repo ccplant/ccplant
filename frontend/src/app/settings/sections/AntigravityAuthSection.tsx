@@ -114,7 +114,7 @@ export function AntigravityAuthSection() {
             <button type="button" onClick={submitInput} disabled={!input.trim() || submitting} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">送信</button>
           </div>
         </div>}
-        {attempt && terminal.has(attempt.status) && <div className={`mt-4 rounded-md px-3 py-2 text-sm ${attempt.status === 'authorized' ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300' : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300'}`}>{attempt.status === 'authorized' ? 'Business SSOが完了しました。' : '認証を完了できませんでした。もう一度お試しください。'}</div>}
+        {attempt && terminal.has(attempt.status) && <div className={`mt-4 rounded-md px-3 py-2 text-sm ${attempt.status === 'authorized' ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300' : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300'}`}>{attempt.status === 'authorized' ? 'Business SSOが完了しました。' : <><p>認証を完了できませんでした。もう一度お試しください。</p>{attempt.error_message && <pre className="mt-2 whitespace-pre-wrap text-xs">{attempt.error_message}</pre>}{attempt.error_code && <p className="mt-1 text-xs opacity-75">エラーコード: {attempt.error_code}</p>}</>}</div>}
       </div>
     </SettingsSubsection>
 

@@ -42,9 +42,10 @@ type Challenge struct {
 }
 
 type Result struct {
-	Status    string `json:"status"`
-	AuthJSON  []byte `json:"auth_json,omitempty"`
-	ErrorCode string `json:"error_code,omitempty"`
+	Status       string `json:"status"`
+	AuthJSON     []byte `json:"auth_json,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 // Attempt is the durable control-plane record for an authentication workload.
@@ -60,6 +61,8 @@ type Attempt struct {
 	ExpiresAt      time.Time `json:"expires_at"`
 	Input          string    `json:"input,omitempty"`
 	InputVersion   int64     `json:"input_version,omitempty"`
+	ErrorCode      string    `json:"error_code,omitempty"`
+	ErrorMessage   string    `json:"error_message,omitempty"`
 }
 
 type AttemptStore interface {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,6 +23,7 @@ import (
 
 const antigravityAuthTTL = 15 * time.Minute
 const maxAntigravityAuthBundleBytes = 768 << 10
+const failedAntigravityWorkloadRetention = 10 * time.Minute
 
 type AntigravityAuthController struct{ *CodexDeviceAuthController }
 
@@ -32,6 +34,8 @@ type AntigravityAuthResponse struct {
 	Transcript      string    `json:"transcript,omitempty"`
 	ExpiresAt       time.Time `json:"expires_at"`
 	PollAfterMS     int       `json:"poll_after_ms"`
+	ErrorCode       string    `json:"error_code,omitempty"`
+	ErrorMessage    string    `json:"error_message,omitempty"`
 }
 
 type antigravityAuthInputRequest struct {
@@ -188,8 +192,17 @@ func (c *AntigravityAuthController) ReportResult(ctx echo.Context) error {
 		if result.Status != codexauth.StatusDenied {
 			result.Status = codexauth.StatusFailed
 		}
-		c.finishAttempt(attempt, result.Status)
-		go func() { _ = c.launcher.CancelCodexDeviceAuth(context.Background(), attempt.ID) }()
+		c.finishAttemptWithError(attempt, result.Status, result.ErrorCode, result.ErrorMessage)
+		log.Printf("[ANTIGRAVITY_AUTH] Attempt %s finished with status=%s error_code=%q error=%q", attempt.ID, result.Status, result.ErrorCode, result.ErrorMessage)
+		if result.Status == codexauth.StatusFailed {
+			time.AfterFunc(failedAntigravityWorkloadRetention, func() {
+				if err := c.launcher.CancelCodexDeviceAuth(context.Background(), attempt.ID); err != nil {
+					log.Printf("[ANTIGRAVITY_AUTH] Failed to clean retained workload for attempt %s: %v", attempt.ID, err)
+				}
+			})
+		} else {
+			go func() { _ = c.launcher.CancelCodexDeviceAuth(context.Background(), attempt.ID) }()
+		}
 		return ctx.NoContent(http.StatusNoContent)
 	}
 	if len(result.AuthJSON) == 0 || len(result.AuthJSON) > maxAntigravityAuthBundleBytes || !validAntigravityBundle(result.AuthJSON) {
@@ -201,6 +214,7 @@ func (c *AntigravityAuthController) ReportResult(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to save Antigravity credentials")
 	}
 	c.finishAttempt(attempt, codexauth.StatusAuthorized)
+	log.Printf("[ANTIGRAVITY_AUTH] Attempt %s finished with status=%s", attempt.ID, codexauth.StatusAuthorized)
 	go func() { _ = c.launcher.CancelCodexDeviceAuth(context.Background(), attempt.ID) }()
 	return ctx.NoContent(http.StatusNoContent)
 }
@@ -217,7 +231,7 @@ func (c *AntigravityAuthController) callbackURL() (string, error) {
 func antigravityResponse(attempt *deviceAuthAttempt) AntigravityAuthResponse {
 	attempt.mu.RLock()
 	defer attempt.mu.RUnlock()
-	return AntigravityAuthResponse{AttemptID: attempt.ID, Status: attempt.Status, VerificationURI: attempt.Challenge.VerificationURI, Transcript: attempt.Challenge.Transcript, ExpiresAt: attempt.ExpiresAt, PollAfterMS: 1000}
+	return AntigravityAuthResponse{AttemptID: attempt.ID, Status: attempt.Status, VerificationURI: attempt.Challenge.VerificationURI, Transcript: attempt.Challenge.Transcript, ExpiresAt: attempt.ExpiresAt, PollAfterMS: 1000, ErrorCode: attempt.ErrorCode, ErrorMessage: attempt.ErrorMessage}
 }
 
 func validAntigravityAuthURI(raw string) bool { return validVerificationURI(raw) }

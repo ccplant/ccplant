@@ -65,7 +65,7 @@ func runAntigravityAuthWorker(_ *cobra.Command, _ []string) error {
 	result, runErr := executeAntigravityAuth(ctx, request)
 	if runErr != nil {
 		log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s failed: %v", request.AttemptID, runErr)
-		result = codexauth.Result{Status: codexauth.StatusFailed, ErrorCode: "antigravity_login_failed"}
+		result = codexauth.Result{Status: codexauth.StatusFailed, ErrorCode: "antigravity_login_failed", ErrorMessage: boundedAntigravityError(runErr)}
 	}
 	reportCtx, reportCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer reportCancel()
@@ -75,10 +75,22 @@ func runAntigravityAuthWorker(_ *cobra.Command, _ []string) error {
 	return runErr
 }
 
+func boundedAntigravityError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	const limit = 2048
+	if len(message) > limit {
+		message = message[:limit]
+	}
+	return message
+}
+
 func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadRequest) (codexauth.Result, error) {
 	path, err := exec.LookPath("agy")
 	if err != nil {
-		return codexauth.Result{}, errors.New("Antigravity CLI is unavailable")
+		return codexauth.Result{}, errors.New("antigravity CLI is unavailable")
 	}
 	cmd := exec.CommandContext(ctx, path, "acp", "--login")
 	cmd.Env = append(os.Environ(), "SSH_CONNECTION=ccplant-auth-workload")
@@ -220,7 +232,7 @@ func collectAntigravityAuthBundle() ([]byte, error) {
 		return nil, err
 	}
 	if len(files) == 0 {
-		return nil, errors.New("Antigravity did not create portable authentication files")
+		return nil, errors.New("antigravity did not create portable authentication files")
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return json.Marshal(antigravityAuthBundle{Version: 1, Files: files})

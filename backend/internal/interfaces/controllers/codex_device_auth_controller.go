@@ -43,6 +43,8 @@ type deviceAuthAttempt struct {
 	ExpiresAt      time.Time
 	Input          string
 	InputVersion   int64
+	ErrorCode      string
+	ErrorMessage   string
 	mu             sync.RWMutex
 }
 
@@ -95,6 +97,8 @@ type StartDeviceAuthResponse struct {
 	VerificationURI string    `json:"verification_uri,omitempty"`
 	ExpiresAt       time.Time `json:"expires_at"`
 	PollAfterMS     int       `json:"poll_after_ms"`
+	ErrorCode       string    `json:"error_code,omitempty"`
+	ErrorMessage    string    `json:"error_message,omitempty"`
 }
 
 type PollDeviceAuthResponse struct {
@@ -363,6 +367,14 @@ func (c *CodexDeviceAuthController) finishAttempt(attempt *deviceAuthAttempt, st
 	}
 }
 
+func (c *CodexDeviceAuthController) finishAttemptWithError(attempt *deviceAuthAttempt, status, code, message string) {
+	attempt.mu.Lock()
+	attempt.ErrorCode = strings.TrimSpace(code)
+	attempt.ErrorMessage = strings.TrimSpace(message)
+	attempt.mu.Unlock()
+	c.finishAttempt(attempt, status)
+}
+
 func (c *CodexDeviceAuthController) expireAttempt(attempt *deviceAuthAttempt) {
 	attempt.mu.RLock()
 	expired := time.Now().After(attempt.ExpiresAt) && (attempt.Status == codexauth.StatusStarting || attempt.Status == codexauth.StatusWaitingForUser)
@@ -436,11 +448,11 @@ func (c *CodexDeviceAuthController) persistAttempt(ctx context.Context, attempt 
 func durableAttempt(attempt *deviceAuthAttempt) *codexauth.Attempt {
 	attempt.mu.RLock()
 	defer attempt.mu.RUnlock()
-	return &codexauth.Attempt{ID: attempt.ID, UserID: attempt.UserID, CredentialName: attempt.CredentialName, TokenHash: append([]byte(nil), attempt.TokenHash[:]...), Status: attempt.Status, Challenge: attempt.Challenge, ExpiresAt: attempt.ExpiresAt, Input: attempt.Input, InputVersion: attempt.InputVersion}
+	return &codexauth.Attempt{ID: attempt.ID, UserID: attempt.UserID, CredentialName: attempt.CredentialName, TokenHash: append([]byte(nil), attempt.TokenHash[:]...), Status: attempt.Status, Challenge: attempt.Challenge, ExpiresAt: attempt.ExpiresAt, Input: attempt.Input, InputVersion: attempt.InputVersion, ErrorCode: attempt.ErrorCode, ErrorMessage: attempt.ErrorMessage}
 }
 
 func runtimeAttempt(attempt *codexauth.Attempt) *deviceAuthAttempt {
-	r := &deviceAuthAttempt{ID: attempt.ID, UserID: attempt.UserID, CredentialName: attempt.CredentialName, Status: attempt.Status, Challenge: attempt.Challenge, ExpiresAt: attempt.ExpiresAt, Input: attempt.Input, InputVersion: attempt.InputVersion}
+	r := &deviceAuthAttempt{ID: attempt.ID, UserID: attempt.UserID, CredentialName: attempt.CredentialName, Status: attempt.Status, Challenge: attempt.Challenge, ExpiresAt: attempt.ExpiresAt, Input: attempt.Input, InputVersion: attempt.InputVersion, ErrorCode: attempt.ErrorCode, ErrorMessage: attempt.ErrorMessage}
 	copy(r.TokenHash[:], attempt.TokenHash)
 	return r
 }
@@ -448,7 +460,7 @@ func runtimeAttempt(attempt *codexauth.Attempt) *deviceAuthAttempt {
 func responseForAttempt(attempt *deviceAuthAttempt) StartDeviceAuthResponse {
 	attempt.mu.RLock()
 	defer attempt.mu.RUnlock()
-	return StartDeviceAuthResponse{AttemptID: attempt.ID, Status: attempt.Status, UserCode: attempt.Challenge.UserCode, VerificationURI: attempt.Challenge.VerificationURI, ExpiresAt: attempt.ExpiresAt, PollAfterMS: 2000}
+	return StartDeviceAuthResponse{AttemptID: attempt.ID, Status: attempt.Status, UserCode: attempt.Challenge.UserCode, VerificationURI: attempt.Challenge.VerificationURI, ExpiresAt: attempt.ExpiresAt, PollAfterMS: 2000, ErrorCode: attempt.ErrorCode, ErrorMessage: attempt.ErrorMessage}
 }
 
 func deviceAuthCredentialName(user *entities.User, req StartDeviceAuthRequest) (string, error) {
