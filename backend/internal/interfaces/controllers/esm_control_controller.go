@@ -55,9 +55,6 @@ func (c *ESMControlController) WaitCommands(ctx echo.Context) error {
 	if !ok {
 		return ctx.NoContent(http.StatusUnauthorized)
 	}
-	if err := c.store.TouchManager(ctx.Request().Context(), managerID, ctx.QueryParam("instance_id")); err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
-	}
 	commands, err := c.store.ReadCommands(ctx.Request().Context(), managerID, ctx.QueryParam("after"), parseWait(ctx.QueryParam("wait")), parseControlCount(ctx.QueryParam("count")))
 	if err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
@@ -72,9 +69,6 @@ func (c *ESMControlController) AppendFrames(ctx echo.Context) error {
 	managerID, ok := c.authorize(ctx)
 	if !ok {
 		return ctx.NoContent(http.StatusUnauthorized)
-	}
-	if err := c.store.TouchManager(ctx.Request().Context(), managerID, ctx.QueryParam("instance_id")); err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 	}
 	var request struct {
 		Frames []core.ResponseFrame `json:"frames"`

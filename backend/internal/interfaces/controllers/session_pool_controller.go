@@ -1216,20 +1216,6 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 	}
 	requestCtx := ctx.Request().Context()
 	telemetry.SetAttributes(requestCtx, telemetry.String("session_manager.id", manager.ID))
-	if c.liveness != nil {
-		if err := telemetry.LoggedOperationErr(requestCtx, "session_pool.heartbeat.touch_manager_liveness", func(operationCtx context.Context) error {
-			return c.liveness.TouchManager(operationCtx, manager.ID, "runner")
-		}, telemetry.String("session_manager.id", manager.ID)); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh session manager liveness").SetInternal(err)
-		}
-	} else {
-		manager.LastHeartbeatAt = c.now()
-		if err := telemetry.LoggedOperationErr(requestCtx, "session_pool.heartbeat.update_manager_liveness", func(operationCtx context.Context) error {
-			return c.store.UpdateManager(operationCtx, manager)
-		}, telemetry.String("session_manager.id", manager.ID)); err != nil {
-			return sessionRunnerStoreError(err)
-		}
-	}
 	var heartbeat struct {
 		LocalRunnerIDs  *[]string         `json:"local_runner_ids"`
 		SessionStatuses map[string]string `json:"session_statuses"`
@@ -1372,6 +1358,9 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 		telemetry.Int64("session_pool.heartbeat.allocated_runner_count", int64(len(allocatedRunnerIDs))),
 		telemetry.Int64("session_pool.heartbeat.orphaned_session_count", int64(len(orphanedSessionIDs))),
 	)
+	if err := c.recordManagerHeartbeat(requestCtx, manager); err != nil {
+		return err
+	}
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": c.now(), "manager_id": manager.ID, "pools": owned,
 		"registered_runner_ids":     registeredRunnerIDs,
@@ -1380,6 +1369,23 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 		"orphaned_session_ids":      orphanedSessionIDs,
 		"upstream_version":          buildinfo.Version,
 	})
+}
+
+func (c *SessionPoolController) recordManagerHeartbeat(ctx context.Context, manager *core.Manager) error {
+	if c.liveness != nil {
+		if err := telemetry.LoggedOperationErr(ctx, "session_pool.heartbeat.touch_manager_liveness", func(operationCtx context.Context) error {
+			return c.liveness.TouchManager(operationCtx, manager.ID, "runner")
+		}, telemetry.String("session_manager.id", manager.ID)); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh session manager liveness").SetInternal(err)
+		}
+		return nil
+	}
+	if err := telemetry.LoggedOperationErr(ctx, "session_pool.heartbeat.update_manager_liveness", func(operationCtx context.Context) error {
+		return c.store.TouchManagerHeartbeat(operationCtx, manager.ID, c.now())
+	}, telemetry.String("session_manager.id", manager.ID)); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return nil
 }
 
 // orphanedManagerSessionIDs compares a manager's local workload inventory with
