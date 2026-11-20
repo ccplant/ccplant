@@ -125,7 +125,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, controller.saveGitHubAppPrivateKey(context.Background(), connection, pemValue, resourceVersion))
 
-	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-1", "", "acme", "acme/payments", []string{"acme/shared", "acme/generated-[a-z]+"})
+	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-1", "", "acme", "acme/payments", []string{"acme/shared", "acme/generated-[a-z]+"}, nil)
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Equal(t, connection.ID, connectionID)
@@ -167,7 +167,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.Equal(t, 3, installationCalls)
 	require.Equal(t, 3, tokenCalls)
 
-	dynamicLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-dynamic", "", "", "", []string{"acme/shared"})
+	dynamicLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-dynamic", "", "", "", []string{"acme/shared"}, nil)
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Empty(t, connectionID)
@@ -183,7 +183,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, controller.BrokerCredentials(dynamicCtx))
 	require.Equal(t, http.StatusOK, dynamicRecorder.Code)
 
-	boundLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-bound", connection.ID, "", "", []string{"acme/shared"})
+	boundLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-bound", connection.ID, "", "", []string{"acme/shared"}, nil)
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Equal(t, connection.ID, connectionID)
@@ -199,7 +199,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, controller.BrokerCredentials(boundCtx))
 	require.Equal(t, http.StatusOK, boundRecorder.Code)
 
-	boundPrimaryLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-bound-primary", connection.ID, "acme", "acme/payments", nil)
+	boundPrimaryLease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-bound-primary", connection.ID, "acme", "acme/payments", nil, nil)
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Equal(t, connection.ID, connectionID)
@@ -226,7 +226,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.ErrorAs(t, err, &deniedHTTPError)
 	require.Equal(t, http.StatusForbidden, deniedHTTPError.Code)
 
-	broadLease, _, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-2", "", "acme", "acme/payments", []string{".*"})
+	broadLease, _, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-2", "", "acme", "acme/payments", []string{".*"}, nil)
 	require.NoError(t, err)
 	require.True(t, matched)
 	otherOrgReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-2/github-credentials?repository=other%2Fsecret", nil)
@@ -270,6 +270,36 @@ func TestNormalizeRepositoryPatterns(t *testing.T) {
 		_, err := normalizeRepositoryPatterns([]string{rule})
 		require.Error(t, err, rule)
 	}
+}
+
+func TestBrokerCredentialsPreferLinkedPersonalConnectionToken(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
+	connection := githubConnection{ID: "personal-connection", Name: "Personal connection", Enabled: true, BaseURL: "https://github.example.com", APIURL: "https://api.github.example.com", Organizations: []string{"acme"}}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+
+	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
+	require.NoError(t, err)
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-personal", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "personal-token", nil)
+	require.NoError(t, err)
+
+	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "personal-session", connection.ID, "acme", "acme/repo", nil, user)
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Equal(t, connection.ID, connectionID)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/internal/sessions/personal-session/github-credentials", nil)
+	req.Header.Set("Authorization", "Bearer "+lease)
+	recorder := httptest.NewRecorder()
+	ctx := e.NewContext(req, recorder)
+	ctx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("personal-session")
+	require.NoError(t, controller.BrokerCredentials(ctx))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.JSONEq(t, `{"username":"x-access-token","token":"personal-token"}`, recorder.Body.String())
 }
 
 func TestValidateGitHubAppPrivateKey(t *testing.T) {

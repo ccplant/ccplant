@@ -112,6 +112,7 @@ type githubAppTestRequest struct {
 type githubBrokerLease struct {
 	SessionID    string    `json:"session_id"`
 	ConnectionID string    `json:"connection_id"`
+	PrincipalID  string    `json:"principal_id,omitempty"`
 	Repository   string    `json:"repository"`
 	Repositories []string  `json:"repositories,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at"`
@@ -1091,12 +1092,16 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 	if err != nil {
 		return "", errors.New("GitHub principal not found")
 	}
+	return c.resolveAccessTokenForPrincipal(ctx, principal.ID, connectionID)
+}
+
+func (c *GitHubConnectionsController) resolveAccessTokenForPrincipal(ctx context.Context, principalID, connectionID string) (string, error) {
 	identities, err := c.listIdentities(ctx)
 	if err != nil {
 		return "", err
 	}
 	for _, identity := range identities {
-		if identity.PrincipalID != principal.ID || identity.ConnectionID != connectionID {
+		if identity.PrincipalID != principalID || identity.ConnectionID != connectionID {
 			continue
 		}
 		secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.GetOptions{})
@@ -1997,12 +2002,12 @@ func (c *GitHubConnectionsController) mintGitHubAppToken(ctx context.Context, co
 // IssueBrokerLeaseForOrganization selects the existing organization-mapped
 // connection and grants one session renewable access to that repository token.
 func (c *GitHubConnectionsController) IssueBrokerLeaseForOrganization(ctx context.Context, sessionID, organization, repository string) (string, string, bool, error) {
-	return c.IssueBrokerLeaseForRepositories(ctx, sessionID, "", organization, repository, nil)
+	return c.IssueBrokerLeaseForRepositories(ctx, sessionID, "", organization, repository, nil, nil)
 }
 
 // IssueBrokerLeaseForRepositories grants one session renewable access to the
 // working repository and explicitly configured additional repositories.
-func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx context.Context, sessionID, requestedConnectionID, organization, repository string, additional []string) (string, string, bool, error) {
+func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx context.Context, sessionID, requestedConnectionID, organization, repository string, additional []string, user *entities.User) (string, string, bool, error) {
 	patterns, err := normalizeRepositoryPatterns(additional)
 	if err != nil {
 		return "", "", true, err
@@ -2049,7 +2054,18 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx contex
 	if selected == nil {
 		return "", "", false, nil
 	}
-	if selected.GitHubApp == nil || selected.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, selected.ID) {
+	principalID := ""
+	if user != nil && requestedConnectionID != "" {
+		principal, principalErr := c.loadPrincipalForUser(ctx, user)
+		if principalErr != nil {
+			return "", selected.ID, true, errors.New("GitHub principal not found")
+		}
+		if _, tokenErr := c.resolveAccessTokenForPrincipal(ctx, principal.ID, selected.ID); tokenErr != nil {
+			return "", selected.ID, true, tokenErr
+		}
+		principalID = principal.ID
+	}
+	if principalID == "" && (selected.GitHubApp == nil || selected.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, selected.ID)) {
 		return "", selected.ID, false, nil
 	}
 	primaryRepositories, err := normalizeRepositoryList([]string{repository})
@@ -2060,12 +2076,14 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx contex
 	if !containsOrganization(selected.Organizations, repositoryOwner(primaryRepository)) {
 		return "", "", true, fmt.Errorf("repository %s does not use the selected GitHub connection", primaryRepository)
 	}
-	if _, _, err := c.mintGitHubAppToken(ctx, *selected, primaryRepository); err != nil {
-		return "", "", true, err
+	if principalID == "" {
+		if _, _, err := c.mintGitHubAppToken(ctx, *selected, primaryRepository); err != nil {
+			return "", "", true, err
+		}
 	}
 	repositories := append([]string{primaryRepository}, prefixedRepositoryPatterns(patterns)...)
 	leaseToken := uuid.NewString() + uuid.NewString()
-	lease := githubBrokerLease{SessionID: sessionID, ConnectionID: selected.ID, Repository: repository, Repositories: repositories, ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
+	lease := githubBrokerLease{SessionID: sessionID, ConnectionID: selected.ID, PrincipalID: principalID, Repository: repository, Repositories: repositories, ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
 	if err := c.createObject(ctx, brokerLeaseSecretName(leaseToken), githubBrokerLeaseLabel, lease, map[string]string{"agentapi.ccplant.io/session-id-hash": shortHash(sessionID)}); err != nil {
 		return "", "", true, fmt.Errorf("store GitHub broker lease: %w", err)
 	}
@@ -2115,6 +2133,13 @@ func (c *GitHubConnectionsController) BrokerCredentials(ctx echo.Context) error 
 	}
 	if !containsOrganization(connection.Organizations, repositoryOwner(normalized[0])) {
 		return echo.NewHTTPError(http.StatusForbidden, "repository does not use the broker credential's GitHub connection")
+	}
+	if lease.PrincipalID != "" {
+		personalToken, tokenErr := c.resolveAccessTokenForPrincipal(ctx.Request().Context(), lease.PrincipalID, connection.ID)
+		if tokenErr != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh GitHub token").SetInternal(tokenErr)
+		}
+		return ctx.JSON(http.StatusOK, map[string]any{"username": "x-access-token", "token": personalToken})
 	}
 	installationToken, expiresAt, err := c.mintGitHubAppToken(ctx.Request().Context(), connection, normalized[0])
 	if err != nil {
