@@ -85,7 +85,7 @@ func (s githubConnectionURLResolverStub) IssueBrokerLeaseForOrganization(context
 	return "", "", false, nil
 }
 
-func (s githubConnectionURLResolverStub) IssueBrokerLeaseForRepositories(context.Context, string, string, string, string, []string) (string, string, bool, error) {
+func (s githubConnectionURLResolverStub) IssueBrokerLeaseForRepositories(context.Context, string, string, string, string, []string, *entities.User) (string, string, bool, error) {
 	return "", "", false, nil
 }
 
@@ -233,7 +233,7 @@ func TestStartPersonalSessionWithoutRepositoryUsesBuiltInGitHubToken(t *testing.
 	require.NotContains(t, creator.request.Environment, "AGENTAPI_GITHUB_BROKER_TOKEN")
 }
 
-func TestStartPersonalSessionUsesOrganizationBrokerBeforeBuiltInGitHubToken(t *testing.T) {
+func TestStartPersonalSessionUsesAuthenticatedConnectionBeforeOrganizationBroker(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","tags":{"repository":"acme/repo"}}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -243,7 +243,7 @@ func TestStartPersonalSessionUsesOrganizationBrokerBeforeBuiltInGitHubToken(t *t
 		User:          entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice"),
 		PersonalScope: auth.PersonalScopeAuth{UserID: "alice", CanCreate: true, CanRead: true},
 	})
-	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "built-in-token", ConnectionID: "built-in"})
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "personal-token", ConnectionID: "personal-connection"})
 
 	creator := &previewSessionCreator{}
 	resolver := githubRoutingResolver{
@@ -256,7 +256,7 @@ func TestStartPersonalSessionUsesOrganizationBrokerBeforeBuiltInGitHubToken(t *t
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Nil(t, creator.request.Params)
 	require.Equal(t, "<generated-at-apply>", creator.request.Environment["AGENTAPI_GITHUB_BROKER_TOKEN"])
-	require.Equal(t, "organization-connection", creator.request.Environment["AGENTAPI_GITHUB_CONNECTION_ID"])
+	require.Equal(t, "personal-connection", creator.request.Environment["AGENTAPI_GITHUB_CONNECTION_ID"])
 	require.Equal(t, "https://github.com", creator.request.Environment["GITHUB_URL"])
 	require.Equal(t, "https://api.github.com", creator.request.Environment["GITHUB_API"])
 	require.Equal(t, "github.com", creator.request.Environment["GH_HOST"])
