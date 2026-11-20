@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -1233,7 +1234,7 @@ func TestRefreshRunnerSessionStatusDetectsNewReadyPod(t *testing.T) {
 	session.SetStatus("suspended")
 }
 
-func TestPurgeStaleStockSessionsRemovesOnlyExpiredCreatingStock(t *testing.T) {
+func TestPurgeStaleStockSessionsKeepsCreatingStockRegardlessOfAge(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	manager.k8sConfig.PodStartTimeout = 120
 	ctx := context.Background()
@@ -1262,11 +1263,10 @@ func TestPurgeStaleStockSessionsRemovesOnlyExpiredCreatingStock(t *testing.T) {
 	if err := manager.PurgeStaleStockSessions(ctx); err != nil {
 		t.Fatalf("PurgeStaleStockSessions failed: %v", err)
 	}
-	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-expired-creating-svc", metav1.GetOptions{}); !errors.IsNotFound(err) {
-		t.Fatalf("expected expired creating stock to be deleted, got %v", err)
-	}
-	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-current-creating-svc", metav1.GetOptions{}); err != nil {
-		t.Fatalf("expected current creating stock to remain, got %v", err)
+	for _, id := range []string{"expired-creating", "current-creating"} {
+		if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-"+id+"-svc", metav1.GetOptions{}); err != nil {
+			t.Fatalf("expected %s stock to remain, got %v", id, err)
+		}
 	}
 }
 
@@ -1469,6 +1469,38 @@ func TestCreateStockSessionReturnsBeforeWorkloadIsReady(t *testing.T) {
 	}
 	if len(services.Items) != 1 {
 		t.Fatalf("creating stock services = %d, want 1", len(services.Items))
+	}
+}
+
+func TestWaitForStockSessionWorkloadReadyHasNoStartupTimeout(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.PodStartTimeout = 0
+	session := NewKubernetesSession(
+		"slow-stock",
+		&entities.RunServerRequest{},
+		"agentapi-session-slow-stock",
+		"agentapi-session-slow-stock-svc",
+		"agentapi-session-slow-stock-pvc",
+		"test-ns",
+		9000,
+		func() {},
+		nil,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- manager.waitForSessionWorkloadReady(ctx, session)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("readiness wait returned before cancellation: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	if err := <-done; !stderrors.Is(err, context.Canceled) {
+		t.Fatalf("readiness wait error = %v, want context cancellation", err)
 	}
 }
 

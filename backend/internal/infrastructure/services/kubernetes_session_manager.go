@@ -1697,13 +1697,10 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 		svc := &svcs.Items[i]
 		stockState := svc.Labels["agentapi.proxy/stock"]
 		if stockState == "creating" {
-			// A creating entry older than the complete pod-start window cannot
-			// still be a valid in-flight stock request. This also recovers
-			// resources left behind by a process crash or request cancellation.
-			staleAfter := time.Duration(m.k8sConfig.PodStartTimeout)*time.Second + 30*time.Second
-			if time.Since(svc.CreationTimestamp.Time) < staleAfter {
-				continue
-			}
+			// Startup time is unbounded for stock sessions. A slow image pull or
+			// constrained cluster cannot be repaired by deleting and recreating the
+			// same workload, so never purge an in-flight reservation based on age.
+			continue
 		} else if stockState != "true" {
 			continue
 		}
@@ -7102,9 +7099,6 @@ func (m *KubernetesSessionManager) isSessionWorkloadReady(ctx context.Context, s
 }
 
 func (m *KubernetesSessionManager) waitForSessionWorkloadReady(ctx context.Context, session *KubernetesSession) error {
-	timeout := time.NewTimer(time.Duration(m.k8sConfig.PodStartTimeout) * time.Second)
-	defer timeout.Stop()
-
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -7117,8 +7111,6 @@ func (m *KubernetesSessionManager) waitForSessionWorkloadReady(ctx context.Conte
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-timeout.C:
-			return fmt.Errorf("timed out after %d seconds", m.k8sConfig.PodStartTimeout)
 		case <-ticker.C:
 		}
 	}
