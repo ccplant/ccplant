@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -143,10 +144,16 @@ func (c *AntigravityAuthController) SubmitInput(ctx echo.Context) error {
 		attempt.Input = strings.TrimSpace(request.Input)
 	}
 	attempt.InputVersion++
+	inputVersion := attempt.InputVersion
+	inputKind := "authentication_response"
+	if request.SubscriptionIndex != nil {
+		inputKind = "subscription"
+	}
 	attempt.mu.Unlock()
 	if err := c.persistAttempt(ctx.Request().Context(), attempt); err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to submit authentication input")
 	}
+	log.Printf("[ANTIGRAVITY_AUTH] Stored input attempt=%s version=%d kind=%s", attempt.ID, inputVersion, inputKind)
 	return ctx.NoContent(http.StatusNoContent)
 }
 
@@ -167,6 +174,14 @@ func (c *AntigravityAuthController) WorkerInput(ctx echo.Context) error {
 	attempt.mu.RLock()
 	response := antigravityAuthInputResponse{Input: attempt.Input, Version: attempt.InputVersion}
 	attempt.mu.RUnlock()
+	after, _ := strconv.ParseInt(ctx.QueryParam("after"), 10, 64)
+	if response.Version > after {
+		inputKind := "authentication_response"
+		if strings.HasPrefix(response.Input, antigravitySubscriptionPrefix) {
+			inputKind = "subscription"
+		}
+		log.Printf("[ANTIGRAVITY_AUTH] Worker fetched input attempt=%s after=%d version=%d kind=%s", attempt.ID, after, response.Version, inputKind)
+	}
 	return ctx.JSON(http.StatusOK, response)
 }
 

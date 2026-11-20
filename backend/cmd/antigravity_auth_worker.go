@@ -145,6 +145,9 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 				verificationURI = codexAuthURLRegex.FindString(clean)
 			}
 			if strings.Contains(clean, "Select available subscription") {
+				if subscriptionTranscript == "" {
+					log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s observed subscription picker", request.AttemptID)
+				}
 				suppressTranscript = false
 				subscriptionTranscript = clean
 			}
@@ -162,6 +165,11 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 				if err == nil && input.Version > inputVersion {
 					inputVersion = input.Version
 					isSubscription := strings.HasPrefix(input.Input, antigravitySubscriptionPrefix)
+					inputKind := "authentication_response"
+					if isSubscription {
+						inputKind = "subscription"
+					}
+					log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s received input version=%d kind=%s terminal_finished=%v", request.AttemptID, input.Version, inputKind, finished)
 					suppressTranscript = !isSubscription
 					if isSubscription {
 						subscriptionSelected = true
@@ -173,6 +181,7 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 						if err := sendAntigravityTerminalInput(ctx, terminal, input.Input); err != nil {
 							return codexauth.Result{}, err
 						}
+						log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s delivered input version=%d kind=%s to terminal", request.AttemptID, input.Version, inputKind)
 					} else if !isSubscription {
 						return codexauth.Result{}, errors.New("antigravity login finished before authentication input was submitted")
 					}
@@ -189,6 +198,9 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 					}
 				}
 				if !subscriptionSelected {
+					if subscriptionTranscript == "" {
+						log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s terminal finished before a subscription picker was observed", request.AttemptID)
+					}
 					continue
 				}
 				return codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: pendingBundle}, nil
