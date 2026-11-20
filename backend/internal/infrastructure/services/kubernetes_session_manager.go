@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	coresessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	infrasessionallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -97,9 +98,8 @@ var defaultPodStatusHTTPClient = &http.Client{
 
 var ErrInvalidRunnerToken = stderrors.New("invalid runner token")
 
-// ProvisionerPort is the exported version of provisionerPort for use by other packages
-// (e.g. the session controller error handler that checks provisioner /status).
-const ProvisionerPort = provisionerPort
+// ProvisionerPort remains an alias for infrastructure-local callers.
+const ProvisionerPort = sessionrunnercore.ProvisionerPort
 
 // nfaProxyPort is the default forward proxy port exposed by takutakahashi/nfa.
 const nfaProxyPort = 3128

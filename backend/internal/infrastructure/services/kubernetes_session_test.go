@@ -69,8 +69,9 @@ func TestKubernetesSession_Methods(t *testing.T) {
 	session := NewKubernetesSession(
 		"test-session",
 		&entities.RunServerRequest{
-			UserID: "test-user",
-			Tags:   map[string]string{"key": "value"},
+			UserID:  "test-user",
+			Tags:    map[string]string{"key": "value"},
+			Sandbox: &entities.SandboxParams{PolicyID: "sandbox-policy-1"},
 		},
 		"test-deploy",
 		"test-svc",
@@ -122,6 +123,9 @@ func TestKubernetesSession_Methods(t *testing.T) {
 	expectedDNS := "test-svc.test-ns.svc.cluster.local"
 	if session.ServiceDNS() != expectedDNS {
 		t.Errorf("Expected ServiceDNS %s, got %s", expectedDNS, session.ServiceDNS())
+	}
+	if session.SandboxPolicyID() != "sandbox-policy-1" {
+		t.Errorf("Expected sandbox policy to be exposed, got %q", session.SandboxPolicyID())
 	}
 
 	// Test StartedAt

@@ -24,7 +24,6 @@ import (
 	"github.com/labstack/echo/v4"
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
@@ -93,6 +92,15 @@ type sessionSandboxPolicyProvider interface {
 	SandboxPolicyID() string
 }
 
+type sessionProvisionerStatusProvider interface {
+	ServiceDNS() string
+}
+
+type sessionStateStore interface {
+	Save(context.Context, string, io.Reader) error
+	Load(context.Context, string) (io.ReadCloser, error)
+}
+
 type sessionModelOptionsProvider interface {
 	ModelOptions() []string
 }
@@ -116,7 +124,7 @@ type SessionController struct {
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
 	contextTemplateRepo    repositories.SessionContextTemplateRepository
-	sessionStateStore      services.SessionStateStore
+	sessionStateStore      sessionStateStore
 	sessionRunnerStore     sessionRunnerAllocationStore
 	sessionStatusRecorder  sessionStatusUsageRecorder
 	esmControlTunnel       ESMControlTunnel
@@ -306,7 +314,7 @@ func WithSessionProfileRepository(repo repositories.SessionProfileRepository) Se
 	}
 }
 
-func WithSessionContextTemplates(repo repositories.SessionContextTemplateRepository, store services.SessionStateStore) SessionControllerOption {
+func WithSessionContextTemplates(repo repositories.SessionContextTemplateRepository, store sessionStateStore) SessionControllerOption {
 	return func(c *SessionController) { c.contextTemplateRepo, c.sessionStateStore = repo, store }
 }
 
@@ -1354,10 +1362,6 @@ func (c *SessionController) searchSessions(ctx echo.Context) error {
 				if policyID := provider.SandboxPolicyID(); policyID != "" {
 					sessionData["sandbox_policy_id"] = policyID
 				}
-			} else if ks, ok := session.(*services.KubernetesSession); ok {
-				if req := ks.Request(); req != nil && req.Sandbox != nil {
-					sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
-				}
 			}
 			if modelOptions := c.resolveSessionModelOptions(buildCtx, session, modelOptionsCache); len(modelOptions) > 0 {
 				sessionData["model_options"] = modelOptions
@@ -2137,8 +2141,8 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 		// permanent failure (provisioner error → HTTP 500) from a transient
 		// startup delay (provisioner still pending/provisioning → HTTP 502).
 		if strings.HasSuffix(r.URL.Path, "/status") {
-			if ks, ok := session.(*services.KubernetesSession); ok {
-				provisionerURL := fmt.Sprintf("http://%s:%d/status", ks.ServiceDNS(), services.ProvisionerPort)
+			if provisioned, ok := session.(sessionProvisionerStatusProvider); ok {
+				provisionerURL := fmt.Sprintf("http://%s:%d/status", provisioned.ServiceDNS(), sessionrunnercore.ProvisionerPort)
 				provClient := &http.Client{Timeout: 2 * time.Second}
 				provResp, provErr := provClient.Get(provisionerURL)
 				if provErr == nil {

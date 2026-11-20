@@ -298,6 +298,15 @@ func (s *KubernetesSession) ServiceDNS() string {
 	return s.serviceName + "." + s.namespace + ".svc.cluster.local"
 }
 
+// SandboxPolicyID exposes the applied policy without requiring callers to
+// depend on the Kubernetes session implementation or its complete request.
+func (s *KubernetesSession) SandboxPolicyID() string {
+	if s.request == nil || s.request.Sandbox == nil {
+		return ""
+	}
+	return s.request.Sandbox.PolicyID
+}
+
 // DeploymentName returns the Kubernetes Deployment name
 func (s *KubernetesSession) DeploymentName() string {
 	return s.deploymentName
