@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,6 +19,7 @@ import (
 
 var (
 	acpPort          string
+	acpHost          string
 	acpCwd           string
 	acpSessionID     string
 	acpSessionFile   string
@@ -56,6 +58,7 @@ Example:
 
 func init() {
 	AcpServerCmd.Flags().StringVarP(&acpPort, "port", "p", "3284", "HTTP port to listen on")
+	AcpServerCmd.Flags().StringVar(&acpHost, "host", "0.0.0.0", "IP address for the HTTP server to listen on")
 	AcpServerCmd.Flags().StringVar(&acpCwd, "cwd", "", "Working directory for the ACP session (defaults to current directory)")
 	AcpServerCmd.Flags().StringVar(&acpSessionID, "session-id", "", "Session ID to use (defaults to auto-generated)")
 	AcpServerCmd.Flags().StringVar(&acpSessionFile, "session-file", "", "File to persist ACP session ID for reuse across restarts (defaults to {cwd}/.acp-session-id)")
@@ -172,7 +175,7 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 
 	// Start the HTTP server.
 	srv := bridge.NewServer(b, acpVerbose)
-	addr := ":" + acpPort
+	addr := net.JoinHostPort(acpHost, acpPort)
 	log.Printf("[acp-server] HTTP server listening on %s", addr)
 
 	httpErrCh := make(chan error, 1)

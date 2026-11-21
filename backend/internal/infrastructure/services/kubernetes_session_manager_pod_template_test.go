@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
@@ -74,12 +75,30 @@ spec:
 	main := template.Spec.Containers[0]
 	assert.Equal(t, "agentapi", main.Name)
 	assert.Equal(t, []string{"/usr/bin/tini"}, main.Command)
-	assert.Equal(t, []string{"-g", "--", "/bin/sh", "-c", `exec "${CCPLANT_BINARY_PATH:-ccplant}" agent-provisioner`}, main.Args)
+	assert.Equal(t, []string{"-g", "--", "/bin/sh", "-c", `exec "${CCPLANT_BINARY_PATH:-ccplant}" agent-provisioner --host 127.0.0.1`}, main.Args)
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "AGENTAPI_BIND_HOST", Value: "127.0.0.1"})
+	require.NotNil(t, main.LivenessProbe)
+	require.NotNil(t, main.LivenessProbe.Exec)
+	assert.Contains(t, main.LivenessProbe.Exec.Command, "http://127.0.0.1:9001/livez")
+	require.NotNil(t, main.ReadinessProbe)
+	require.NotNil(t, main.ReadinessProbe.Exec)
+	assert.Contains(t, main.ReadinessProbe.Exec.Command, "http://127.0.0.1:9001/healthz")
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "EXTRA_ENV", Value: "enabled"})
 	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "extra-config", MountPath: "/etc/extra-config", ReadOnly: true})
 	assert.Equal(t, resource.MustParse("250m"), main.Resources.Requests[corev1.ResourceCPU])
 	assert.Equal(t, resource.MustParse("1500m"), main.Resources.Limits[corev1.ResourceCPU])
 	assert.Contains(t, containerNames(template.Spec.Containers), "observer")
+}
+
+func TestDinDDaemonBindsOnlyToPodLoopback(t *testing.T) {
+	manager := &KubernetesSessionManager{k8sConfig: &config.KubernetesSessionConfig{}}
+
+	sidecar, mainEnv, _ := manager.buildDinDContainers(nil)
+
+	require.NotNil(t, sidecar)
+	assert.Contains(t, sidecar.Args, "--host=tcp://127.0.0.1:2375")
+	assert.NotContains(t, sidecar.Args, "--host=tcp://0.0.0.0:2375")
+	assert.Contains(t, mainEnv, corev1.EnvVar{Name: "DOCKER_HOST", Value: "tcp://127.0.0.1:2375"})
 }
 
 func TestBuildDeploymentFailsOnInvalidSessionPodTemplateFile(t *testing.T) {

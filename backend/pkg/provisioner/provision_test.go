@@ -47,9 +47,22 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 	if cmd != "ccplant" {
 		t.Fatalf("command = %q, want ccplant", cmd)
 	}
-	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}
+	want := []string{"acp-server", "--host", "0.0.0.0", "--port", "9000", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestBuildAgentCommandUsesConfiguredLoopbackHost(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+
+	_, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "codex-acp"},
+	}, map[string]string{"AGENTAPI_BIND_HOST": "127.0.0.1"})
+
+	wantPrefix := []string{"acp-server", "--host", "127.0.0.1", "--port", "9000"}
+	if len(args) < len(wantPrefix) || !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("args prefix = %#v, want %#v", args, wantPrefix)
 	}
 }
 
@@ -78,7 +91,7 @@ func TestBuildAgentCommandKeepsCodexACPInAgentContainer(t *testing.T) {
 	if cmd != "ccplant" {
 		t.Fatalf("command = %q, want ccplant", cmd)
 	}
-	want := []string{"acp-server", "--port", "9000", "--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"), "--auto-approve", "--", containerJavaScriptRuntime, containerCodexACPEntrypoint}
+	want := []string{"acp-server", "--host", "0.0.0.0", "--port", "9000", "--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"), "--auto-approve", "--", containerJavaScriptRuntime, containerCodexACPEntrypoint}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}
@@ -119,7 +132,7 @@ func TestBuildAgentCommandPi(t *testing.T) {
 	if cmd != "ccplant" {
 		t.Fatalf("command = %q, want ccplant", cmd)
 	}
-	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "pi-acp"}
+	want := []string{"acp-server", "--host", "0.0.0.0", "--port", "9000", "--auto-approve", "--", "pi-acp"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}
@@ -141,7 +154,7 @@ func TestBuildAgentCommandAntigravity(t *testing.T) {
 	if cmd != "ccplant" {
 		t.Fatalf("command = %q, want ccplant", cmd)
 	}
-	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "agy", "--dangerously-skip-permissions", "acp"}
+	want := []string{"acp-server", "--host", "0.0.0.0", "--port", "9000", "--auto-approve", "--", "agy", "--dangerously-skip-permissions", "acp"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}

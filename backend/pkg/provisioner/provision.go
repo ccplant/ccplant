@@ -1607,6 +1607,10 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	if agentapiPort == "" {
 		agentapiPort = "8080"
 	}
+	agentapiHost := strings.TrimSpace(envMap["AGENTAPI_BIND_HOST"])
+	if agentapiHost == "" {
+		agentapiHost = "0.0.0.0"
+	}
 
 	switch agentType {
 	case "claude-acp":
@@ -1617,6 +1621,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// https://github.com/agentclientprotocol/claude-agent-acp
 		return agentapiProxyBinary, []string{
 			"acp-server",
+			"--host", agentapiHost,
 			"--port", agentapiPort,
 			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--output-file", acpHistoryPath,
@@ -1639,6 +1644,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		}
 		args := []string{
 			"acp-server",
+			"--host", agentapiHost,
 			"--port", agentapiPort,
 			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--auto-approve",
@@ -1654,6 +1660,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		ensurePiEnv(envMap)
 		return agentapiProxyBinary, []string{
 			"acp-server",
+			"--host", agentapiHost,
 			"--port", agentapiPort,
 			"--auto-approve",
 			"--",
@@ -1666,6 +1673,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
 		return agentapiProxyBinary, []string{
 			"acp-server",
+			"--host", agentapiHost,
 			"--port", agentapiPort,
 			"--auto-approve",
 			"--raw-json-log",
@@ -1679,6 +1687,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// approval prompts are disabled for unattended operation.
 		return agentapiProxyBinary, []string{
 			"acp-server",
+			"--host", agentapiHost,
 			"--port", agentapiPort,
 			"--auto-approve",
 			"--",
@@ -1693,6 +1702,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		}
 		return "agentapi", []string{
 			"server",
+			"--host", agentapiHost,
 			"--allowed-hosts", "*",
 			"--allowed-origins", "*",
 			"--port", agentapiPort,

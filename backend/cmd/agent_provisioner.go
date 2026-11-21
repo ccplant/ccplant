@@ -48,6 +48,8 @@ Provision requests are pulled from the proxy internal provisioner API.`,
 func init() {
 	AgentProvisionerCmd.Flags().Int("port", 9001,
 		"TCP port for the provisioner HTTP server")
+	AgentProvisionerCmd.Flags().String("host", "0.0.0.0",
+		"IP address for the provisioner HTTP server to listen on")
 	AgentProvisionerCmd.Flags().String("settings-file",
 		"/session-settings/settings.yaml",
 		"Path to the session settings YAML file used for auto-provisioning on Pod restart")
@@ -84,6 +86,10 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	host, err := cmd.Flags().GetString("host")
+	if err != nil {
+		return err
+	}
 	settingsFile, err := cmd.Flags().GetString("settings-file")
 	if err != nil {
 		return err
@@ -91,7 +97,7 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	srv := provisioner.New(port, settingsFile)
+	srv := provisioner.NewWithHost(host, port, settingsFile)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
