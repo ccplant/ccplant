@@ -4208,6 +4208,7 @@ func (m *KubernetesSessionManager) createPod(ctx context.Context, session *Kuber
 
 const sessionCLIPath = "/opt/ccplant/bin/ccplant"
 const defaultExecutorSocketPath = "/run/ccplant-executor/executor.sock"
+const defaultHerdrRuntimePath = "/run/ccplant-herdr"
 
 func (m *KubernetesSessionManager) sessionBinaryPath() string {
 	if m.k8sConfig.CLIImage != "" {
@@ -4437,9 +4438,14 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		container.Env = append(container.Env,
 			corev1.EnvVar{Name: "CCPLANT_EXECUTOR_REQUIRED", Value: "1"},
 			corev1.EnvVar{Name: "CCPLANT_EXECUTOR_SOCKET", Value: defaultExecutorSocketPath},
+			// Shell commands run in the executor sidecar. Share herdr-core's
+			// Unix socket so hc launched there reaches the session's core instead
+			// of starting an isolated core inside the sidecar.
+			corev1.EnvVar{Name: "XDG_RUNTIME_DIR", Value: defaultHerdrRuntimePath},
 		)
 		container.VolumeMounts = append(container.VolumeMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
+			corev1.VolumeMount{Name: "herdr-runtime", MountPath: defaultHerdrRuntimePath},
 		)
 	}
 
@@ -4504,7 +4510,10 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		}
 	}
 	if executorEnabled {
-		volumes = append(volumes, corev1.Volume{Name: "executor-socket", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
+		volumes = append(volumes,
+			corev1.Volume{Name: "executor-socket", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			corev1.Volume{Name: "herdr-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		)
 	}
 
 	// Run the executor as a native sidecar so kubelet restarts it independently
@@ -4514,6 +4523,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		executorMounts := m.buildMainContainerVolumeMounts(session, req)
 		executorMounts = append(executorMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
+			corev1.VolumeMount{Name: "herdr-runtime", MountPath: defaultHerdrRuntimePath},
 			corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true},
 		)
 		restartAlways := corev1.ContainerRestartPolicyAlways
@@ -4523,6 +4533,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			WorkingDir:      workingDir,
 			Command:         []string{"/usr/bin/tini"},
 			Args:            []string{"-g", "--", sessionCLIPath, "executor-server", "--socket", defaultExecutorSocketPath},
+			Env:             []corev1.EnvVar{{Name: "XDG_RUNTIME_DIR", Value: defaultHerdrRuntimePath}},
 			VolumeMounts:    executorMounts,
 			RestartPolicy:   &restartAlways,
 			Resources: buildResourceRequirements(

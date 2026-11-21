@@ -355,6 +355,18 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 	if !hasEnvValue(main.Env, "CCPLANT_EXECUTOR_REQUIRED", "1") {
 		t.Fatal("agent container does not require the executor")
 	}
+	if !hasEnvValue(main.Env, "XDG_RUNTIME_DIR", defaultHerdrRuntimePath) {
+		t.Fatal("agent container does not use the shared herdr runtime directory")
+	}
+	if !hasEnvValue(executor.Env, "XDG_RUNTIME_DIR", defaultHerdrRuntimePath) {
+		t.Fatal("executor container does not use the shared herdr runtime directory")
+	}
+	if !hasMount(main.VolumeMounts, "herdr-runtime", defaultHerdrRuntimePath, "") {
+		t.Fatalf("agent mounts = %#v, want shared herdr runtime", main.VolumeMounts)
+	}
+	if !hasMount(executor.VolumeMounts, "herdr-runtime", defaultHerdrRuntimePath, "") {
+		t.Fatalf("executor mounts = %#v, want shared herdr runtime", executor.VolumeMounts)
+	}
 	if !hasMount(main.VolumeMounts, "ccplant-cli", "/bin/bash", "ccplant") {
 		t.Fatalf("agent mounts = %#v, want ccplant mounted over /bin/bash", main.VolumeMounts)
 	}
