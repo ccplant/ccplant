@@ -253,6 +253,56 @@ func (r *KubernetesCredentialsRepository) Delete(ctx context.Context, name strin
 	return nil
 }
 
+// DeleteFile removes one managed credential file while preserving the other
+// credential types stored for the same owner.
+func (r *KubernetesCredentialsRepository) DeleteFile(ctx context.Context, name, fileType string) error {
+	filePath, ok := sessionsettings.ManagedFileTypes[fileType]
+	if !ok {
+		return fmt.Errorf("unknown file type: %s", fileType)
+	}
+	secrets := r.client.CoreV1().Secrets(r.namespace)
+	secretName := r.secretName(name)
+	for attempt := 0; attempt < credentialsSaveMaxRetries; attempt++ {
+		existing, err := secrets.Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("credentials not found: %s", name)
+			}
+			return fmt.Errorf("failed to read credentials secret: %w", err)
+		}
+		files := sessionsettings.SecretDataToFiles(existing.Data)
+		remaining := make([]sessionsettings.ManagedFile, 0, len(files))
+		found := false
+		for _, file := range files {
+			if file.Path == filePath {
+				found = true
+				continue
+			}
+			remaining = append(remaining, file)
+		}
+		if !found {
+			return fmt.Errorf("credentials not found: %s (%s)", name, fileType)
+		}
+		if len(remaining) == 0 {
+			if err := secrets.Delete(ctx, secretName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to delete credentials secret: %w", err)
+			}
+			return nil
+		}
+		existing.Data = sessionsettings.FilesToSecretData(remaining)
+		if existing.Annotations == nil {
+			existing.Annotations = map[string]string{}
+		}
+		existing.Annotations[AnnotationCredentialsUpdatedAt] = time.Now().UTC().Format(time.RFC3339)
+		if _, err := secrets.Update(ctx, existing, metav1.UpdateOptions{}); err == nil {
+			return nil
+		} else if !apierrors.IsConflict(err) {
+			return fmt.Errorf("failed to update credentials secret: %w", err)
+		}
+	}
+	return fmt.Errorf("failed to delete credential file after %d retries", credentialsSaveMaxRetries)
+}
+
 // Exists checks whether the agentapi-agent-files-{name} Secret exists.
 func (r *KubernetesCredentialsRepository) Exists(ctx context.Context, name string) (bool, error) {
 	_, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, r.secretName(name), metav1.GetOptions{})

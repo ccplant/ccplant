@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -14,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +38,8 @@ type antigravityInput struct {
 	Version int64  `json:"version"`
 }
 
+const antigravitySubscriptionPrefix = "\x00subscription:"
+
 type antigravityAuthBundle struct {
 	Version int                         `json:"version"`
 	Files   []antigravityAuthBundleFile `json:"files"`
@@ -49,6 +51,9 @@ type antigravityAuthBundleFile struct {
 }
 
 func runAntigravityAuthWorker(_ *cobra.Command, _ []string) error {
+	if err := configureAntigravityHerdr(); err != nil {
+		return fmt.Errorf("configure antigravity terminal: %w", err)
+	}
 	data, err := os.ReadFile(antigravityAuthRequestFile)
 	if err != nil {
 		return fmt.Errorf("read request: %w", err)
@@ -75,6 +80,38 @@ func runAntigravityAuthWorker(_ *cobra.Command, _ []string) error {
 	return runErr
 }
 
+func configureAntigravityHerdr() error {
+	// Authentication workers run with a read-only root filesystem. herdr-core
+	// normally writes below $HOME/.local/state, so keep its isolated state and
+	// socket below the worker's writable /tmp volume instead.
+	root := filepath.Join(os.TempDir(), "ccplant-antigravity-herdr")
+	stateDir := filepath.Join(root, "state")
+	runtimeDir := filepath.Join(root, "runtime")
+	configDir := filepath.Join(root, "config")
+	herdrConfigDir := filepath.Join(configDir, "herdr-core")
+	for _, dir := range []string{stateDir, runtimeDir, herdrConfigDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	if err := os.Setenv("XDG_STATE_HOME", stateDir); err != nil {
+		return err
+	}
+	if err := os.Setenv("XDG_RUNTIME_DIR", runtimeDir); err != nil {
+		return err
+	}
+	if err := os.Setenv("XDG_CONFIG_HOME", configDir); err != nil {
+		return err
+	}
+	// No person attaches to these isolated terminals, so a pending draft must
+	// never delay programmatic paste delivery. terminal.send still waits for
+	// the normal short quiet period before pasting the input exactly.
+	return os.WriteFile(filepath.Join(herdrConfigDir, "config.toml"), []byte("draft_wait = 0\n"), 0o600)
+}
+
 func boundedAntigravityError(err error) string {
 	if err == nil {
 		return ""
@@ -92,92 +129,224 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 	if err != nil {
 		return codexauth.Result{}, errors.New("antigravity CLI is unavailable")
 	}
-	cmd := exec.CommandContext(ctx, path, "acp", "--login")
-	cmd.Env = antigravityAuthEnvironment(os.Environ())
-	stdin, err := cmd.StdinPipe()
+	terminal, err := startAntigravityTerminal(ctx, path, request.AttemptID)
 	if err != nil {
 		return codexauth.Result{}, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return codexauth.Result{}, err
-	}
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
-		return codexauth.Result{}, err
-	}
+	defer cleanupAntigravityTerminal(terminal)
 
-	lines := make(chan string, 8)
-	scanErr := make(chan error, 1)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 4096), 64<<10)
-		for scanner.Scan() {
-			lines <- scanner.Text()
-		}
-		close(lines)
-		scanErr <- scanner.Err()
-	}()
-
-	var transcript strings.Builder
 	var verificationURI string
 	var inputVersion int64
-	poll := time.NewTicker(time.Second)
+	suppressTranscript := false
+	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
-	for lines != nil {
+	var pendingBundle []byte
+	var subscriptionTranscript string
+	var lastChallengeTranscript string
+	subscriptionSelected := false
+	for {
 		select {
-		case line, ok := <-lines:
-			if !ok {
-				lines = nil
-				continue
+		case <-poll.C:
+			transcript, finished, exitCode, err := readAntigravityTerminal(ctx, terminal)
+			if err != nil {
+				return codexauth.Result{}, err
 			}
-			clean := codexAuthANSIRegex.ReplaceAllString(line, "")
-			if transcript.Len() < 16<<10 {
-				transcript.WriteString(clean)
-				transcript.WriteByte('\n')
-			}
+			clean := codexAuthANSIRegex.ReplaceAllString(transcript, "")
 			if verificationURI == "" {
 				verificationURI = codexAuthURLRegex.FindString(clean)
 			}
-			if verificationURI != "" {
-				challenge := codexauth.Challenge{VerificationURI: verificationURI, Transcript: transcript.String()}
+			if strings.Contains(clean, "Select available subscription") {
+				if subscriptionTranscript == "" {
+					log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s observed subscription picker", request.AttemptID)
+				}
+				suppressTranscript = false
+				subscriptionTranscript = clean
+			}
+			challengeTranscript := clean
+			if finished && !subscriptionSelected && subscriptionTranscript != "" {
+				challengeTranscript = subscriptionTranscript
+			}
+			if verificationURI != "" && !suppressTranscript && challengeTranscript != lastChallengeTranscript {
+				challenge := codexauth.Challenge{VerificationURI: verificationURI, Transcript: challengeTranscript}
 				_ = postCodexAuthJSON(ctx, request, "challenge", challenge)
+				lastChallengeTranscript = challengeTranscript
 			}
-		case <-poll.C:
-			if verificationURI == "" {
-				continue
-			}
-			input, err := fetchAntigravityInput(ctx, request, inputVersion)
-			if err == nil && input.Version > inputVersion {
-				inputVersion = input.Version
-				if _, err := io.WriteString(stdin, input.Input+"\n"); err != nil {
-					return codexauth.Result{}, err
+			if verificationURI != "" {
+				input, err := fetchAntigravityInput(ctx, request, inputVersion)
+				if err == nil && input.Version > inputVersion {
+					inputVersion = input.Version
+					isSubscription := strings.HasPrefix(input.Input, antigravitySubscriptionPrefix)
+					inputKind := "authentication_response"
+					if isSubscription {
+						inputKind = "subscription"
+					}
+					log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s received input version=%d kind=%s terminal_finished=%v", request.AttemptID, input.Version, inputKind, finished)
+					suppressTranscript = !isSubscription
+					if isSubscription {
+						subscriptionSelected = true
+					}
+					// Agy may automatically finish when only one subscription is
+					// available. In that case the UI selection is an explicit
+					// confirmation; there is no live terminal left to receive keys.
+					if !finished {
+						if err := sendAntigravityTerminalInput(ctx, terminal, input.Input); err != nil {
+							return codexauth.Result{}, err
+						}
+						log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s delivered input version=%d kind=%s to terminal", request.AttemptID, input.Version, inputKind)
+					} else if !isSubscription {
+						return codexauth.Result{}, errors.New("antigravity login finished before authentication input was submitted")
+					}
 				}
 			}
+			if finished {
+				if exitCode != 0 {
+					return codexauth.Result{Status: codexauth.StatusDenied, ErrorCode: "authorization_denied"}, fmt.Errorf("antigravity login exited with status %d: %s", exitCode, strings.TrimSpace(clean))
+				}
+				if pendingBundle == nil {
+					pendingBundle, err = collectAntigravityAuthBundle()
+					if err != nil {
+						return codexauth.Result{}, err
+					}
+				}
+				if !subscriptionSelected {
+					if subscriptionTranscript == "" {
+						log.Printf("[ANTIGRAVITY_AUTH_WORKER] Attempt %s terminal finished before a subscription picker was observed", request.AttemptID)
+					}
+					continue
+				}
+				return codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: pendingBundle}, nil
+			}
 		case <-ctx.Done():
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
 			return codexauth.Result{}, ctx.Err()
 		}
 	}
-	if err := <-scanErr; err != nil {
-		return codexauth.Result{}, err
-	}
-	if err := cmd.Wait(); err != nil {
-		return codexauth.Result{Status: codexauth.StatusDenied, ErrorCode: "authorization_denied"}, err
-	}
-	bundle, err := collectAntigravityAuthBundle()
-	if err != nil {
-		return codexauth.Result{}, err
-	}
-	return codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: bundle}, nil
 }
 
-func antigravityAuthEnvironment(environment []string) []string {
-	// Antigravity uses SSH_CONNECTION to select its remote/headless OAuth flow.
-	// Keep the conventional four-field shape because the CLI may parse the
-	// value rather than only checking whether it is present.
-	return append(environment, "SSH_CONNECTION=127.0.0.1 65535 127.0.0.1 22")
+type hcRunResult struct {
+	Address string `json:"address"`
+}
+
+type hcReadResult struct {
+	Text string `json:"text"`
+}
+
+type hcTerminalResult struct {
+	State    string `json:"state"`
+	ExitCode *int   `json:"exit_code"`
+}
+
+func startAntigravityTerminal(ctx context.Context, agyPath, attemptID string) (string, error) {
+	nameSuffix := strings.TrimPrefix(attemptID, "aga-")
+	if len(nameSuffix) > 12 {
+		nameSuffix = nameSuffix[:12]
+	}
+	if nameSuffix == "" {
+		return "", errors.New("antigravity attempt ID is required")
+	}
+	name := "agy-auth-" + nameSuffix
+	var result hcRunResult
+	// hc supplies the PTY used by agy's interactive subscription picker. Pass
+	// SSH_CONNECTION through env(1) because hc terminals inherit the core's
+	// environment, not the environment of this client process.
+	if err := runHCJSON(ctx, &result, "run", "--bg", "--no-parent", "--no-notify", "--name", name, "--json", "env", "SSH_CONNECTION=127.0.0.1 65535 127.0.0.1 22", agyPath, "acp", "--login"); err != nil {
+		return "", fmt.Errorf("start antigravity terminal: %w", err)
+	}
+	if result.Address == "" {
+		return "", errors.New("hc did not return an antigravity terminal address")
+	}
+	return result.Address, nil
+}
+
+func readAntigravityTerminal(ctx context.Context, terminal string) (string, bool, int, error) {
+	var state hcTerminalResult
+	if err := runHCJSON(ctx, &state, "get", terminal, "--json"); err != nil {
+		return "", false, 0, fmt.Errorf("inspect antigravity terminal: %w", err)
+	}
+	lines := "0"
+	if state.State == "finished" {
+		// The single-subscription picker can disappear before the next poll when
+		// agy automatically finishes. Read scrollback after exit so the UI still
+		// receives the options and can require explicit confirmation.
+		lines = "200"
+	}
+	var screen hcReadResult
+	if err := runHCJSON(ctx, &screen, "read", terminal, "--json", "--lines", lines); err != nil {
+		return "", false, 0, fmt.Errorf("read antigravity terminal: %w", err)
+	}
+	exitCode := 0
+	if state.ExitCode != nil {
+		exitCode = *state.ExitCode
+	}
+	return screen.Text, state.State == "finished", exitCode, nil
+}
+
+func sendAntigravityTerminalInput(ctx context.Context, terminal, input string) error {
+	if strings.HasPrefix(input, antigravitySubscriptionPrefix) {
+		index, err := strconv.Atoi(strings.TrimPrefix(input, antigravitySubscriptionPrefix))
+		if err != nil || index < 0 || index > 100 {
+			return errors.New("invalid antigravity subscription index")
+		}
+		keys := []string{"keys", terminal}
+		for range index {
+			keys = append(keys, "down")
+		}
+		keys = append(keys, "enter", "--json")
+		return runHCJSON(ctx, nil, keys...)
+	}
+	return sendHCText(ctx, terminal, input)
+}
+
+func sendHCText(ctx context.Context, terminal, input string) error {
+	request := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "terminal.send",
+		"params":  map[string]any{"terminal": terminal, "text": input, "force": true},
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "hc", "connect")
+	cmd.Stdin = strings.NewReader(string(payload) + "\n")
+	output, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	var response struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return err
+	}
+	if len(response.Error) != 0 && string(response.Error) != "null" {
+		return errors.New("hc rejected antigravity terminal input")
+	}
+	return nil
+}
+
+func cleanupAntigravityTerminal(terminal string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = runHCJSON(cleanupCtx, nil, "kill", terminal, "--json")
+	_ = runHCJSON(cleanupCtx, nil, "rm", terminal, "--json")
+}
+
+func runHCJSON(ctx context.Context, value any, args ...string) error {
+	cmd := exec.CommandContext(ctx, "hc", args...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
+		return err
+	}
+	if value == nil {
+		return nil
+	}
+	return json.Unmarshal(output, value)
 }
 
 func fetchAntigravityInput(ctx context.Context, request codexauth.WorkloadRequest, after int64) (antigravityInput, error) {

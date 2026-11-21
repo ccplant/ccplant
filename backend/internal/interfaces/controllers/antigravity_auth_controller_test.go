@@ -41,6 +41,16 @@ func TestAntigravityBusinessSSOWorkloadFlow(t *testing.T) {
 	challengeContext.SetParamValues(launcher.request.AttemptID)
 	require.NoError(t, controller.ReportChallenge(challengeContext))
 
+	inputRecorder := httptest.NewRecorder()
+	inputRequest := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"subscription_index":0}`))
+	inputRequest.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	inputContext := e.NewContext(inputRequest, inputRecorder)
+	inputContext.Set("internal_user", user)
+	inputContext.SetParamNames("attemptId")
+	inputContext.SetParamValues(launcher.request.AttemptID)
+	require.NoError(t, controller.SubmitInput(inputContext))
+	require.Equal(t, http.StatusNoContent, inputRecorder.Code)
+
 	bundle := json.RawMessage(`{"version":1,"files":[{"path":"oauth.json","content_base64":"e30="}]}`)
 	resultBody, err := json.Marshal(codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: bundle})
 	require.NoError(t, err)
@@ -54,6 +64,43 @@ func TestAntigravityBusinessSSOWorkloadFlow(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, resultRecorder.Code)
 	require.NotNil(t, repo.saved)
 	require.Equal(t, sessionsettings.FileTypeAntigravityAuth, repo.saved.FileType())
+}
+
+func TestAntigravityAuthorizedResultRequiresSubscriptionSelection(t *testing.T) {
+	repo := &fakeCodexCredentialsRepository{}
+	launcher := &fakeCodexAuthLauncher{}
+	controller := NewAntigravityAuthController(repo, launcher)
+	controller.WithCallbackBaseURL("https://callback.invalid")
+	e := echo.New()
+	user := entities.NewGitHubUser("alice", "alice", "alice@example.com", nil)
+
+	startRequest := httptest.NewRequest(http.MethodPost, "/antigravity/auth/sso", strings.NewReader(`{"scope":"user"}`))
+	startRequest.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	startContext := e.NewContext(startRequest, httptest.NewRecorder())
+	startContext.Set("internal_user", user)
+	require.NoError(t, controller.StartSSO(startContext))
+
+	bundle := json.RawMessage(`{"version":1,"files":[{"path":"oauth.json","content_base64":"e30="}]}`)
+	resultBody, err := json.Marshal(codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: bundle})
+	require.NoError(t, err)
+	resultRequest := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(resultBody)))
+	resultRequest.Header.Set(echo.HeaderAuthorization, "Bearer "+launcher.request.Token)
+	resultContext := e.NewContext(resultRequest, httptest.NewRecorder())
+	resultContext.SetParamNames("attemptId")
+	resultContext.SetParamValues(launcher.request.AttemptID)
+	require.NoError(t, controller.ReportResult(resultContext))
+	require.Nil(t, repo.saved)
+
+	getRecorder := httptest.NewRecorder()
+	getContext := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), getRecorder)
+	getContext.Set("internal_user", user)
+	getContext.SetParamNames("attemptId")
+	getContext.SetParamValues(launcher.request.AttemptID)
+	require.NoError(t, controller.GetAttempt(getContext))
+	var response AntigravityAuthResponse
+	require.NoError(t, json.Unmarshal(getRecorder.Body.Bytes(), &response))
+	require.Equal(t, codexauth.StatusFailed, response.Status)
+	require.Equal(t, "subscription_selection_required", response.ErrorCode)
 }
 
 func TestAntigravityFailedWorkloadExposesDiagnosticAndIsRetained(t *testing.T) {
@@ -93,4 +140,15 @@ func TestAntigravityFailedWorkloadExposesDiagnosticAndIsRetained(t *testing.T) {
 	require.Equal(t, codexauth.StatusFailed, response.Status)
 	require.Equal(t, "antigravity_login_failed", response.ErrorCode)
 	require.Equal(t, "agy executable was not found", response.ErrorMessage)
+}
+
+func TestValidAntigravityInput(t *testing.T) {
+	require.True(t, validAntigravityInput(antigravityAuthInputRequest{Input: "authorization-code"}))
+	first, last, negative, tooLarge := 0, 100, -1, 101
+	require.True(t, validAntigravityInput(antigravityAuthInputRequest{SubscriptionIndex: &first}))
+	require.True(t, validAntigravityInput(antigravityAuthInputRequest{SubscriptionIndex: &last}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{Input: "code", SubscriptionIndex: &first}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{SubscriptionIndex: &negative}))
+	require.False(t, validAntigravityInput(antigravityAuthInputRequest{SubscriptionIndex: &tooLarge}))
 }
