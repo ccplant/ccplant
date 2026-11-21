@@ -34,28 +34,6 @@ func waitForWatcherFlag(t *testing.T, flag func() bool, want bool) {
 	}
 }
 
-func TestStartAgentAPIStatusWatcherRunsOnePerSession(t *testing.T) {
-	manager := &KubernetesSessionManager{}
-	session := newWatcherTestSession()
-	session.SetStatus("starting")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if !manager.startAgentAPIStatusWatcher(ctx, session) {
-		t.Fatal("first watcher did not start")
-	}
-	if manager.startAgentAPIStatusWatcher(ctx, session) {
-		t.Fatal("a second watcher started for the same session")
-	}
-
-	cancel()
-	waitForWatcherFlag(t, session.agentStatusWatcherActive.Load, false)
-	if !manager.startAgentAPIStatusWatcher(context.Background(), session) {
-		t.Fatal("watcher did not restart after the previous one ended")
-	}
-	session.SetStatus("suspended")
-}
-
 func TestStartDeploymentStatusWatcherRunsOnePerSession(t *testing.T) {
 	manager := &KubernetesSessionManager{}
 	session := newWatcherTestSession()
@@ -107,8 +85,8 @@ func TestEnsureSessionWorkloadWatchesWorkloadRecreatedByAnotherReplica(t *testin
 	if !session.deploymentWatcherActive.Load() {
 		t.Fatal("deployment status watcher was not started")
 	}
-	if !session.agentStatusWatcherActive.Load() {
-		t.Fatal("agent status watcher was not started")
+	if session.agentStatusWatcherActive.Load() {
+		t.Fatal("agent status watcher must not connect to the loopback-only runtime")
 	}
 	session.SetStatus("suspended")
 }

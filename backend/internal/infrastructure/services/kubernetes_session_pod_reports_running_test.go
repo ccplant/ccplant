@@ -134,29 +134,25 @@ func (f *podStatusFixture) deploymentExists(t *testing.T) bool {
 	return err == nil
 }
 
-func TestIdleSuspendKeepsSessionThePodReportsRunning(t *testing.T) {
-	for _, remembered := range []string{"active", "stopped"} {
-		t.Run(remembered, func(t *testing.T) {
-			fixture := newPodStatusFixture(t, remembered, "running")
-			fixture.setSuspendAt(t, time.Now().Add(-time.Minute))
+func TestIdleSuspendKeepsSessionReportedRunningOverOutboundConnection(t *testing.T) {
+	fixture := newPodStatusFixture(t, "running", "stable")
+	fixture.setSuspendAt(t, time.Now().Add(-time.Minute))
 
-			fixture.manager.reconcileSessionSuspends(context.Background())
+	fixture.manager.reconcileSessionSuspends(context.Background())
 
-			if !fixture.deploymentExists(t) {
-				t.Fatal("a replica that did not remember the running turn suspended the busy session")
-			}
-			if fixture.checkpoints != 0 {
-				t.Fatalf("checkpoints=%d, want 0", fixture.checkpoints)
-			}
-			if at := fixture.suspendAt(t); !at.After(time.Now().Add(30 * time.Minute)) {
-				t.Fatalf("suspend-at=%s, want postponed by the idle timeout", at)
-			}
-		})
+	if !fixture.deploymentExists(t) {
+		t.Fatal("a running session was suspended")
+	}
+	if fixture.checkpoints != 0 {
+		t.Fatalf("checkpoints=%d, want 0", fixture.checkpoints)
+	}
+	if at := fixture.suspendAt(t); !at.After(time.Now().Add(30 * time.Minute)) {
+		t.Fatalf("suspend-at=%s, want postponed by the idle timeout", at)
 	}
 }
 
-func TestIdleSuspendTrustsPodReportingStableOverRememberedRunning(t *testing.T) {
-	fixture := newPodStatusFixture(t, "running", "stable")
+func TestIdleSuspendUsesOutboundReportedStableStatus(t *testing.T) {
+	fixture := newPodStatusFixture(t, "active", "running")
 	fixture.setSuspendAt(t, time.Now().Add(-time.Minute))
 
 	fixture.manager.reconcileSessionSuspends(context.Background())
@@ -169,32 +165,9 @@ func TestIdleSuspendTrustsPodReportingStableOverRememberedRunning(t *testing.T) 
 	}
 }
 
-func TestIdleSuspendWaitsBrieflyWhenPodDoesNotAnswer(t *testing.T) {
-	fixture := newPodStatusFixture(t, "active", "")
-	fixture.podErr = errors.New("connection refused")
-	deadline := time.Now().Add(-time.Minute)
-	fixture.setSuspendAt(t, deadline)
-
-	fixture.manager.reconcileSessionSuspends(context.Background())
-
-	if !fixture.deploymentExists(t) {
-		t.Fatal("session was suspended without confirming the pod status inside the grace period")
-	}
-	if at := fixture.suspendAt(t); at.Sub(deadline).Abs() > time.Second {
-		t.Fatalf("suspend-at=%s, want unchanged %s", at, deadline)
-	}
-
-	fixture.setSuspendAt(t, time.Now().Add(-podRuntimeStatusUnknownGrace-time.Minute))
-	fixture.manager.reconcileSessionSuspends(context.Background())
-
-	if fixture.deploymentExists(t) {
-		t.Fatal("idle session with a silent pod was never suspended")
-	}
-}
-
-func TestIdleSuspendCancelledWhenPodStartsRunningDuringCheckpoint(t *testing.T) {
+func TestIdleSuspendCancelledWhenOutboundStatusChangesDuringCheckpoint(t *testing.T) {
 	fixture := newPodStatusFixture(t, "active", "stable")
-	fixture.onCheckpoint = func() { fixture.podStatus = "running" }
+	fixture.onCheckpoint = func() { fixture.session.SetStatus("running") }
 	fixture.setSuspendAt(t, time.Now().Add(-time.Minute))
 
 	fixture.manager.reconcileSessionSuspends(context.Background())
@@ -210,8 +183,8 @@ func TestIdleSuspendCancelledWhenPodStartsRunningDuringCheckpoint(t *testing.T) 
 	}
 }
 
-func TestExplicitSuspendRefusedWhenPodReportsRunning(t *testing.T) {
-	fixture := newPodStatusFixture(t, "active", "running")
+func TestExplicitSuspendRefusedWhenOutboundStatusReportsRunning(t *testing.T) {
+	fixture := newPodStatusFixture(t, "running", "stable")
 
 	err := fixture.manager.SuspendSession(context.Background(), "runner-1")
 
@@ -223,24 +196,21 @@ func TestExplicitSuspendRefusedWhenPodReportsRunning(t *testing.T) {
 	}
 }
 
-func TestPodStatusClientDoesNotFollowRedirects(t *testing.T) {
-	if err := defaultPodStatusHTTPClient.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
-		t.Fatalf("CheckRedirect err=%v, want http.ErrUseLastResponse", err)
-	}
-
-	fixture := newPodStatusFixture(t, "active", "")
+func TestPodReportsRunningDoesNotUseHTTP(t *testing.T) {
+	fixture := newPodStatusFixture(t, "active", "running")
+	called := false
 	fixture.manager.podStatusHTTPClient = &http.Client{Transport: restartRoundTripper(func(*http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusFound,
-			Header:     http.Header{"Location": []string{"http://internal.invalid/"}},
-			Body:       io.NopCloser(strings.NewReader("")),
-		}, nil
-	}), CheckRedirect: defaultPodStatusHTTPClient.CheckRedirect}
+		called = true
+		return nil, errors.New("unexpected direct request")
+	})}
 
 	running, confirmed := fixture.manager.podReportsRunning(context.Background(), fixture.session)
 
-	if running || confirmed {
-		t.Fatalf("running=%v confirmed=%v, want an unconfirmed answer for a redirect", running, confirmed)
+	if running || !confirmed {
+		t.Fatalf("running=%v confirmed=%v, want outbound-reported stable status", running, confirmed)
+	}
+	if called {
+		t.Fatal("podReportsRunning attempted direct HTTP access to the session Pod")
 	}
 }
 

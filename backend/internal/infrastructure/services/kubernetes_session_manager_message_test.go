@@ -3,7 +3,6 @@ package services
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,6 +67,16 @@ func TestIsACPAgentTypeIncludesAntigravity(t *testing.T) {
 	}
 }
 
+func TestSessionServiceDoesNotExposeAgentRuntimePort(t *testing.T) {
+	m := &KubernetesSessionManager{k8sConfig: &config.KubernetesSessionConfig{BasePort: 9000}}
+	ports := m.buildServicePorts(nil)
+	for _, port := range ports {
+		if port.Port == 9000 || port.TargetPort.IntValue() == 9000 {
+			t.Fatalf("agent runtime port is exposed by the Service: %#v", port)
+		}
+	}
+}
+
 // TestSubscribeMessageEvents_ReceivesBroadcast verifies that a subscriber
 // registered before broadcastMessageUpdate is called receives the event.
 func TestSubscribeMessageEvents_ReceivesBroadcast(t *testing.T) {
@@ -97,7 +107,7 @@ func TestSubscribeMessageEvents_ReceivesBroadcast(t *testing.T) {
 	}
 }
 
-func TestStopAgentUsesACPCancelForACPSessions(t *testing.T) {
+func TestStopAgentRejectsMissingOutboundControlConnection(t *testing.T) {
 	m := newTestManagerForCycle(t)
 	session := NewKubernetesSession(
 		"test-session",
@@ -110,71 +120,18 @@ func TestStopAgentUsesACPCancelForACPSessions(t *testing.T) {
 	m.sessions["test-session"] = session
 	m.mutex.Unlock()
 
-	var requestPath string
-	var payload map[string]interface{}
+	called := false
 	withRoundTripper(t, func(req *http.Request) (*http.Response, error) {
-		requestPath = req.URL.Path
-		body, err := io.ReadAll(req.Body)
-		if err != nil {
-			t.Fatalf("ReadAll() error = %v", err)
-		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			t.Fatalf("Unmarshal() error = %v", err)
-		}
+		called = true
 		return jsonResponse(http.StatusOK), nil
 	})
 
-	if err := m.StopAgent(context.Background(), "test-session"); err != nil {
-		t.Fatalf("StopAgent() error = %v", err)
+	err := m.StopAgent(context.Background(), "test-session")
+	if err == nil || !strings.Contains(err.Error(), "outbound control connection") {
+		t.Fatalf("StopAgent() error = %v, want unavailable outbound connection", err)
 	}
-	if requestPath != "/rpc" {
-		t.Fatalf("expected /rpc, got %q", requestPath)
-	}
-	if payload["jsonrpc"] != "2.0" || payload["method"] != "session/cancel" {
-		t.Fatalf("unexpected ACP cancel payload: %#v", payload)
-	}
-	params, ok := payload["params"].(map[string]interface{})
-	if !ok || params["sessionId"] != "test-session" {
-		t.Fatalf("unexpected params: %#v", payload["params"])
-	}
-}
-
-func TestStopAgentUsesServiceAgentTypeFallbackForRestoredACPSession(t *testing.T) {
-	m := newTestManagerForCycle(t)
-	session := NewKubernetesSession(
-		"test-session",
-		&entities.RunServerRequest{UserID: "user1"},
-		"test-deploy", "agentapi-session-test-session-svc", "test-pvc", "test-ns",
-		9000, nil, nil,
-	)
-	session.SetStatusSilent("active")
-	m.mutex.Lock()
-	m.sessions["test-session"] = session
-	m.mutex.Unlock()
-
-	_, err := m.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "agentapi-session-test-session-svc",
-			Annotations: map[string]string{
-				"agentapi.proxy/agent-type": "codex-acp",
-			},
-		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatalf("Create service error = %v", err)
-	}
-
-	var requestPath string
-	withRoundTripper(t, func(req *http.Request) (*http.Response, error) {
-		requestPath = req.URL.Path
-		return jsonResponse(http.StatusOK), nil
-	})
-
-	if err := m.StopAgent(context.Background(), "test-session"); err != nil {
-		t.Fatalf("StopAgent() error = %v", err)
-	}
-	if requestPath != "/rpc" {
-		t.Fatalf("expected /rpc from Service agent-type fallback, got %q", requestPath)
+	if called {
+		t.Fatal("StopAgent attempted direct HTTP access to the session Pod")
 	}
 }
 
@@ -204,42 +161,6 @@ func TestRestoreSessionFromServiceRestoresAgentType(t *testing.T) {
 	}
 	if session.Request().AgentType != "codex-acp" {
 		t.Fatalf("expected AgentType codex-acp, got %q", session.Request().AgentType)
-	}
-}
-
-func TestStopAgentUsesActionForDefaultAgentAPISessions(t *testing.T) {
-	m := newTestManagerForCycle(t)
-	session := NewKubernetesSession(
-		"test-session",
-		&entities.RunServerRequest{UserID: "user1"},
-		"test-deploy", "test-svc", "test-pvc", "test-ns",
-		9000, nil, nil,
-	)
-	session.SetStatusSilent("active")
-	m.mutex.Lock()
-	m.sessions["test-session"] = session
-	m.mutex.Unlock()
-
-	var requestPath string
-	var body string
-	withRoundTripper(t, func(req *http.Request) (*http.Response, error) {
-		requestPath = req.URL.Path
-		data, err := io.ReadAll(req.Body)
-		if err != nil {
-			t.Fatalf("ReadAll() error = %v", err)
-		}
-		body = string(data)
-		return jsonResponse(http.StatusOK), nil
-	})
-
-	if err := m.StopAgent(context.Background(), "test-session"); err != nil {
-		t.Fatalf("StopAgent() error = %v", err)
-	}
-	if requestPath != "/action" {
-		t.Fatalf("expected /action, got %q", requestPath)
-	}
-	if !strings.Contains(body, `"type":"stop_agent"`) {
-		t.Fatalf("unexpected action payload: %s", body)
 	}
 }
 
