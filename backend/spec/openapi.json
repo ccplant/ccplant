@@ -8466,7 +8466,11 @@
       },
       "StorageAttachment": {
         "type": "object", "required": ["storage_id", "mount_path"],
-        "properties": {"storage_id": {"type": "string"}, "storage_path": {"type": "string", "description": "Optional normalized relative path within the Storage"}, "mount_path": {"type": "string", "description": "Non-reserved mount path. Relative paths are resolved below the session HOME"}, "read_only": {"type": "boolean", "default": false}}
+        "properties": {"storage_id": {"type": "string"}, "storage_path": {"type": "string", "description": "Optional normalized relative base path within the Storage"}, "namespace": {"$ref": "#/components/schemas/StorageNamespaceSelector"}, "mount_path": {"type": "string", "description": "Non-reserved mount path. Relative paths are resolved below the session HOME"}, "read_only": {"type": "boolean", "default": false}}
+      },
+      "StorageNamespaceSelector": {
+        "type": "object", "required": ["mode", "tag_keys"],
+        "properties": {"mode": {"type": "string", "enum": ["tags"]}, "tag_keys": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}}}
       },
       "StorageFile": {
         "type": "object", "required": ["path", "revision", "updated_at"],

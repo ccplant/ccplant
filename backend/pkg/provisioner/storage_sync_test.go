@@ -109,6 +109,7 @@ func TestRegularRootStorageSyncExcludesManagedNamespaces(t *testing.T) {
 	require.True(t, storageSyncPathAllowed(storage, "notes/todo.md"))
 	require.False(t, storageSyncPathAllowed(storage, "session-state/codex/state.json"))
 	require.False(t, storageSyncPathAllowed(storage, "workspace/repo/file.txt"))
+	require.False(t, storageSyncPathAllowed(storage, ".ccplant/namespaces/v1/ab/value.txt"))
 
 	storage.Managed = true
 	require.True(t, storageSyncPathAllowed(storage, "session-state/codex/state.json"))

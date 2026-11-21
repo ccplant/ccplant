@@ -2217,6 +2217,7 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 	}
 	return s.storageAttachmentResolver.Resolve(ctx, storageattachmentuc.Request{
 		Attachments: startReq.Params.Storages,
+		Tags:        startReq.Tags,
 		Scope:       startReq.Scope,
 		TeamID:      startReq.TeamID,
 		UserID:      userID,

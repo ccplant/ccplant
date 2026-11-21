@@ -12,9 +12,20 @@ export function validateStorageAttachments(values: StorageAttachment[]): string 
     if (!value.storage_id) return 'Storage を選択してください'
     const storagePath = (value.storage_path ?? '').trim().replace(/^\/+|\/+$/g, '')
     if (storagePath && storagePath.split('/').some(segment => segment === '.' || segment === '..' || segment === '')) return 'Storage内のパスには相対パスを指定してください'
+    if (storagePath === '.ccplant' || storagePath.startsWith('.ccplant/')) return '.ccplant はStorage namespace用の予約パスです'
+    const namespaceKeys = value.namespace?.tag_keys.map(key => key.trim()).filter(Boolean) ?? []
+    if (value.namespace && (value.namespace.mode !== 'tags' || namespaceKeys.length === 0 || namespaceKeys.length > 8 || namespaceKeys.some(key => key.length > 128) || new Set(namespaceKeys).size !== namespaceKeys.length)) return 'Storage namespaceには1〜8個の重複しないタグキーを指定してください'
     const sameStorageSources = sources.get(value.storage_id) ?? []
-    if (sameStorageSources.some(other => !storagePath || !other || other === storagePath || other.startsWith(storagePath + '/') || storagePath.startsWith(other + '/'))) return '同じStorage内のパスが重複しています'
-    sources.set(value.storage_id, [...sameStorageSources, storagePath])
+    const source = `${storagePath}\u0000${namespaceKeys.slice().sort().join('\u0000')}`
+    if (sameStorageSources.includes(source)) return '同じStorage内のnamespaceが重複しています'
+    if (sameStorageSources.some(other => {
+      const separator = other.indexOf('\u0000')
+      const otherPath = other.slice(0, separator)
+      const otherNamespace = other.slice(separator + 1)
+      if (namespaceKeys.length > 0 && otherNamespace !== '') return false
+      return !storagePath || !otherPath || otherPath === storagePath || otherPath.startsWith(storagePath + '/') || storagePath.startsWith(otherPath + '/')
+    })) return '同じStorage内のパスが重複しています'
+    sources.set(value.storage_id, [...sameStorageSources, source])
     const mountPath = value.mount_path.trim()
     const segments = mountPath.split('/').filter(Boolean)
     if (segments.length === 0 || segments.some(segment => segment === '.' || segment === '..')) return 'マウント先には有効なパスを指定してください'
@@ -48,6 +59,10 @@ export default function StorageAttachmentEditor({ value, onChange, scope, teamId
     return () => { current = false }
   }, [scope, teamId, retry])
   const update = (index: number, patch: Partial<StorageAttachment>) => onChange(value.map((item, i) => i === index ? { ...item, ...patch } : item))
+  const namespaceMode = (attachment: StorageAttachment): 'shared' | 'repository' | 'tags' => {
+    if (!attachment.namespace) return 'shared'
+    return attachment.namespace.tag_keys.length === 1 && attachment.namespace.tag_keys[0] === 'repository' ? 'repository' : 'tags'
+  }
   const field = 'w-full border rounded-lg px-3 py-2 dark:bg-gray-700 dark:text-white'
   return <div className="space-y-4">
     <p className="text-sm text-gray-500 dark:text-gray-400">セッション起動時にファイルを復元し、編集した内容を自動で保存します。同じファイルへの更新は最後の保存が優先されます。</p>
@@ -63,6 +78,16 @@ export default function StorageAttachmentEditor({ value, onChange, scope, teamId
         {storages.map(storage => <option key={storage.id} value={storage.id}>{storage.name}</option>)}
       </select></label>
       <label className="block text-sm">Storage内のパス（任意）<input value={attachment.storage_path ?? ''} onChange={event => update(index, { storage_path: event.target.value })} placeholder="datasets/shared" className={`${field} mt-1`} /></label>
+      <label className="block text-sm">データの分け方<select value={namespaceMode(attachment)} onChange={event => {
+        const mode = event.target.value
+        update(index, { namespace: mode === 'shared' ? undefined : { mode: 'tags', tag_keys: mode === 'repository' ? ['repository'] : ['scope'] } })
+      }} className={`${field} mt-1`}>
+        <option value="shared">Storage内で共有</option>
+        <option value="repository">リポジトリごと</option>
+        <option value="tags">タグを指定</option>
+      </select></label>
+      {namespaceMode(attachment) === 'repository' && <p className="text-xs text-gray-500 dark:text-gray-400">起動時の repository タグごとに独立した内容を保存します。タグがない場合は起動に失敗します。</p>}
+      {namespaceMode(attachment) === 'tags' && <label className="block text-sm">タグキー<input value={attachment.namespace?.tag_keys.join(', ') ?? ''} onChange={event => update(index, { namespace: { mode: 'tags', tag_keys: event.target.value.split(',').map(key => key.trim()).filter(Boolean) } })} placeholder="repository, environment" className={`${field} mt-1`} /><span className="block mt-1 text-xs text-gray-500 dark:text-gray-400">カンマ区切り。タグ値の組み合わせごとに独立した内容になります。</span></label>}
       <label className="block text-sm">マウント先<input value={attachment.mount_path} onChange={event => update(index, { mount_path: event.target.value })} placeholder="workdir/shared" className={`${field} mt-1`} /></label>
       <p className="text-xs text-gray-500 dark:text-gray-400">相対パスはセッションの HOME 配下にマウントされます。</p>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={attachment.read_only ?? false} onChange={event => update(index, { read_only: event.target.checked })} />読み取り専用</label>
