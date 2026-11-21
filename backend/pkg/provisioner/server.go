@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,7 @@ type Server struct {
 	restartID      string
 
 	port         int
+	host         string
 	settingsFile string // path to optional auto-provision settings file
 	httpClient   *http.Client
 	filterURL    string
@@ -82,7 +84,16 @@ type Server struct {
 //   - settingsFile: path to /session-settings/settings.yaml; if this file
 //     exists at startup the server auto-provisions from it (Pod restart case).
 func New(port int, settingsFile string) *Server {
+	return NewWithHost("0.0.0.0", port, settingsFile)
+}
+
+// NewWithHost creates a Server bound to a specific local address.
+func NewWithHost(host string, port int, settingsFile string) *Server {
+	if strings.TrimSpace(host) == "" {
+		host = "0.0.0.0"
+	}
 	return &Server{
+		host:         host,
 		port:         port,
 		settingsFile: settingsFile,
 		httpClient:   http.DefaultClient,
@@ -176,7 +187,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/herdr/rpc", s.handleHerdrRPC)
 
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.port),
+		Addr:    net.JoinHostPort(s.host, strconv.Itoa(s.port)),
 		Handler: mux,
 	}
 
@@ -188,7 +199,7 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = srv.Shutdown(context.Background())
 	}()
 
-	log.Printf("[PROVISIONER] Listening on :%d", s.port)
+	log.Printf("[PROVISIONER] Listening on %s", srv.Addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}

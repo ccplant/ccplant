@@ -101,6 +101,13 @@ var ErrInvalidRunnerToken = stderrors.New("invalid runner token")
 // (e.g. the session controller error handler that checks provisioner /status).
 const ProvisionerPort = provisionerPort
 
+func localHTTPProbe(path string, port int) corev1.ProbeHandler {
+	return corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{
+		"curl", "--fail", "--silent", "--show-error", "--max-time", "1",
+		fmt.Sprintf("http://127.0.0.1:%d%s", port, path),
+	}}}
+}
+
 // nfaProxyPort is the default forward proxy port exposed by takutakahashi/nfa.
 const nfaProxyPort = 3128
 
@@ -4398,31 +4405,22 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		Command: []string{"/usr/bin/tini"},
 		Args: []string{
 			"-g", "--", "/bin/sh", "-c",
-			"exec " + proxybinary.ShellReference() + " agent-provisioner",
+			"exec " + proxybinary.ShellReference() + " agent-provisioner --host 127.0.0.1",
 		},
 		// Liveness only verifies that the provisioner is serving. Readiness stays
 		// false until startup prefetch completes so runners cannot be claimed early.
 		LivenessProbe: &corev1.Probe{
-			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/livez",
-					Port: intstr.FromInt(provisionerPort),
-				},
-			},
+			ProbeHandler:        localHTTPProbe("/livez", provisionerPort),
 			InitialDelaySeconds: 5,
 			PeriodSeconds:       5,
 		},
 		ReadinessProbe: &corev1.Probe{
-			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/healthz",
-					Port: intstr.FromInt(provisionerPort),
-				},
-			},
+			ProbeHandler:        localHTTPProbe("/healthz", provisionerPort),
 			InitialDelaySeconds: 2,
 			PeriodSeconds:       2,
 		},
 	}
+	container.Env = append(container.Env, corev1.EnvVar{Name: "AGENTAPI_BIND_HOST", Value: "127.0.0.1"})
 	var moliSidecar *corev1.Container
 	if m.k8sConfig.MoliEnabled {
 		moliSidecar = m.buildMoliSidecar()
@@ -5518,7 +5516,8 @@ func sanitizeSciaDynamicUserID(value string) string {
 
 // buildDinDContainers returns the DinD sidecar container, env vars for the main container,
 // and extra volumes needed for Docker-in-Docker support.
-// The DinD daemon listens on TCP port 2375 (no TLS) so no socket volume sharing is needed.
+// The DinD daemon listens on loopback TCP port 2375 (no TLS) so it is reachable
+// only by containers in the same Pod network namespace.
 // The main container gets DOCKER_HOST=tcp://127.0.0.1:2375 to connect to the daemon.
 func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.DockerConfig) (*corev1.Container, []corev1.EnvVar, []corev1.Volume) {
 	dindImage := m.k8sConfig.DinDImage
@@ -5530,7 +5529,7 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 	falseVal := false
 	rootUID := int64(0)
 
-	dindArgs := []string{"dockerd", "--host=tcp://0.0.0.0:2375", "--tls=false"}
+	dindArgs := []string{"dockerd", "--host=tcp://127.0.0.1:2375", "--tls=false"}
 	if docker != nil {
 		for _, reg := range docker.Registries {
 			if reg.Insecure && reg.Server != "" {
