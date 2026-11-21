@@ -70,6 +70,20 @@ scenarios:
     parameters:
       live_session: true
       agent_type: claude-acp
+  - id: api.session.storage-tag-namespace
+    category: session
+    description: 共有Storageをrepositoryタグごとに分離し同じタグで再起動すると内容を復元できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestStorageTagNamespace
+    timeout: 12m
+    capabilities: [external-session-manager]
+    parameters:
+      live_session: true
+      pool: fly-dev
+      agent_type: codex-acp
+      repository_a: ccplant/ccplant
+      repository_b: ccplant/ccplant-deploy
   - id: api.settings.managers
     category: settings
     description: 利用可能な設定マネージャーを取得できる

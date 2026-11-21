@@ -76,6 +76,8 @@ CRUDはランダムな`e2e-`接頭辞を持つ専用リソースだけを作成�
 
 `api.session.oneshot-lifecycle`はFly開発pool上で隔離profileを使い、期待応答とTTLによる自動削除だけを検証します。health、認証、検索、dry-runは既存の個別シナリオを組み合わせてください。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`と`E2E_PARAM_SESSION_PROFILE_ID`が必須で、`E2E_PARAM_POOL`の既定値は`fly-dev`です。
 
+`api.session.storage-tag-namespace`は、一時StorageとProfileを作成し、同じStorageがrepositoryタグごとに別のnamespaceへ解決されることをdry-runと実セッションのファイル同期で検証します。さらに最初のrepositoryでセッションを再作成し、以前のファイルが復元されることと、別repositoryのnamespaceが維持されることを確認します。チャットメッセージは送信しません。既定では`fly-dev` pool、`codex-acp`、公開repositoryの`ccplant/ccplant`と`ccplant/ccplant-deploy`を使います。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`を指定し、必要に応じて`E2E_PARAM_POOL`、`E2E_PARAM_AGENT_TYPE`、`E2E_PARAM_REPOSITORY_A`、`E2E_PARAM_REPOSITORY_B`を上書きしてください。
+
 workerを介さず直接実行する場合は、実セッションの起動を明示的に許可します。
 
 ```bash
