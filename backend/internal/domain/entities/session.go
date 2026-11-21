@@ -74,25 +74,33 @@ type DockerRegistry struct {
 	Insecure bool `json:"insecure,omitempty"`
 }
 
+// StorageNamespaceSelector partitions one Storage using effective session tags.
+type StorageNamespaceSelector struct {
+	Mode    string   `json:"mode"`
+	TagKeys []string `json:"tag_keys"`
+}
+
 // StorageAttachment mounts one scope-owned persistent Storage into a session.
 type StorageAttachment struct {
-	StorageID   string `json:"storage_id"`
-	StoragePath string `json:"storage_path,omitempty"`
-	MountPath   string `json:"mount_path"`
-	ReadOnly    bool   `json:"read_only,omitempty"`
-	Managed     bool   `json:"-"`
+	StorageID   string                    `json:"storage_id"`
+	StoragePath string                    `json:"storage_path,omitempty"`
+	Namespace   *StorageNamespaceSelector `json:"namespace,omitempty"`
+	MountPath   string                    `json:"mount_path"`
+	ReadOnly    bool                      `json:"read_only,omitempty"`
+	Managed     bool                      `json:"-"`
 }
 
 // ResolvedStorageAttachment is produced by the parent API after ownership and
 // placement checks. Clients cannot provide these data-plane fields directly.
 type ResolvedStorageAttachment struct {
 	StorageAttachment
-	Kind     StorageKind   `json:"kind"`
-	Pool     string        `json:"pool,omitempty"`
-	Provider string        `json:"provider,omitempty"`
-	Size     string        `json:"size,omitempty"`
-	Revision int64         `json:"revision,omitempty"`
-	Files    []StorageFile `json:"files,omitempty"`
+	NamespaceID string        `json:"namespace_id,omitempty"`
+	Kind        StorageKind   `json:"kind"`
+	Pool        string        `json:"pool,omitempty"`
+	Provider    string        `json:"provider,omitempty"`
+	Size        string        `json:"size,omitempty"`
+	Revision    int64         `json:"revision,omitempty"`
+	Files       []StorageFile `json:"files,omitempty"`
 }
 
 // SessionParams represents session parameters for agentapi server

@@ -15,6 +15,19 @@ describe('storage mount validation', () => {
     expect(validateStorageAttachments([{ storage_id: 'a', mount_path: 'workdir/shared' }, { storage_id: 'b', mount_path: 'cache' }])).toBeNull()
   })
 
+  it('accepts tag-scoped namespaces and validates their keys', () => {
+    expect(validateStorageAttachments([
+      { storage_id: 'a', storage_path: 'repositories', namespace: { mode: 'tags', tag_keys: ['repository'] }, mount_path: '/data' },
+      { storage_id: 'a', storage_path: 'repositories', namespace: { mode: 'tags', tag_keys: ['environment'] }, mount_path: '/other' },
+    ])).toBeNull()
+    expect(validateStorageAttachments([
+      { storage_id: 'a', namespace: { mode: 'tags', tag_keys: [] }, mount_path: '/data' },
+    ])).not.toBeNull()
+    expect(validateStorageAttachments([
+      { storage_id: 'a', namespace: { mode: 'tags', tag_keys: ['repository', 'repository'] }, mount_path: '/data' },
+    ])).not.toBeNull()
+  })
+
   it('checks relative paths after resolving them below HOME', () => {
     expect(validateStorageAttachments([{ storage_id: 'a', mount_path: 'workdir/shared' }, { storage_id: 'b', mount_path: '/home/agentapi/workdir/shared/files' }])).not.toBeNull()
     expect(validateStorageAttachments([{ storage_id: 'a', mount_path: 'workdir' }])).not.toBeNull()

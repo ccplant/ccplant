@@ -338,7 +338,7 @@ func storageSyncPathAllowed(storage sessionsettings.StorageAttachment, filePath 
 	if storage.Managed || storage.StoragePath != "" {
 		return true
 	}
-	return filePath != "workspace" && !strings.HasPrefix(filePath, "workspace/") && filePath != "session-state" && !strings.HasPrefix(filePath, "session-state/")
+	return filePath != "workspace" && !strings.HasPrefix(filePath, "workspace/") && filePath != "session-state" && !strings.HasPrefix(filePath, "session-state/") && filePath != ".ccplant" && !strings.HasPrefix(filePath, ".ccplant/")
 }
 
 func storageRemotePath(storage sessionsettings.StorageAttachment, filePath string) string {

@@ -2,6 +2,9 @@ package storageattachment
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base32"
+	"encoding/binary"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -13,6 +16,7 @@ import (
 
 type Request struct {
 	Attachments []entities.StorageAttachment
+	Tags        map[string]string
 	Scope       entities.ResourceScope
 	TeamID      string
 	UserID      string
@@ -55,6 +59,13 @@ func (r *Resolver) Resolve(ctx context.Context, request Request) ([]entities.Res
 				return nil, fmt.Errorf("storage_path must be a normalized relative path")
 			}
 			attachment.StoragePath = cleaned
+			if cleaned == ".ccplant" || strings.HasPrefix(cleaned, ".ccplant/") {
+				return nil, fmt.Errorf("storage_path uses a reserved namespace")
+			}
+		}
+		namespaceID, err := resolveNamespace(&attachment, request.Tags)
+		if err != nil {
+			return nil, err
 		}
 		for _, existing := range seenSources[attachment.StorageID] {
 			if sourcePathsOverlap(attachment.StoragePath, existing.StoragePath) && !managedNamespaceOverlapAllowed(attachment, existing) {
@@ -83,7 +94,7 @@ func (r *Resolver) Resolve(ctx context.Context, request Request) ([]entities.Res
 
 		entry := entities.ResolvedStorageAttachment{
 			StorageAttachment: attachment, Kind: storage.Kind(), Pool: storage.Pool(),
-			Provider: storage.Provider(), Size: storage.Size(), Revision: storage.Revision(),
+			NamespaceID: namespaceID, Provider: storage.Provider(), Size: storage.Size(), Revision: storage.Revision(),
 		}
 		if storage.Kind() == entities.StorageKindObjectSnapshot {
 			files := storage.Files()
@@ -116,6 +127,70 @@ func (r *Resolver) Resolve(ctx context.Context, request Request) ([]entities.Res
 		resolved = append(resolved, entry)
 	}
 	return resolved, nil
+}
+
+const (
+	maxNamespaceTagKeys       = 8
+	maxNamespaceTagKeyBytes   = 128
+	maxNamespaceTagValueBytes = 512
+	maxNamespaceCanonicalSize = 4 * 1024
+)
+
+func resolveNamespace(attachment *entities.StorageAttachment, tags map[string]string) (string, error) {
+	if attachment.Namespace == nil {
+		return "", nil
+	}
+	selector := *attachment.Namespace
+	selector.TagKeys = append([]string(nil), attachment.Namespace.TagKeys...)
+	attachment.Namespace = &selector
+	if attachment.Managed {
+		return "", fmt.Errorf("managed storage attachments cannot use a namespace selector")
+	}
+	if attachment.Namespace.Mode != "tags" {
+		return "", fmt.Errorf("storage namespace mode must be tags")
+	}
+	if len(attachment.Namespace.TagKeys) == 0 || len(attachment.Namespace.TagKeys) > maxNamespaceTagKeys {
+		return "", fmt.Errorf("storage namespace requires between 1 and %d tag keys", maxNamespaceTagKeys)
+	}
+	keys := append([]string(nil), selector.TagKeys...)
+	for index := range keys {
+		keys[index] = strings.TrimSpace(keys[index])
+	}
+	sort.Strings(keys)
+	canonical := make([]byte, 0, 256)
+	for index, key := range keys {
+		if key == "" || len(key) > maxNamespaceTagKeyBytes {
+			return "", fmt.Errorf("storage namespace contains an invalid tag key")
+		}
+		if index > 0 && key == keys[index-1] {
+			return "", fmt.Errorf("storage namespace tag keys must be unique")
+		}
+		value, exists := tags[key]
+		if !exists || strings.TrimSpace(value) == "" {
+			return "", fmt.Errorf("storage namespace tag %q is required", key)
+		}
+		if len(value) > maxNamespaceTagValueBytes {
+			return "", fmt.Errorf("storage namespace tag %q exceeds %d bytes", key, maxNamespaceTagValueBytes)
+		}
+		canonical = appendLengthPrefixed(canonical, key)
+		canonical = appendLengthPrefixed(canonical, value)
+		if len(canonical) > maxNamespaceCanonicalSize {
+			return "", fmt.Errorf("storage namespace tags exceed %d bytes", maxNamespaceCanonicalSize)
+		}
+	}
+	attachment.Namespace.TagKeys = keys
+	digest := sha256.Sum256(canonical)
+	namespaceID := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:]))
+	parts := []string{attachment.StoragePath, ".ccplant", "namespaces", "v1", namespaceID[:2], namespaceID}
+	attachment.StoragePath = strings.TrimLeft(filepath.ToSlash(filepath.Join(parts...)), "/")
+	return namespaceID, nil
+}
+
+func appendLengthPrefixed(target []byte, value string) []byte {
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], uint32(len(value)))
+	target = append(target, length[:]...)
+	return append(target, value...)
 }
 
 func normalizeMountPath(value string) (string, error) {
@@ -162,7 +237,7 @@ func attachmentIncludesRemotePath(attachment entities.StorageAttachment, remoteP
 	if attachment.Managed || attachment.StoragePath != "" {
 		return true
 	}
-	return !managedNamespace(remotePath)
+	return !managedNamespace(remotePath) && remotePath != ".ccplant" && !strings.HasPrefix(remotePath, ".ccplant/")
 }
 
 func mountPathReserved(value string) bool {

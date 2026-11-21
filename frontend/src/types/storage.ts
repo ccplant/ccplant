@@ -3,6 +3,10 @@ import type { ResourceScope } from './agentapi'
 export interface StorageAttachment {
   storage_id: string
   storage_path?: string
+  namespace?: {
+    mode: 'tags'
+    tag_keys: string[]
+  }
   mount_path: string
   read_only?: boolean
 }

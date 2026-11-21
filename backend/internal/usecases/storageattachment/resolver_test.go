@@ -68,3 +68,59 @@ func TestNormalizeMountPath(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveNamespaceFromTags(t *testing.T) {
+	left := entities.StorageAttachment{StoragePath: "repositories", Namespace: &entities.StorageNamespaceSelector{Mode: "tags", TagKeys: []string{"environment", "repository"}}}
+	right := entities.StorageAttachment{StoragePath: "repositories", Namespace: &entities.StorageNamespaceSelector{Mode: "tags", TagKeys: []string{"repository", "environment"}}}
+	tags := map[string]string{"repository": "acme/api", "environment": "development"}
+	leftID, err := resolveNamespace(&left, tags)
+	if err != nil {
+		t.Fatalf("resolve left namespace: %v", err)
+	}
+	rightID, err := resolveNamespace(&right, tags)
+	if err != nil {
+		t.Fatalf("resolve right namespace: %v", err)
+	}
+	if leftID == "" || leftID != rightID {
+		t.Fatalf("namespace IDs must be stable across tag key order: %q != %q", leftID, rightID)
+	}
+	want := "repositories/.ccplant/namespaces/v1/" + leftID[:2] + "/" + leftID
+	if left.StoragePath != want || right.StoragePath != want {
+		t.Fatalf("resolved paths = %q and %q, want %q", left.StoragePath, right.StoragePath, want)
+	}
+	if left.Namespace.TagKeys[0] != "environment" || left.Namespace.TagKeys[1] != "repository" {
+		t.Fatalf("tag keys were not normalized: %#v", left.Namespace.TagKeys)
+	}
+}
+
+func TestResolveNamespaceRejectsInvalidSelectors(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector *entities.StorageNamespaceSelector
+		tags     map[string]string
+	}{
+		{name: "unknown mode", selector: &entities.StorageNamespaceSelector{Mode: "path", TagKeys: []string{"repository"}}, tags: map[string]string{"repository": "acme/api"}},
+		{name: "no keys", selector: &entities.StorageNamespaceSelector{Mode: "tags"}},
+		{name: "duplicate keys", selector: &entities.StorageNamespaceSelector{Mode: "tags", TagKeys: []string{"repository", " repository "}}, tags: map[string]string{"repository": "acme/api"}},
+		{name: "missing tag", selector: &entities.StorageNamespaceSelector{Mode: "tags", TagKeys: []string{"repository"}}},
+		{name: "empty tag", selector: &entities.StorageNamespaceSelector{Mode: "tags", TagKeys: []string{"repository"}}, tags: map[string]string{"repository": "  "}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attachment := entities.StorageAttachment{Namespace: tt.selector}
+			if _, err := resolveNamespace(&attachment, tt.tags); err == nil {
+				t.Fatal("resolveNamespace unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestResolveNamespaceDoesNotExposeTagValueInPath(t *testing.T) {
+	attachment := entities.StorageAttachment{Namespace: &entities.StorageNamespaceSelector{Mode: "tags", TagKeys: []string{"repository"}}}
+	if _, err := resolveNamespace(&attachment, map[string]string{"repository": "../private/repository"}); err != nil {
+		t.Fatalf("resolveNamespace: %v", err)
+	}
+	if attachment.StoragePath == "" || attachment.StoragePath == "../private/repository" {
+		t.Fatalf("tag value leaked into resolved path: %q", attachment.StoragePath)
+	}
+}
