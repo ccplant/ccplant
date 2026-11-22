@@ -66,6 +66,7 @@ const (
 	agentSocketPath       = "/tmp/ccplant/agent.sock"
 	provisionerSocketPath = "/tmp/ccplant/provisioner.sock"
 	nfaControlSocketPath  = "/run/nfa/control.sock"
+	nfaLogPath            = "/run/nfa/network-filter.log"
 )
 
 const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
@@ -4932,12 +4933,11 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 		Name:            "network-filter",
 		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command: []string{
-			"nfa", "proxy", "--deferred-policy",
-			"--listen-address", "127.0.0.1:3128",
-			"--control-socket", nfaControlSocketPath,
-			"--control-socket-mode", "438",
-		},
+		Command:         []string{"/bin/sh", "-ec"},
+		Args: []string{fmt.Sprintf(
+			"exec nfa proxy --deferred-policy --listen-address 127.0.0.1:3128 --control-socket %s --control-socket-mode 438 2>%s",
+			nfaControlSocketPath, nfaLogPath,
+		)},
 		Env: filterEnvVars,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:                &rootUID,

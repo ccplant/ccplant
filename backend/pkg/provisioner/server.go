@@ -595,6 +595,9 @@ func waitForLocalTCP(ctx context.Context, address string, timeout time.Duration)
 		}
 	}
 	log.Printf("[PROVISIONER] Warning: local network proxy did not become ready before timeout: %s", address)
+	if data, err := os.ReadFile("/run/nfa/network-filter.log"); err == nil && len(data) > 0 {
+		log.Printf("[PROVISIONER] network-filter startup log:\n%s", strings.TrimSpace(string(data)))
+	}
 }
 
 func withoutProxyEnv(env []string) []string {
