@@ -105,7 +105,7 @@ session:
     # entity, and this release's authenticated session-manager endpoint while
     # denying all other cluster-internal egress.
     egressMode: ""
-  networkFilterImage: ghcr.io/takutakahashi/nfa:0.12.5
+  networkFilterImage: ghcr.io/takutakahashi/nfa:0.12.6
   imagePullPolicy: IfNotPresent
   # Pod-local agent runtime port. The agent binds this on loopback only; it is
   # not exposed by the session Service.
