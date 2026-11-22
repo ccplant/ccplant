@@ -37,6 +37,44 @@ func TestNewSessionManagerRuntimeRemoteModeDoesNotRequireRedis(t *testing.T) {
 	}
 }
 
+func TestFetchParentRuntimeProfile(t *testing.T) {
+	var gotPath, gotAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"revision":"revision-a","profile":{"version":1,"kubernetes":{"network_filter_image":"nfa:parent"},"scia":{},"moli":{}}}`))
+	}))
+	defer server.Close()
+
+	profile, err := fetchParentRuntimeProfile(context.Background(), server.URL, "manager-a", "connection-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/internal/session-managers/manager-a/runtime-profile" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotAuthorization != "Bearer connection-token" {
+		t.Fatalf("authorization = %q", gotAuthorization)
+	}
+	if profile.Kubernetes.NetworkFilterImage != "nfa:parent" {
+		t.Fatalf("network filter image = %q", profile.Kubernetes.NetworkFilterImage)
+	}
+}
+
+func TestFetchParentRuntimeProfileRequiresProfile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"revision":"revision-a"}`))
+	}))
+	defer server.Close()
+
+	_, err := fetchParentRuntimeProfile(context.Background(), server.URL, "manager-a", "connection-token")
+	if err == nil || err.Error() != "runtime profile response did not contain a profile" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRemoteSessionManagerStoresDoNotUseRedis(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Redis.Addr = "redis.example.invalid:6379"
