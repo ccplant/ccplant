@@ -222,6 +222,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			server, // Server implements SessionManagerProvider interface
 			server.shareRepo,
 		)
+		shareController.SetSessionRuntimeRouting(server.sessionRouteRepo, server.esmControlTunnel)
 		log.Printf("[ROUTER] Share controller initialized")
 	}
 

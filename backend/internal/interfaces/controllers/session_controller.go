@@ -2000,6 +2000,9 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 					}
 					return ctx.JSON(http.StatusGone, map[string]string{"error": "session_templated", "template_id": route.ContextTemplateID})
 				}
+				if route.Transport == repositories.SessionRouteTransportDirectRuntime {
+					return c.routeToRemoteSession(ctx, route)
+				}
 				if route.ManagerID == "" && route.RemoteSessionID != "" {
 					session = c.getSessionManager().GetSession(route.RemoteSessionID)
 					if session == nil {
@@ -2060,6 +2063,22 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 				})
 			}
 		}
+	}
+
+	// Built-in Kubernetes sessions use the same outbound reverse-RPC transport
+	// as externally allocated sessions. The local Session object remains the
+	// workload owner, but runtime HTTP traffic must never dial its Pod Service.
+	if c.sessionRouteRepo != nil {
+		route, routeErr := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+		if routeErr != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resolve session runtime route").SetInternal(routeErr)
+		}
+		if route != nil && route.Transport == repositories.SessionRouteTransportDirectRuntime {
+			return c.routeToRemoteSession(ctx, route)
+		}
+	}
+	if manager, ok := c.getSessionManager().(interface{ RuntimeTrafficRequiresOutbound() bool }); ok && manager.RuntimeTrafficRequiresOutbound() {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session outbound runtime connection is unavailable")
 	}
 
 	// Determine target URL using session address
@@ -2240,8 +2259,9 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 		if authzCtx == nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
-		// The route lookup itself is authoritative for legacy entries that may not
-		// yet contain ownership metadata. New routes persist the owner fields.
+		if route.UserID != "" && !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+		}
 	}
 
 	// Build target URL: replace A's session ID with B's remote session ID in the path

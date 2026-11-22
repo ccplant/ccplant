@@ -1112,6 +1112,33 @@ func TestRouteToSessionUsesDirectSessionRuntime(t *testing.T) {
 	}
 }
 
+func TestRouteToBuiltInSessionUsesOutboundDirectRuntime(t *testing.T) {
+	manager := &ensuringSessionManager{fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{
+		"public-id": {id: "public-id", userID: "user-1", scope: entities.ScopeUser, status: "active"},
+	}}}
+	tunnel := &directRuntimeTunnel{}
+	routeRepo := &fakeACPRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "public-id", Transport: repositories.SessionRouteTransportDirectRuntime,
+		UserID: "user-1", Scope: string(entities.ScopeUser), Status: "active",
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/messages", "public-id")
+
+	if err := controller.RouteToSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if tunnel.managerID != "public-id" || tunnel.path != "/messages" {
+		t.Fatalf("direct tunnel manager=%q path=%q", tunnel.managerID, tunnel.path)
+	}
+}
+
 func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
 	tunnel := &lifecycleTunnel{}

@@ -1,7 +1,9 @@
 package controllers
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -19,6 +21,8 @@ import (
 type ShareController struct {
 	sessionManagerProvider SessionManagerProvider
 	shareRepo              repositories.ShareRepository
+	sessionRouteRepo       repositories.SessionRouteRepository
+	runtimeTunnel          ESMControlTunnel
 }
 
 // NewShareController creates a new ShareController instance
@@ -30,6 +34,11 @@ func NewShareController(
 		sessionManagerProvider: sessionManagerProvider,
 		shareRepo:              shareRepo,
 	}
+}
+
+func (c *ShareController) SetSessionRuntimeRouting(repo repositories.SessionRouteRepository, tunnel ESMControlTunnel) {
+	c.sessionRouteRepo = repo
+	c.runtimeTunnel = tunnel
 }
 
 // getSessionManager returns the current session manager
@@ -204,6 +213,44 @@ func (c *ShareController) RouteToSharedSession(ctx echo.Context) error {
 	if ctx.Request().Method == http.MethodOptions {
 		c.setCORSHeaders(ctx)
 		return ctx.NoContent(http.StatusNoContent)
+	}
+
+	if c.sessionRouteRepo != nil {
+		route, routeErr := c.sessionRouteRepo.Get(ctx.Request().Context(), share.SessionID())
+		if routeErr != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resolve shared session runtime").SetInternal(routeErr)
+		}
+		if route != nil && route.Transport == repositories.SessionRouteTransportDirectRuntime {
+			if c.runtimeTunnel == nil || !c.runtimeTunnel.IsConnected(ctx.Request().Context(), route.SessionID) {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "Session runtime connection is unavailable")
+			}
+			body, readErr := io.ReadAll(ctx.Request().Body)
+			if readErr != nil {
+				return echo.NewHTTPError(http.StatusBadRequest, "Failed to read request body")
+			}
+			parts := strings.SplitN(ctx.Request().URL.Path, "/", 4)
+			suffix := "/"
+			if len(parts) >= 4 {
+				suffix += parts[3]
+			}
+			target := &url.URL{Scheme: "http", Host: "session.local", Path: suffix, RawQuery: ctx.Request().URL.RawQuery}
+			req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, target.String(), bytes.NewReader(body))
+			if reqErr != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build shared runtime request")
+			}
+			req.Header = ctx.Request().Header.Clone()
+			resp, tunnelErr := c.runtimeTunnel.Do(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req)
+			if tunnelErr != nil {
+				return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
+			}
+			defer func() { _ = resp.Body.Close() }()
+			copyResponseHeaders(ctx.Response().Header(), resp.Header)
+			c.setCORSHeaders(ctx)
+			return streamTunnelResponse(ctx, resp)
+		}
+	}
+	if manager, ok := c.getSessionManager().(interface{ RuntimeTrafficRequiresOutbound() bool }); ok && manager.RuntimeTrafficRequiresOutbound() {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session outbound runtime connection is unavailable")
 	}
 
 	// Determine target URL using session address

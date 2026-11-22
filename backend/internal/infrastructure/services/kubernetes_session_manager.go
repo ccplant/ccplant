@@ -219,12 +219,17 @@ type KubernetesSessionManager struct {
 
 	sessionAllocationNotifier coreallocation.Notifier
 	sessionControlStore       coresessioncontrol.Store
+	sessionRouteRepo          portrepos.SessionRouteRepository
 	runnerParentURL           string
 	runnerManagerID           string
 	runnerManagerToken        string
 	runnerDefaultPool         string
 	inheritedRuntimeProfile   *sessionsettings.RuntimeProfile
 }
+
+// RuntimeTrafficRequiresOutbound prevents controllers from falling back to a
+// Kubernetes Service address when no reverse-RPC connection is available.
+func (*KubernetesSessionManager) RuntimeTrafficRequiresOutbound() bool { return true }
 
 // SetCodexAuthNotifier configures user notification delivery for expired Codex
 // credentials. Delivery is deduplicated per user for one hour.
@@ -320,6 +325,15 @@ func (m *KubernetesSessionManager) SetSessionControlStore(store coresessioncontr
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.sessionControlStore = store
+}
+
+// SetSessionRouteRepository enables the outbound direct-runtime transport for
+// sessions allocated by the built-in manager. The Session Pod connects back to
+// the parent; the parent never dials the Pod's agent port.
+func (m *KubernetesSessionManager) SetSessionRouteRepository(repo portrepos.SessionRouteRepository) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.sessionRouteRepo = repo
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager

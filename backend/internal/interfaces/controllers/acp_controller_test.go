@@ -516,6 +516,50 @@ func (t outboundACPTestTunnel) Do(_ context.Context, _, _, _ string, req *http.R
 	return http.DefaultClient.Do(req)
 }
 
+func TestACPController_BuiltInPromptUsesOutboundRuntime(t *testing.T) {
+	var rpcSessionID string
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case http.MethodGet + " /session":
+			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": "bridge-session"})
+		case http.MethodPost + " /rpc":
+			var request struct {
+				Params struct {
+					SessionID string `json:"sessionId"`
+				} `json:"params"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			rpcSessionID = request.Params.SessionID
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer runtime.Close()
+	runtimeURL, err := url.Parse(runtime.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctrl := controllers.NewACPController(
+		&testSessionManagerProvider{mgr: &fakeSessionManager{sessions: map[string]*fakeSession{}}},
+		&fakeSessionCreator{},
+		&fakeACPRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "built-in", RemoteSessionID: "built-in", Transport: repositories.SessionRouteTransportDirectRuntime,
+			UserID: "user1", Scope: string(entities.ScopeUser),
+		}},
+	)
+	ctrl.SetESMControlTunnel(outboundACPTestTunnel{target: runtimeURL})
+	e := echo.New()
+	body := `{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"sessionId":"built-in","prompt":[]}}`
+	c, rec := setupEchoContext(e, http.MethodPost, "/acp", body, "user1")
+	if err := ctrl.HandleRPC(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || rpcSessionID != "bridge-session" {
+		t.Fatalf("status=%d rpc session=%q body=%s", rec.Code, rpcSessionID, rec.Body.String())
+	}
+}
+
 func TestACPController_RemoteSessionSSEUsesOutboundTunnel(t *testing.T) {
 	const secret = "remote-sse-secret"
 	requestSeen := make(chan struct{}, 1)

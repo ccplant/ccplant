@@ -2,6 +2,9 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +13,7 @@ import (
 
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	corev1 "k8s.io/api/core/v1"
@@ -32,10 +36,69 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 }
 
 func (m *KubernetesSessionManager) createSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
-	if !m.isSessionAllocatorEnabled() {
-		return m.allocateSessionDirect(ctx, id, req, webhookPayload)
+	cleanupRoute, err := m.prepareBuiltInDirectRuntime(ctx, id, req)
+	if err != nil {
+		return nil, err
 	}
-	return m.submitSessionAllocation(ctx, id, req, webhookPayload)
+	created := false
+	defer func() {
+		if !created && cleanupRoute != nil {
+			cleanupRoute()
+		}
+	}()
+	var session entities.Session
+	if !m.isSessionAllocatorEnabled() {
+		session, err = m.allocateSessionDirect(ctx, id, req, webhookPayload)
+	} else {
+		session, err = m.submitSessionAllocation(ctx, id, req, webhookPayload)
+	}
+	created = err == nil
+	return session, err
+}
+
+func (m *KubernetesSessionManager) prepareBuiltInDirectRuntime(ctx context.Context, id string, req *entities.RunServerRequest) (func(), error) {
+	m.mutex.RLock()
+	repo := m.sessionRouteRepo
+	m.mutex.RUnlock()
+	if repo == nil || req == nil || req.ParentRuntime != nil || (req.ProvisionSettings != nil && req.ProvisionSettings.ParentRuntime != nil) {
+		return nil, nil
+	}
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, fmt.Errorf("create built-in runtime credential: %w", err)
+	}
+	token := hex.EncodeToString(tokenBytes)
+	digest := sha256.Sum256([]byte(token))
+	endpoint := strings.TrimRight(m.k8sConfig.ProvisionerProxyURL, "/")
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("http://control.%s.svc.cluster.local:8080", m.namespace)
+	}
+	runtime := &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: endpoint, SessionID: id, Token: token, Generation: 1,
+	}
+	now := time.Now().UTC()
+	route := &portrepos.SessionRoute{
+		SessionID: id, RemoteSessionID: id, Transport: portrepos.SessionRouteTransportDirectRuntime,
+		RuntimeTokenHash: hex.EncodeToString(digest[:]), Generation: 1, UserID: req.UserID,
+		Scope: string(req.Scope), TeamID: req.TeamID, Tags: req.Tags, StartedAt: now,
+		InitialMessage: req.InitialMessage, Status: "creating", StatusUpdatedAt: now,
+	}
+	if err := repo.Save(ctx, route); err != nil {
+		return nil, fmt.Errorf("save built-in direct runtime route: %w", err)
+	}
+	req.ParentRuntime = runtime
+	if req.ProvisionSettings != nil {
+		settingsCopy := *req.ProvisionSettings
+		settingsCopy.ParentRuntime = runtime
+		req.ProvisionSettings = &settingsCopy
+	}
+	return func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := repo.Delete(cleanupCtx, id); err != nil {
+			log.Printf("[SESSION_ROUTE] Warning: failed to clean up built-in route %s: %v", id, err)
+		}
+	}, nil
 }
 
 // CreateSessionDirect allocates a session on this manager without submitting it
