@@ -2,6 +2,9 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,6 +15,37 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
+
+func TestRefreshParentRuntimeProfile(t *testing.T) {
+	profile := &sessionsettings.RuntimeProfile{
+		Version: runtimeProfileVersion,
+		Kubernetes: sessionsettings.KubernetesRuntimeProfile{
+			NetworkFilterImage: "nfa:parent",
+		},
+	}
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/session-managers/manager-a/runtime-profile" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer manager-token" {
+			t.Fatalf("authorization header was not set")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"profile": profile})
+	}))
+	defer parent.Close()
+
+	manager := &KubernetesSessionManager{
+		config:    &config.Config{},
+		k8sConfig: &config.KubernetesSessionConfig{NetworkFilterImage: "nfa:local"},
+	}
+	manager.ConfigureSessionRunnerPool(parent.URL, "manager-a", "manager-token", "fly-dev")
+	if err := manager.refreshParentRuntimeProfile(context.Background()); err != nil {
+		t.Fatalf("refreshParentRuntimeProfile() error = %v", err)
+	}
+	if manager.k8sConfig.NetworkFilterImage != "nfa:parent" {
+		t.Fatalf("network filter image = %q", manager.k8sConfig.NetworkFilterImage)
+	}
+}
 
 type staticRuntimeConfigProvider struct{ config *config.Config }
 

@@ -2,8 +2,11 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -14,6 +17,42 @@ import (
 )
 
 const runtimeProfileVersion = 1
+
+func (m *KubernetesSessionManager) refreshParentRuntimeProfile(ctx context.Context) error {
+	m.mutex.RLock()
+	parentURL := m.runnerParentURL
+	managerID := m.runnerManagerID
+	managerToken := m.runnerManagerToken
+	m.mutex.RUnlock()
+	if parentURL == "" || managerID == "" || managerToken == "" {
+		return nil
+	}
+
+	endpoint := parentURL + "/internal/session-managers/" + url.PathEscape(managerID) + "/runtime-profile"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+managerToken)
+	resp, err := instrumentedHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("parent runtime profile returned HTTP %d", resp.StatusCode)
+	}
+	var snapshot struct {
+		Profile *sessionsettings.RuntimeProfile `json:"profile"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		return fmt.Errorf("decode parent runtime profile: %w", err)
+	}
+	if snapshot.Profile == nil {
+		return fmt.Errorf("parent runtime profile is empty")
+	}
+	return m.ApplyRuntimeProfile(ctx, snapshot.Profile)
+}
 
 // ExternalRuntimeProfile returns the parent-owned runtime configuration that
 // every Kubernetes ESM must inherit for externally allocated sessions.
