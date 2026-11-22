@@ -1449,9 +1449,6 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 
 func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context, pool string, dind bool) error {
 	m.refreshConfig()
-	if err := m.refreshParentRuntimeProfile(ctx); err != nil {
-		return fmt.Errorf("refresh parent runtime profile: %w", err)
-	}
 	podTemplateHash, err := m.stockPodTemplateHash(ctx, dind)
 	if err != nil {
 		return fmt.Errorf("failed to resolve stock pod template hash: %w", err)
