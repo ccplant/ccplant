@@ -59,6 +59,7 @@ type Server struct {
 
 	port         int
 	host         string
+	socketPath   string
 	settingsFile string // path to optional auto-provision settings file
 	httpClient   *http.Client
 	filterURL    string
@@ -92,7 +93,7 @@ func NewWithHost(host string, port int, settingsFile string) *Server {
 	if strings.TrimSpace(host) == "" {
 		host = "0.0.0.0"
 	}
-	return &Server{
+	s := &Server{
 		host:         host,
 		port:         port,
 		settingsFile: settingsFile,
@@ -105,6 +106,18 @@ func NewWithHost(host string, port int, settingsFile string) *Server {
 
 		restartProvisionNow: make(chan struct{}),
 	}
+	if socketPath := strings.TrimSpace(os.Getenv("NETWORK_FILTER_CONTROL_SOCKET")); socketPath != "" {
+		s.filterURL = "http://unix"
+		s.httpClient = unixSocketHTTPClient(socketPath)
+	}
+	return s
+}
+
+// NewWithSocket creates a provisioner server that listens only on a Unix socket.
+func NewWithSocket(socketPath, settingsFile string) *Server {
+	s := NewWithHost("", 0, settingsFile)
+	s.socketPath = socketPath
+	return s
 }
 
 func (s *Server) StartRestartAutoProvisionNow() {
@@ -186,10 +199,29 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/one-time-secrets/", s.handleOneTimeSecret)
 	mux.HandleFunc("/herdr/rpc", s.handleHerdrRPC)
 
-	srv := &http.Server{
-		Addr:    net.JoinHostPort(s.host, strconv.Itoa(s.port)),
-		Handler: mux,
+	srv := &http.Server{Handler: mux}
+	var listener net.Listener
+	var listenErr error
+	if s.socketPath != "" {
+		if listenErr = prepareLocalSocketPath(s.socketPath); listenErr == nil {
+			listener, listenErr = net.Listen("unix", s.socketPath)
+		}
+		if listenErr == nil {
+			listenErr = os.Chmod(s.socketPath, 0o600)
+		}
+	} else {
+		srv.Addr = net.JoinHostPort(s.host, strconv.Itoa(s.port))
+		listener, listenErr = net.Listen("tcp", srv.Addr)
 	}
+	if listenErr != nil {
+		return fmt.Errorf("listen provisioner: %w", listenErr)
+	}
+	defer func() {
+		_ = listener.Close()
+		if s.socketPath != "" {
+			_ = os.Remove(s.socketPath)
+		}
+	}()
 
 	// Shutdown when context is cancelled.
 	go func() {
@@ -199,8 +231,8 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = srv.Shutdown(context.Background())
 	}()
 
-	log.Printf("[PROVISIONER] Listening on %s", srv.Addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	log.Printf("[PROVISIONER] Listening on %s", listener.Addr())
+	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
 	return nil
@@ -563,6 +595,9 @@ func waitForLocalTCP(ctx context.Context, address string, timeout time.Duration)
 		}
 	}
 	log.Printf("[PROVISIONER] Warning: local network proxy did not become ready before timeout: %s", address)
+	if data, err := os.ReadFile("/run/nfa/network-filter.log"); err == nil && len(data) > 0 {
+		log.Printf("[PROVISIONER] network-filter startup log:\n%s", strings.TrimSpace(string(data)))
+	}
 }
 
 func withoutProxyEnv(env []string) []string {

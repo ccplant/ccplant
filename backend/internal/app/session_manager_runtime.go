@@ -82,6 +82,19 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if cfg.SessionManager.RunnerPool != "" {
 		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
 	}
+	if remoteMode {
+		profileCtx, profileCancel := context.WithTimeout(parent, 15*time.Second)
+		profile, profileErr := fetchParentRuntimeProfile(profileCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken)
+		profileCancel()
+		if profileErr != nil {
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, fmt.Errorf("load parent runtime profile: %w", profileErr)
+		}
+		if profileErr = manager.ApplyRuntimeProfile(parent, profile); profileErr != nil {
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, fmt.Errorf("apply parent runtime profile: %w", profileErr)
+		}
+	}
 	// Stock workloads belong to the session-manager revision that created them.
 	// Purge the complete inventory at the process boundary instead of relying
 	// only on template-hash reconciliation: a manager replacement can otherwise
@@ -341,6 +354,32 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+}
+
+func fetchParentRuntimeProfile(ctx context.Context, upstream, managerID, token string) (*sessionsettings.RuntimeProfile, error) {
+	endpoint := strings.TrimRight(upstream, "/") + "/internal/session-managers/" + url.PathEscape(managerID) + "/runtime-profile"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("runtime profile returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var snapshot coreallocation.RuntimeProfileSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		return nil, fmt.Errorf("decode runtime profile: %w", err)
+	}
+	if snapshot.Profile == nil {
+		return nil, errors.New("runtime profile response did not contain a profile")
+	}
+	return snapshot.Profile, nil
 }
 
 type leaderElectionRunner interface {

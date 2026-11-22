@@ -20,6 +20,7 @@ import (
 var (
 	acpPort          string
 	acpHost          string
+	acpSocket        string
 	acpCwd           string
 	acpSessionID     string
 	acpSessionFile   string
@@ -59,6 +60,7 @@ Example:
 func init() {
 	AcpServerCmd.Flags().StringVarP(&acpPort, "port", "p", "3284", "HTTP port to listen on")
 	AcpServerCmd.Flags().StringVar(&acpHost, "host", "0.0.0.0", "IP address for the HTTP server to listen on")
+	AcpServerCmd.Flags().StringVar(&acpSocket, "socket", "", "Unix socket path for the HTTP server (disables TCP listener)")
 	AcpServerCmd.Flags().StringVar(&acpCwd, "cwd", "", "Working directory for the ACP session (defaults to current directory)")
 	AcpServerCmd.Flags().StringVar(&acpSessionID, "session-id", "", "Session ID to use (defaults to auto-generated)")
 	AcpServerCmd.Flags().StringVar(&acpSessionFile, "session-file", "", "File to persist ACP session ID for reuse across restarts (defaults to {cwd}/.acp-session-id)")
@@ -175,12 +177,49 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 
 	// Start the HTTP server.
 	srv := bridge.NewServer(b, acpVerbose)
-	addr := net.JoinHostPort(acpHost, acpPort)
-	log.Printf("[acp-server] HTTP server listening on %s", addr)
+	var listener net.Listener
+	if acpSocket != "" {
+		if !filepath.IsAbs(acpSocket) {
+			return fmt.Errorf("ACP server socket path must be absolute")
+		}
+		if err := os.MkdirAll(filepath.Dir(acpSocket), 0o700); err != nil {
+			return fmt.Errorf("create ACP server socket directory: %w", err)
+		}
+		if info, statErr := os.Lstat(acpSocket); statErr == nil {
+			if info.Mode()&os.ModeSocket == 0 {
+				return fmt.Errorf("refusing to replace non-socket ACP server path %s", acpSocket)
+			}
+			if err := os.Remove(acpSocket); err != nil {
+				return fmt.Errorf("remove stale ACP server socket: %w", err)
+			}
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("inspect ACP server socket: %w", statErr)
+		}
+		listener, err = net.Listen("unix", acpSocket)
+		if err != nil {
+			return fmt.Errorf("listen on ACP server socket: %w", err)
+		}
+		defer func() {
+			_ = listener.Close()
+			_ = os.Remove(acpSocket)
+		}()
+		if err := os.Chmod(acpSocket, 0o600); err != nil {
+			return fmt.Errorf("restrict ACP server socket: %w", err)
+		}
+		log.Printf("[acp-server] HTTP server listening on unix:%s", acpSocket)
+	} else {
+		addr := net.JoinHostPort(acpHost, acpPort)
+		listener, err = net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("listen on ACP HTTP server: %w", err)
+		}
+		defer listener.Close() //nolint:errcheck
+		log.Printf("[acp-server] HTTP server listening on %s", addr)
+	}
 
 	httpErrCh := make(chan error, 1)
 	go func() {
-		httpErrCh <- srv.Start(ctx, addr)
+		httpErrCh <- srv.StartListener(ctx, listener)
 	}()
 
 	select {

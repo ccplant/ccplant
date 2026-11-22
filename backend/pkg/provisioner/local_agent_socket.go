@@ -4,14 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"path/filepath"
-	"sync"
 )
 
 const defaultLocalAgentSocketPath = "/tmp/ccplant/agent.sock"
@@ -21,68 +17,6 @@ func localAgentSocketPath() string {
 		return value
 	}
 	return nativeRuntimePath("agent", "agent.sock", defaultLocalAgentSocketPath)
-}
-
-// startLocalAgentSocketProxy exposes the existing agent HTTP API through a
-// process-local Unix socket. The TCP listener remains available for existing
-// session routing, while local integrations can avoid the Pod network.
-func startLocalAgentSocketProxy(ctx context.Context, socketPath, agentURL string) (func(), error) {
-	target, err := url.Parse(agentURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse local agent URL: %w", err)
-	}
-	if target.Scheme != "http" || target.Host == "" {
-		return nil, fmt.Errorf("local agent URL must be an absolute HTTP URL")
-	}
-	if err := prepareLocalSocketPath(socketPath); err != nil {
-		return nil, err
-	}
-
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return nil, fmt.Errorf("listen on local agent socket: %w", err)
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		_ = listener.Close()
-		_ = os.Remove(socketPath)
-		return nil, fmt.Errorf("restrict local agent socket permissions: %w", err)
-	}
-	socketInfo, err := os.Lstat(socketPath)
-	if err != nil {
-		_ = listener.Close()
-		return nil, fmt.Errorf("inspect local agent socket: %w", err)
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
-		log.Printf("[PROVISIONER] Local agent socket proxy failed: %v", proxyErr)
-		http.Error(w, "local agent unavailable", http.StatusBadGateway)
-	}
-	server := &http.Server{Handler: proxy, ReadHeaderTimeout: localAgentRequestTimeout}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			log.Printf("[PROVISIONER] Local agent socket server stopped: %v", serveErr)
-		}
-	}()
-
-	var stopOnce sync.Once
-	stop := func() {
-		stopOnce.Do(func() {
-			_ = server.Close()
-			_ = listener.Close()
-			<-done
-			if current, statErr := os.Lstat(socketPath); statErr == nil && os.SameFile(socketInfo, current) {
-				_ = os.Remove(socketPath)
-			}
-		})
-	}
-	go func() {
-		<-ctx.Done()
-		stop()
-	}()
-	return stop, nil
 }
 
 func prepareLocalSocketPath(socketPath string) error {

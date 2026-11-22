@@ -76,6 +76,7 @@ type controlEvent struct {
 }
 
 func runSessionControlClient(ctx context.Context, client *http.Client, cfg PullClientConfig, agentType string) {
+	localClient := unixSocketHTTPClient(localAgentSocketPath())
 	cursorPath := os.Getenv("SESSION_CONTROL_CURSOR_FILE")
 	if cursorPath == "" {
 		cursorPath = "/workspace/.agentapi-session-control-cursor"
@@ -85,7 +86,7 @@ func runSessionControlClient(ctx context.Context, client *http.Client, cfg PullC
 	if cursor == "" {
 		cursor = "0-0"
 	}
-	go forwardRuntimeEvents(ctx, client, cfg)
+	go forwardRuntimeEvents(ctx, client, localClient, cfg)
 
 	for ctx.Err() == nil {
 		commands, err := pollControlCommands(ctx, client, cfg, cursor)
@@ -95,7 +96,7 @@ func runSessionControlClient(ctx context.Context, client *http.Client, cfg PullC
 			continue
 		}
 		for _, command := range commands {
-			err := executeControlCommand(ctx, client, agentType, command)
+			err := executeControlCommand(ctx, localClient, agentType, command)
 			eventType := "command_completed"
 			payload := map[string]string{}
 			if err != nil {
@@ -155,7 +156,7 @@ func pollControlCommands(ctx context.Context, client *http.Client, cfg PullClien
 }
 
 func executeControlCommand(ctx context.Context, client *http.Client, agentType string, command controlCommand) error {
-	return executeControlCommandAtBase(ctx, client, agentType, command, "http://127.0.0.1:9000")
+	return executeControlCommandAtBase(ctx, client, agentType, command, "http://unix")
 }
 
 func executeControlCommandAtBase(ctx context.Context, client *http.Client, agentType string, command controlCommand, localBase string) error {
@@ -321,12 +322,12 @@ func authorizeControlRequest(req *http.Request, cfg PullClientConfig) {
 	req.Header.Set("Authorization", "Bearer "+cfg.SessionControlToken)
 }
 
-func forwardRuntimeEvents(ctx context.Context, client *http.Client, cfg PullClientConfig) {
+func forwardRuntimeEvents(ctx context.Context, client, localClient *http.Client, cfg PullClientConfig) {
 	for ctx.Err() == nil {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:9000/events", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/events", nil)
 		if err == nil {
 			req.Header.Set("Accept", "text/event-stream")
-			resp, requestErr := client.Do(req)
+			resp, requestErr := localClient.Do(req)
 			if requestErr == nil && resp.StatusCode == http.StatusOK {
 				scanRuntimeEventStream(ctx, resp.Body, client, cfg)
 				_ = resp.Body.Close()

@@ -85,7 +85,10 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 	assert.Equal(t, "network-filter", sidecar.Name)
 	assert.NotEmpty(t, sidecar.Resources.Requests)
 	assert.NotEmpty(t, sidecar.Resources.Limits)
-	assert.Equal(t, []string{"nfa", "proxy", "--deferred-policy"}, sidecar.Command)
+	assert.Equal(t, []string{"/bin/sh", "-ec"}, sidecar.Command)
+	assert.Equal(t, []string{
+		"exec nfa proxy --deferred-policy --listen-address 127.0.0.1:3128 --control-socket /run/nfa/control.sock --control-socket-mode 438 2>/run/nfa/network-filter.log",
+	}, sidecar.Args)
 	assert.Contains(t, sidecar.Env, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
 	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, sidecar.SecurityContext.Capabilities.Add)
 	assert.Empty(t, sidecar.VolumeMounts)
