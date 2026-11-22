@@ -548,6 +548,8 @@ sessionManager:
         requests: {cpu: "50m", memory: "32Mi"}
         limits: {cpu: "100m", memory: "64Mi"}
     imagePullPolicy: IfNotPresent
+    # Pod-local agent runtime port. The agent binds this on loopback only; it is
+    # not exposed by the session Service.
     basePort: 9000
     resources:
       requests: {cpu: "500m", memory: "512Mi"}
@@ -1199,7 +1201,8 @@ kubernetesSession:
   # Image pull policy for session pods
   imagePullPolicy: "IfNotPresent"
 
-  # Base port that agentapi listens on in session pods
+  # Pod-local agent runtime port. The agent binds this on loopback only; it is
+  # not exposed by the session Service.
   basePort: 9000
 
   # Resource requests and limits for session pods (Kubernetes standard format)

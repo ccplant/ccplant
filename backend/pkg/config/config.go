@@ -301,7 +301,8 @@ type KubernetesSessionConfig struct {
 	DisableServiceLinks bool `json:"disable_service_links" mapstructure:"disable_service_links"`
 	// DisableServiceAccountToken prevents Kubernetes service account credentials from being mounted into session pods.
 	DisableServiceAccountToken bool `json:"disable_service_account_token" mapstructure:"disable_service_account_token"`
-	// BasePort is the port that agentapi listens on in session pods
+	// BasePort is the pod-local loopback port that agentapi listens on. It is not
+	// exposed by the session Service.
 	BasePort int `json:"base_port" mapstructure:"base_port"`
 	// CPURequest is the CPU request for session pods
 	CPURequest string `json:"cpu_request" mapstructure:"cpu_request"`
