@@ -109,7 +109,7 @@ func (c *SessionSecretController) Create(ctx echo.Context) error {
 	return ctx.JSON(http.StatusCreated, map[string]interface{}{
 		"secret_id":  id,
 		"expires_at": expiresAt,
-		"local_url":  "http://127.0.0.1:9001/one-time-secrets/" + id,
+		"local_url":  "http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock/one-time-secrets/" + id,
 	})
 }
 
@@ -227,7 +227,7 @@ func (c *SessionSecretController) Reauthorize(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"secret_id":  ctx.Param("secretId"),
 		"expires_at": expiresAt,
-		"local_url":  "http://127.0.0.1:9001/one-time-secrets/" + ctx.Param("secretId"),
+		"local_url":  "http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock/one-time-secrets/" + ctx.Param("secretId"),
 	})
 }
 

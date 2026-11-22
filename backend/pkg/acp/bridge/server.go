@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -76,9 +77,18 @@ func (s *Server) registerRoutes() {
 // Start starts the HTTP server on the given address (e.g. ":3284").
 // It blocks until ctx is cancelled.
 func (s *Server) Start(ctx context.Context, addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return s.StartListener(ctx, listener)
+}
+
+// StartListener serves the HTTP API on an already-created listener.
+func (s *Server) StartListener(ctx context.Context, listener net.Listener) error {
 	errCh := make(chan error, 1)
 	go func() {
-		if err := s.echo.Start(addr); err != nil && err != http.ErrServerClosed {
+		if err := s.echo.Server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()

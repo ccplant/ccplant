@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -252,6 +253,12 @@ func init() {
 func runConsumeSecret(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 	defer cancel()
+	if socketPath := strings.TrimSpace(os.Getenv("PROVISIONER_LOCAL_SOCKET")); socketPath != "" {
+		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		}}
+		return consumeSecret(ctx, &http.Client{Transport: transport}, "http://unix/one-time-secrets/next", cmd.OutOrStdout())
+	}
 	return consumeSecret(ctx, http.DefaultClient, "http://127.0.0.1:9001/one-time-secrets/next", cmd.OutOrStdout())
 }
 

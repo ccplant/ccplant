@@ -50,6 +50,8 @@ func init() {
 		"TCP port for the provisioner HTTP server")
 	AgentProvisionerCmd.Flags().String("host", "0.0.0.0",
 		"IP address for the provisioner HTTP server to listen on")
+	AgentProvisionerCmd.Flags().String("socket", "",
+		"Unix socket path for the provisioner HTTP server (disables TCP listener)")
 	AgentProvisionerCmd.Flags().String("settings-file",
 		"/session-settings/settings.yaml",
 		"Path to the session settings YAML file used for auto-provisioning on Pod restart")
@@ -94,10 +96,19 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	socketPath, err := cmd.Flags().GetString("socket")
+	if err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	srv := provisioner.NewWithHost(host, port, settingsFile)
+	var srv *provisioner.Server
+	if socketPath != "" {
+		srv = provisioner.NewWithSocket(socketPath, settingsFile)
+	} else {
+		srv = provisioner.NewWithHost(host, port, settingsFile)
+	}
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)

@@ -532,23 +532,14 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 
 	// ── Step 7: build and start the agent subprocess ──────────────────────────
 	s.setPhase("provision:start-agent")
-	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
-	agentEnv := mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
-	agentPort := environmentValue(agentEnv, "AGENTAPI_PORT", "8080")
 	agentSocket := localAgentSocketPath()
-	stopLocalSocket, err := startLocalAgentSocketProxy(ctx, agentSocket, "http://127.0.0.1:"+agentPort)
-	if err != nil {
-		s.setStatus(StatusError, "failed to start local agent socket: "+err.Error())
+	envMap["AGENTAPI_LOCAL_SOCKET"] = agentSocket
+	if !usesACPUnixSocket(settings.Session.AgentType) {
+		s.setStatus(StatusError, fmt.Sprintf("agent type %q does not support the required Unix-only AgentAPI transport", settings.Session.AgentType))
 		return
 	}
-	localSocketSupervised := false
-	defer func() {
-		if !localSocketSupervised {
-			stopLocalSocket()
-		}
-	}()
-	log.Printf("[PROVISIONER] Local agent API socket is ready at %s", agentSocket)
-	agentEnv = mergeEnv(agentEnv, map[string]string{"AGENTAPI_LOCAL_SOCKET": agentSocket})
+	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
+	agentEnv := mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
 	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv, settings.Session.AgentType, agentSocket); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to start herdr notification bridge: %v", err)
 	} else {
@@ -598,16 +589,14 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 
 	// ── Step 8: wait for agentapi to be ready ─────────────────────────────────
 	s.setPhase("provision:wait-agentapi-ready")
-	agentapiPort := os.Getenv("AGENTAPI_PORT")
-	if agentapiPort == "" {
-		agentapiPort = "8080"
-	}
-	agentapiURL := fmt.Sprintf("http://localhost:%s", agentapiPort)
+	agentapiURL := "http://unix"
 
-	log.Printf("[PROVISIONER] Waiting for agentapi to be ready at %s", agentapiURL)
+	log.Printf("[PROVISIONER] Waiting for agentapi to be ready at unix:%s", agentSocket)
 	readinessCtx, cancelReadiness := context.WithCancel(ctx)
 	readyResult := make(chan error, 1)
-	go func() { readyResult <- waitForAgentAPI(readinessCtx, agentapiURL, 120) }()
+	go func() {
+		readyResult <- waitForAgentAPIWithClient(readinessCtx, unixSocketHTTPClient(agentSocket), agentapiURL, 120)
+	}()
 	var readinessErr error
 	select {
 	case readinessErr = <-readyResult:
@@ -683,7 +672,6 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
 		err := <-agentDone
-		stopLocalSocket()
 		if ctx.Err() != nil {
 			return
 		}
@@ -693,7 +681,15 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
-	localSocketSupervised = true
+}
+
+func usesACPUnixSocket(agentType string) bool {
+	switch agentType {
+	case "claude-acp", "codex-acp", "pi", "cursor", "antigravity":
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldImplicitlyRestoreSessionState(settings *sessionsettings.SessionSettings) bool {
@@ -1611,6 +1607,10 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	if agentapiHost == "" {
 		agentapiHost = "0.0.0.0"
 	}
+	listenArgs := []string{"--host", agentapiHost, "--port", agentapiPort}
+	if socket := strings.TrimSpace(envMap["AGENTAPI_LOCAL_SOCKET"]); socket != "" {
+		listenArgs = []string{"--socket", socket}
+	}
 
 	switch agentType {
 	case "claude-acp":
@@ -1619,15 +1619,13 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// --output-file writes conversation history in acp-posts JSONL format for Slack integration.
 		// claude-agent-acp is the official ACP adapter for the Claude Agent SDK:
 		// https://github.com/agentclientprotocol/claude-agent-acp
-		return agentapiProxyBinary, []string{
-			"acp-server",
-			"--host", agentapiHost,
-			"--port", agentapiPort,
+		args := append([]string{"acp-server"}, listenArgs...)
+		return agentapiProxyBinary, append(args, []string{
 			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--output-file", acpHistoryPath,
 			"--",
 			"claude-agent-acp",
-		}
+		}...)
 
 	case "codex-acp":
 		// Start the acp-server bridge that wraps codex-acp (ACP adapter for OpenAI Codex) via stdio.
@@ -1642,14 +1640,12 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			// agent still resolve to the executor client as intended.
 			adapterCommand = []string{containerJavaScriptRuntime, containerCodexACPEntrypoint}
 		}
-		args := []string{
-			"acp-server",
-			"--host", agentapiHost,
-			"--port", agentapiPort,
+		args := append([]string{"acp-server"}, listenArgs...)
+		args = append(args,
 			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--auto-approve",
 			"--",
-		}
+		)
 		return agentapiProxyBinary, append(args, adapterCommand...)
 
 	case "pi":
@@ -1658,41 +1654,35 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// selected compatible API connection.
 		// https://github.com/svkozak/pi-acp
 		ensurePiEnv(envMap)
-		return agentapiProxyBinary, []string{
-			"acp-server",
-			"--host", agentapiHost,
-			"--port", agentapiPort,
+		args := append([]string{"acp-server"}, listenArgs...)
+		return agentapiProxyBinary, append(args, []string{
 			"--auto-approve",
 			"--",
 			"pi-acp",
-		}
+		}...)
 
 	case "cursor":
 		// Start the acp-server bridge that wraps Cursor Agent CLI's native ACP server via stdio.
 		// https://cursor.com/docs/cli/acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
-		return agentapiProxyBinary, []string{
-			"acp-server",
-			"--host", agentapiHost,
-			"--port", agentapiPort,
+		args := append([]string{"acp-server"}, listenArgs...)
+		return agentapiProxyBinary, append(args, []string{
 			"--auto-approve",
 			"--raw-json-log",
 			"--",
 			"agent", "acp",
-		}
+		}...)
 
 	case "antigravity":
 		// Start the bridge around Antigravity CLI's native ACP v1 server. The
 		// session container is the permission boundary, so both bridge and CLI
 		// approval prompts are disabled for unattended operation.
-		return agentapiProxyBinary, []string{
-			"acp-server",
-			"--host", agentapiHost,
-			"--port", agentapiPort,
+		args := append([]string{"acp-server"}, listenArgs...)
+		return agentapiProxyBinary, append(args, []string{
 			"--auto-approve",
 			"--",
 			"agy", "--dangerously-skip-permissions", "acp",
-		}
+		}...)
 
 	default:
 		// Default: agentapi server wrapping claude
@@ -1862,6 +1852,10 @@ func writePiSettings(settingsPath string, mcpServers map[string]interface{}) err
 // context is cancelled.  maxRetries × 0.5 s = total wait time.
 func waitForAgentAPI(ctx context.Context, agentapiURL string, maxRetries int) error {
 	client := &http.Client{Timeout: 3 * time.Second}
+	return waitForAgentAPIWithClient(ctx, client, agentapiURL, maxRetries)
+}
+
+func waitForAgentAPIWithClient(ctx context.Context, client *http.Client, agentapiURL string, maxRetries int) error {
 	statusURL := agentapiURL + "/status"
 
 	for i := 0; i < maxRetries; i++ {
@@ -2003,7 +1997,7 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 		return
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := localAgentHTTPClient(agentapiURL)
 
 	// Check for existing user messages (idempotency / Pod restart).
 	if count := countUserMessages(client, agentapiURL); count > 0 {
@@ -2070,7 +2064,7 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 // sendACPInitialMessage sends an initial message to an ACP bridge session
 // via POST /rpc (JSON-RPC 2.0 session/prompt).
 func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, waitSec int, restored bool, markerPath string) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := localAgentHTTPClient(agentapiURL)
 
 	// Idempotency: check whether user messages already exist in ACP format.
 	if acpInitialMessageDelivered(client, agentapiURL, message, restored, markerPath) {
@@ -2156,6 +2150,13 @@ func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, wai
 		}
 	}
 	log.Printf("[PROVISIONER] ERROR: Failed to send ACP initial message after 5 attempts")
+}
+
+func localAgentHTTPClient(agentapiURL string) *http.Client {
+	if agentapiURL == "http://unix" {
+		return unixSocketHTTPClient(localAgentSocketPath())
+	}
+	return &http.Client{Timeout: 5 * time.Second}
 }
 
 const initialMessageMarkerPrefix = "initial-message-sent-"
@@ -2537,7 +2538,8 @@ func configureNetworkFilterPolicy(sandbox *sessionsettings.SandboxConfig) {
 		log.Printf("[PROVISIONER] network-filter configure-policy marshal: %v", err)
 		return
 	}
-	resp, err := http.Post("http://127.0.0.1:3129/policy", "application/json", bytes.NewReader(data))
+	client, base := networkFilterControlClient()
+	resp, err := client.Post(base+"/policy", "application/json", bytes.NewReader(data))
 	if err != nil {
 		log.Printf("[PROVISIONER] network-filter configure-policy: %v (no sandbox sidecar?)", err)
 		return
@@ -2551,11 +2553,19 @@ func configureNetworkFilterPolicy(sandbox *sessionsettings.SandboxConfig) {
 // the agent has fully started. The call is best-effort: if there is no sandbox
 // sidecar the connection is refused and the error is silently ignored.
 func enableNetworkFilterPolicy() {
-	resp, err := http.Post("http://127.0.0.1:3129/enable-policy", "", nil)
+	client, base := networkFilterControlClient()
+	resp, err := client.Post(base+"/enable-policy", "", nil)
 	if err != nil {
 		log.Printf("[PROVISIONER] network-filter enable-policy: %v (no sandbox sidecar?)", err)
 		return
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	log.Printf("[PROVISIONER] network-filter policy enabled (status %s)", resp.Status)
+}
+
+func networkFilterControlClient() (*http.Client, string) {
+	if socketPath := strings.TrimSpace(os.Getenv("NETWORK_FILTER_CONTROL_SOCKET")); socketPath != "" {
+		return unixSocketHTTPClient(socketPath), "http://unix"
+	}
+	return http.DefaultClient, "http://127.0.0.1:3129"
 }

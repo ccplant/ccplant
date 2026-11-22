@@ -62,6 +62,12 @@ import (
 // is pulled from the proxy internal API by the session Pod.
 const provisionerPort = 9001
 
+const (
+	agentSocketPath       = "/tmp/ccplant/agent.sock"
+	provisionerSocketPath = "/tmp/ccplant/provisioner.sock"
+	nfaControlSocketPath  = "/run/nfa/control.sock"
+)
+
 const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
 
 var instrumentedHTTPClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
@@ -94,6 +100,13 @@ func localHTTPProbe(path string, port int) corev1.ProbeHandler {
 	return corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{
 		"curl", "--fail", "--silent", "--show-error", "--max-time", "1",
 		fmt.Sprintf("http://127.0.0.1:%d%s", port, path),
+	}}}
+}
+
+func localUnixHTTPProbe(path, socketPath string) corev1.ProbeHandler {
+	return corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{
+		"curl", "--fail", "--silent", "--show-error", "--max-time", "1",
+		"--unix-socket", socketPath, "http://localhost" + path,
 	}}}
 }
 
@@ -4091,16 +4104,8 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		Image:           m.k8sConfig.Image,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		WorkingDir:      workingDir,
-		Ports: []corev1.ContainerPort{
-			{
-				// agent-provisioner port – available immediately on Pod start.
-				Name:          "provisioner",
-				ContainerPort: provisionerPort,
-				Protocol:      corev1.ProtocolTCP,
-			},
-		},
-		Env:     append(append(envVars, sandboxEnvVars...), dindEnvVars...),
-		EnvFrom: envFrom,
+		Env:             append(append(envVars, sandboxEnvVars...), dindEnvVars...),
+		EnvFrom:         envFrom,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    cpuRequest,
@@ -4117,22 +4122,27 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		Command: []string{"/usr/bin/tini"},
 		Args: []string{
 			"-g", "--", "/bin/sh", "-c",
-			"exec " + proxybinary.ShellReference() + " agent-provisioner --host 127.0.0.1",
+			"exec " + proxybinary.ShellReference() + " agent-provisioner --socket " + provisionerSocketPath,
 		},
 		// Liveness only verifies that the provisioner is serving. Readiness stays
 		// false until startup prefetch completes so runners cannot be claimed early.
 		LivenessProbe: &corev1.Probe{
-			ProbeHandler:        localHTTPProbe("/livez", provisionerPort),
+			ProbeHandler:        localUnixHTTPProbe("/livez", provisionerSocketPath),
 			InitialDelaySeconds: 5,
 			PeriodSeconds:       5,
 		},
 		ReadinessProbe: &corev1.Probe{
-			ProbeHandler:        localHTTPProbe("/healthz", provisionerPort),
+			ProbeHandler:        localUnixHTTPProbe("/healthz", provisionerSocketPath),
 			InitialDelaySeconds: 2,
 			PeriodSeconds:       2,
 		},
 	}
 	container.Env = append(container.Env, corev1.EnvVar{Name: "AGENTAPI_BIND_HOST", Value: "127.0.0.1"})
+	container.Env = append(container.Env,
+		corev1.EnvVar{Name: "AGENTAPI_LOCAL_SOCKET", Value: agentSocketPath},
+		corev1.EnvVar{Name: "PROVISIONER_LOCAL_SOCKET", Value: provisionerSocketPath},
+		corev1.EnvVar{Name: "NETWORK_FILTER_CONTROL_SOCKET", Value: nfaControlSocketPath},
+	)
 	var moliSidecar *corev1.Container
 	if m.k8sConfig.MoliEnabled {
 		moliSidecar = m.buildMoliSidecar()
@@ -4161,12 +4171,14 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	// Build volumes
 	volumes := m.buildVolumes(session)
 	if sandboxEnabled {
-		volumes = append(volumes, corev1.Volume{
-			Name: "sandbox-iptables",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		})
+		volumes = append(volumes,
+			corev1.Volume{Name: "sandbox-iptables", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			corev1.Volume{Name: "nfa-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		)
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "nfa-runtime", MountPath: "/run/nfa"})
+		if sandboxSidecar != nil {
+			sandboxSidecar.VolumeMounts = append(sandboxSidecar.VolumeMounts, corev1.VolumeMount{Name: "nfa-runtime", MountPath: "/run/nfa"})
+		}
 	}
 	if m.sciaSessionSidecarEnabled(req) {
 		volumes = append(volumes,
@@ -4920,8 +4932,13 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 		Name:            "network-filter",
 		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"nfa", "proxy", "--deferred-policy"},
-		Env:             filterEnvVars,
+		Command: []string{
+			"nfa", "proxy", "--deferred-policy",
+			"--listen-address", "127.0.0.1:3128",
+			"--control-socket", nfaControlSocketPath,
+			"--control-socket-mode", "438",
+		},
+		Env: filterEnvVars,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:                &rootUID,
 			RunAsNonRoot:             &falseVal,
@@ -4964,7 +4981,7 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 const networkFilterProvisionerDrainSeconds = 25
 
 func networkFilterPreStopScript() string {
-	return fmt.Sprintf(`i=0; while [ "$i" -lt %d ] && nc -z 127.0.0.1 %d; do sleep 1; i=$((i+1)); done`, networkFilterProvisionerDrainSeconds, provisionerPort)
+	return fmt.Sprintf(`i=0; while [ "$i" -lt %d ] && [ -S %s ]; do sleep 1; i=$((i+1)); done`, networkFilterProvisionerDrainSeconds, provisionerSocketPath)
 }
 
 func (m *KubernetesSessionManager) buildMoliSidecar() *corev1.Container {
@@ -5489,7 +5506,8 @@ func (m *KubernetesSessionManager) createServiceWithLabels(ctx context.Context, 
 			Annotations: annotations,
 		},
 		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeClusterIP,
+			Type:      corev1.ServiceTypeClusterIP,
+			ClusterIP: corev1.ClusterIPNone,
 			Selector: map[string]string{
 				"agentapi.proxy/session-id": session.id,
 			},
@@ -7125,15 +7143,7 @@ service:
 
 // buildServicePorts builds the service ports for the session
 func (m *KubernetesSessionManager) buildServicePorts(_ *KubernetesSession) []corev1.ServicePort {
-	ports := []corev1.ServicePort{
-		{
-			// Expose agent-provisioner for local status and sandbox-domain queries.
-			Name:       "provisioner",
-			Port:       provisionerPort,
-			TargetPort: intstr.FromInt(provisionerPort),
-			Protocol:   corev1.ProtocolTCP,
-		},
-	}
+	var ports []corev1.ServicePort
 
 	// Add metrics port if otelcol is enabled
 	if m.k8sConfig.OtelCollectorEnabled {

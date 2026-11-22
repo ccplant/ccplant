@@ -66,6 +66,38 @@ func TestBuildAgentCommandUsesConfiguredLoopbackHost(t *testing.T) {
 	}
 }
 
+func TestBuildAgentCommandUsesUnixSocketWithoutTCPListener(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+	socketPath := filepath.Join(t.TempDir(), "agent.sock")
+
+	_, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "codex-acp"},
+	}, map[string]string{"AGENTAPI_LOCAL_SOCKET": socketPath})
+
+	wantPrefix := []string{"acp-server", "--socket", socketPath}
+	if len(args) < len(wantPrefix) || !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("args prefix = %#v, want %#v", args, wantPrefix)
+	}
+	for _, arg := range args {
+		if arg == "--host" || arg == "--port" {
+			t.Fatalf("Unix socket command unexpectedly contains TCP flag %q: %#v", arg, args)
+		}
+	}
+}
+
+func TestUnixOnlyAgentTypesFailClosedForLegacyRuntime(t *testing.T) {
+	for _, agentType := range []string{"claude-acp", "codex-acp", "pi", "cursor", "antigravity"} {
+		if !usesACPUnixSocket(agentType) {
+			t.Fatalf("usesACPUnixSocket(%q) = false", agentType)
+		}
+	}
+	for _, agentType := range []string{"", "claude", "claude-legacy"} {
+		if usesACPUnixSocket(agentType) {
+			t.Fatalf("usesACPUnixSocket(%q) = true, want fail-closed", agentType)
+		}
+	}
+}
+
 func TestBuildAgentCommandUsesConfiguredProxyBinary(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
 	env := map[string]string{"CCPLANT_BINARY_PATH": "/Applications/agentapi-proxy.app/Contents/MacOS/agentapi-proxy"}

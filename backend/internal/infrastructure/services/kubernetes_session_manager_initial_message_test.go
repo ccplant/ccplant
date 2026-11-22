@@ -253,6 +253,16 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	if _, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, "agentapi-session-"+sessionID+"-svc-webhook-payload", metav1.GetOptions{}); !errors.IsNotFound(err) {
 		t.Fatalf("Webhook payload must not be stored in a Secret, got error %v", err)
 	}
+	service, err := k8sClient.CoreV1().Services(ns.Name).Get(ctx, "agentapi-session-"+sessionID+"-svc", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get metadata service: %v", err)
+	}
+	if service.Spec.ClusterIP != corev1.ClusterIPNone {
+		t.Fatalf("session metadata service clusterIP = %q, want None", service.Spec.ClusterIP)
+	}
+	if len(service.Spec.Ports) != 0 {
+		t.Fatalf("session metadata service exposes ports: %#v", service.Spec.Ports)
+	}
 
 	// Verify pod uses agent-provisioner (NOT initial-message-sender sidecar).
 	workloadName := "agentapi-session-" + sessionID
@@ -282,18 +292,17 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		t.Errorf("Expected main container args to run agent-provisioner, got %v", mainContainer.Args)
 	}
 
-	// Verify provisioner port (9001) is exposed.
-	var hasProvisionerPort bool
+	// Verify neither the agent runtime nor provisioner exposes a TCP port.
 	for _, port := range mainContainer.Ports {
 		if port.ContainerPort == int32(manager.k8sConfig.BasePort) {
 			t.Errorf("agent runtime port %d must not be exposed by the container", port.ContainerPort)
 		}
 		if port.Name == "provisioner" && port.ContainerPort == provisionerPort {
-			hasProvisionerPort = true
+			t.Errorf("provisioner TCP port %d must not be exposed by the container", port.ContainerPort)
 		}
 	}
-	if !hasProvisionerPort {
-		t.Errorf("Expected provisioner port %d in container ports", provisionerPort)
+	if !strings.Contains(mainContainer.Args[len(mainContainer.Args)-1], "--socket /tmp/ccplant/provisioner.sock") {
+		t.Errorf("Expected provisioner Unix socket argument, got %v", mainContainer.Args)
 	}
 
 	// Verify no initial-message-state volume is present.

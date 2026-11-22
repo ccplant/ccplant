@@ -387,7 +387,7 @@ describe('AgentAPIProxyClient ACP message history', () => {
       new Response(JSON.stringify({
         secret_id: 'secret-1',
         expires_at: '2026-09-24T05:00:00Z',
-        local_url: 'http://127.0.0.1:9001/one-time-secrets/secret-1',
+        local_url: 'http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock/one-time-secrets/secret-1',
       }), {
         status: 201,
         headers: { 'Content-Type': 'application/json' },
@@ -416,7 +416,7 @@ describe('AgentAPIProxyClient ACP message history', () => {
       new Response(JSON.stringify({
         secret_id: 'secret/one',
         expires_at: '2026-09-25T05:00:00Z',
-        local_url: 'http://127.0.0.1:9001/one-time-secrets/secret%2Fone',
+        local_url: 'http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock/one-time-secrets/secret%2Fone',
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
