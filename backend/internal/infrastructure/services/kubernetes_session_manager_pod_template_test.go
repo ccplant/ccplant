@@ -77,6 +77,9 @@ spec:
 	assert.Equal(t, []string{"/usr/bin/tini"}, main.Command)
 	assert.Equal(t, []string{"-g", "--", "/bin/sh", "-c", `exec "${CCPLANT_BINARY_PATH:-ccplant}" agent-provisioner --host 127.0.0.1`}, main.Args)
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "AGENTAPI_BIND_HOST", Value: "127.0.0.1"})
+	for _, port := range main.Ports {
+		assert.NotEqual(t, int32(9000), port.ContainerPort, "agent runtime port must remain loopback-only")
+	}
 	require.NotNil(t, main.LivenessProbe)
 	require.NotNil(t, main.LivenessProbe.Exec)
 	assert.Contains(t, main.LivenessProbe.Exec.Command, "http://127.0.0.1:9001/livez")

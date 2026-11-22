@@ -462,6 +462,15 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 	if baseParams.SessionId == "" {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32602, "sessionId is required"))
 	}
+	if route, routeErr := c.directRuntimeRoute(ctx.Request().Context(), baseParams.SessionId); routeErr != nil {
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "session route lookup failed"))
+	} else if route != nil {
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+			return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "permission denied"))
+		}
+		return c.proxyToOutboundBridge(ctx, route, req, baseParams.SessionId)
+	}
 
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(baseParams.SessionId)
@@ -470,6 +479,9 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 	}
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "permission denied"))
+	}
+	if c.runtimeRequiresOutbound() {
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "session outbound runtime connection is unavailable"))
 	}
 
 	addr := session.Addr()
@@ -534,6 +546,27 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 	if sessionId == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Acp-Session-Id header is required"})
 	}
+	if route, routeErr := c.directRuntimeRoute(ctx.Request().Context(), sessionId); routeErr != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "session route lookup failed"})
+	} else if route != nil {
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+			return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
+		}
+		body, err := json.Marshal(req)
+		if err != nil {
+			return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "failed to marshal request"})
+		}
+		resp, err := c.doDirectRuntimeRequest(ctx.Request().Context(), route, http.MethodPost, "/rpc", http.Header{"Content-Type": {"application/json"}}, body)
+		if err != nil {
+			return ctx.JSON(http.StatusBadGateway, map[string]string{"message": err.Error()})
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return ctx.JSON(http.StatusBadGateway, map[string]string{"message": fmt.Sprintf("bridge error (HTTP %d)", resp.StatusCode)})
+		}
+		return ctx.JSON(http.StatusOK, map[string]interface{}{})
+	}
 
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionId)
@@ -542,6 +575,9 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 	}
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
+	}
+	if c.runtimeRequiresOutbound() {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session outbound runtime connection is unavailable"})
 	}
 	addr := session.Addr()
 	if addr == "" {
@@ -565,6 +601,69 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 	return ctx.JSON(http.StatusOK, map[string]interface{}{})
 }
 
+func (c *ACPController) directRuntimeRoute(ctx context.Context, sessionID string) (*portrepos.SessionRoute, error) {
+	if c.sessionRouteRepo == nil {
+		return nil, nil
+	}
+	route, err := c.sessionRouteRepo.Get(ctx, sessionID)
+	if err != nil || route == nil || route.Transport != portrepos.SessionRouteTransportDirectRuntime {
+		return nil, err
+	}
+	return route, nil
+}
+
+func (c *ACPController) doDirectRuntimeRequest(ctx context.Context, route *portrepos.SessionRoute, method, path string, headers http.Header, body []byte) (*http.Response, error) {
+	if c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx, route.SessionID) {
+		return nil, fmt.Errorf("session runtime connection is unavailable")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://session.local"+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header = headers.Clone()
+	return c.esmControlTunnel.Do(ctx, route.SessionID, route.SessionID, route.RemoteSessionID, req)
+}
+
+func (c *ACPController) proxyToOutboundBridge(ctx echo.Context, route *portrepos.SessionRoute, req acpRequest, proxySessionID string) error {
+	infoResp, err := c.doDirectRuntimeRequest(ctx.Request().Context(), route, http.MethodGet, "/session", make(http.Header), nil)
+	if err != nil {
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, err.Error()))
+	}
+	defer func() { _ = infoResp.Body.Close() }()
+	var info struct {
+		SessionID string `json:"sessionId"`
+	}
+	if infoResp.StatusCode/100 != 2 || json.NewDecoder(infoResp.Body).Decode(&info) != nil || info.SessionID == "" {
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to resolve bridge session ID"))
+	}
+	var params map[string]json.RawMessage
+	if json.Unmarshal(req.Params, &params) == nil {
+		params["sessionId"], _ = json.Marshal(info.SessionID)
+		req.Params, _ = json.Marshal(params)
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to marshal request"))
+	}
+	resp, err := c.doDirectRuntimeRequest(ctx.Request().Context(), route, http.MethodPost, "/rpc", http.Header{"Content-Type": {"application/json"}}, body)
+	if err != nil {
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode/100 != 2 {
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, fmt.Sprintf("bridge error (HTTP %d)", resp.StatusCode)))
+	}
+	log.Printf("[ACP] %s routed over outbound runtime (proxySessionId=%s bridgeSessionId=%s)", req.Method, proxySessionID, info.SessionID)
+	if req.Method == "session/set_config_option" {
+		var rpcResp acpResponse
+		if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+			return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to decode bridge response"))
+		}
+		return ctx.JSON(http.StatusOK, rpcResp)
+	}
+	return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, struct{}{}))
+}
+
 // ----------------------------------------------------------------------------
 // HandleSessionSSE – GET /acp
 // ----------------------------------------------------------------------------
@@ -585,6 +684,19 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 	}
 
 	authzCtx := auth.GetAuthorizationContext(ctx)
+	if c.sessionRouteRepo != nil {
+		route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionId)
+		if err != nil {
+			log.Printf("[ACP] HandleSessionSSE: route lookup failed (sessionId=%s): %v", sessionId, err)
+			return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "session route lookup failed"})
+		}
+		if route != nil && route.Transport == portrepos.SessionRouteTransportDirectRuntime {
+			if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+				return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
+			}
+			return c.handleRemoteSessionSSE(ctx, route)
+		}
+	}
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionId)
 	if session == nil {
 		if c.sessionRouteRepo != nil {
@@ -606,6 +718,9 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		log.Printf("[ACP] HandleSessionSSE: permission denied (sessionId=%s)", sessionId)
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
+	}
+	if c.runtimeRequiresOutbound() {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session outbound runtime connection is unavailable"})
 	}
 	addr := session.Addr()
 	if addr == "" {
@@ -640,6 +755,11 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 	// the bridge replays history from the correct position on reconnect.
 	c.streamBridgeSSE(ctx.Request().Context(), addr, w, flusher, hasFlusher, lastEventID)
 	return nil
+}
+
+func (c *ACPController) runtimeRequiresOutbound() bool {
+	manager, ok := c.sessionManagerProvider.GetSessionManager().(interface{ RuntimeTrafficRequiresOutbound() bool })
+	return ok && manager.RuntimeTrafficRequiresOutbound()
 }
 
 func (c *ACPController) handleRemoteSessionSSE(ctx echo.Context, route *portrepos.SessionRoute) error {

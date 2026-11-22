@@ -285,6 +285,9 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	// Verify provisioner port (9001) is exposed.
 	var hasProvisionerPort bool
 	for _, port := range mainContainer.Ports {
+		if port.ContainerPort == int32(manager.k8sConfig.BasePort) {
+			t.Errorf("agent runtime port %d must not be exposed by the container", port.ContainerPort)
+		}
 		if port.Name == "provisioner" && port.ContainerPort == provisionerPort {
 			hasProvisionerPort = true
 		}

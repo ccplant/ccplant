@@ -1,7 +1,6 @@
 package services
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -83,17 +82,7 @@ const (
 // so another replica cannot start a duplicate while the first is still waiting.
 const sessionSuspendOwnershipTTL = 35 * time.Minute
 
-const (
-	podRuntimeStatusTimeout      = 3 * time.Second
-	podRuntimeStatusUnknownGrace = 2 * time.Minute
-)
-
-var defaultPodStatusHTTPClient = &http.Client{
-	Timeout: podRuntimeStatusTimeout,
-	CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
-}
+const podRuntimeStatusUnknownGrace = 2 * time.Minute
 
 var ErrInvalidRunnerToken = stderrors.New("invalid runner token")
 
@@ -230,12 +219,17 @@ type KubernetesSessionManager struct {
 
 	sessionAllocationNotifier coreallocation.Notifier
 	sessionControlStore       coresessioncontrol.Store
+	sessionRouteRepo          portrepos.SessionRouteRepository
 	runnerParentURL           string
 	runnerManagerID           string
 	runnerManagerToken        string
 	runnerDefaultPool         string
 	inheritedRuntimeProfile   *sessionsettings.RuntimeProfile
 }
+
+// RuntimeTrafficRequiresOutbound prevents controllers from falling back to a
+// Kubernetes Service address when no reverse-RPC connection is available.
+func (*KubernetesSessionManager) RuntimeTrafficRequiresOutbound() bool { return true }
 
 // SetCodexAuthNotifier configures user notification delivery for expired Codex
 // credentials. Delivery is deduplicated per user for one hour.
@@ -331,6 +325,15 @@ func (m *KubernetesSessionManager) SetSessionControlStore(store coresessioncontr
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.sessionControlStore = store
+}
+
+// SetSessionRouteRepository enables the outbound direct-runtime transport for
+// sessions allocated by the built-in manager. The Session Pod connects back to
+// the parent; the parent never dials the Pod's agent port.
+func (m *KubernetesSessionManager) SetSessionRouteRepository(repo portrepos.SessionRouteRepository) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.sessionRouteRepo = repo
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -588,7 +591,6 @@ func (m *KubernetesSessionManager) RefreshRunnerSessionStatus(ctx context.Contex
 			continue
 		}
 		session.SetStatus("starting")
-		m.startAgentAPIStatusWatcher(context.Background(), session)
 		return nil
 	}
 	return nil
@@ -661,36 +663,10 @@ func (m *KubernetesSessionManager) suspendIdleSession(ctx context.Context, sessi
 }
 
 func (m *KubernetesSessionManager) podReportsRunning(ctx context.Context, session *KubernetesSession) (running bool, confirmed bool) {
-	remembered := session.Status() == "running"
-	ready, err := m.isSessionWorkloadReady(ctx, session)
-	if err != nil || !ready {
-		return remembered, true
-	}
-	statusCtx, cancel := context.WithTimeout(ctx, podRuntimeStatusTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(statusCtx, http.MethodGet, fmt.Sprintf("http://%s/status", session.Addr()), nil)
-	if err != nil {
-		return remembered, false
-	}
-	client := m.podStatusHTTPClient
-	if client == nil {
-		client = defaultPodStatusHTTPClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return remembered, false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return remembered, false
-	}
-	var body struct {
-		Status string `json:"status"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body); err != nil || body.Status == "" {
-		return remembered, false
-	}
-	return body.Status == "running", true
+	// The runtime pushes status over its outbound direct-runtime connection.
+	// The manager must never probe the loopback-only agent listener through a
+	// Kubernetes Service.
+	return session.Status() == "running", true
 }
 
 func idleSuspendStillDue(running bool, svc *corev1.Service, requireExpiredDeadline bool) error {
@@ -2572,8 +2548,7 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 		log.Printf("[K8S_SESSION] Failed to schedule initial suspend for stock session %s: %v", session.id, err)
 	}
 
-	// Continue watching deployment health and agentapi runtime status.
-	m.startAgentAPIStatusWatcher(ctx, session)
+	// Continue watching deployment health. Runtime status is pushed outbound.
 	m.runDeploymentStatusWatcher(ctx, session)
 }
 
@@ -3692,169 +3667,25 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 	if status != "active" && status != "starting" && status != "running" {
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
-	if store := m.connectedSessionControlStore(ctx, id); store != nil {
-		telemetry.SetAttributes(ctx, telemetry.String("session.message_transport", "control_store"))
-		payload, err := json.Marshal(map[string]string{"content": message})
-		if err != nil {
-			return fmt.Errorf("marshal session control prompt: %w", err)
-		}
-		_, err = telemetry.Operation(ctx, "sessionmanager.SendMessage.EnqueueControlPrompt", func(operationCtx context.Context) (string, error) {
-			return store.EnqueueCommand(operationCtx, id, coresessioncontrol.Command{ID: uuid.NewString(), Type: "prompt", Payload: payload, CreatedAt: time.Now().UTC()})
-		}, telemetry.String("session.id", id))
-		if err != nil {
-			return fmt.Errorf("enqueue session control prompt: %w", err)
-		}
-		return nil
+	store := m.connectedSessionControlStore(ctx, id)
+	if store == nil {
+		return fmt.Errorf("session outbound control connection is unavailable")
 	}
-	telemetry.SetAttributes(ctx, telemetry.String("session.message_transport", "pod_http"))
-
-	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
-	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
-		serviceName,
-		m.namespace,
-		m.k8sConfig.BasePort,
-	)
-
-	agentType := ""
-	if ks, ok := session.(*KubernetesSession); ok {
-		if req := ks.Request(); req != nil {
-			agentType = req.AgentType
-		}
+	telemetry.SetAttributes(ctx, telemetry.String("session.message_transport", "control_store"))
+	payload, err := json.Marshal(map[string]string{"content": message})
+	if err != nil {
+		return fmt.Errorf("marshal session control prompt: %w", err)
 	}
-	if agentType == "" {
-		resolvedAgentType, _ := telemetry.Operation(ctx, "sessionmanager.SendMessage.ResolveAgentType", func(operationCtx context.Context) (string, error) {
-			return m.getSessionAgentTypeFromService(operationCtx, serviceName), nil
-		}, telemetry.String("session.id", id), telemetry.String("k8s.service.name", serviceName))
-		agentType = resolvedAgentType
+	_, err = telemetry.Operation(ctx, "sessionmanager.SendMessage.EnqueueControlPrompt", func(operationCtx context.Context) (string, error) {
+		return store.EnqueueCommand(operationCtx, id, coresessioncontrol.Command{ID: uuid.NewString(), Type: "prompt", Payload: payload, CreatedAt: time.Now().UTC()})
+	}, telemetry.String("session.id", id))
+	if err != nil {
+		return fmt.Errorf("enqueue session control prompt: %w", err)
 	}
-	telemetry.SetAttributes(ctx, telemetry.String("session.agent_type", agentType))
-
-	var jsonData []byte
-	var postURL string
-	if isACPAgentType(agentType) {
-		// Fetch the ACP session ID from GET /session.
-		acpSessionID, err := telemetry.Operation(ctx, "sessionmanager.SendMessage.GetACPSession", func(operationCtx context.Context) (string, error) {
-			return m.getACPSessionIDFromPod(operationCtx, baseURL)
-		}, telemetry.String("session.id", id))
-		if err != nil {
-			return fmt.Errorf("failed to get ACP session ID: %w", err)
-		}
-		type contentBlock struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		type promptParams struct {
-			SessionId string         `json:"sessionId"`
-			Prompt    []contentBlock `json:"prompt"`
-		}
-		type rpcRequest struct {
-			JSONRPC string       `json:"jsonrpc"`
-			ID      int          `json:"id"`
-			Method  string       `json:"method"`
-			Params  promptParams `json:"params"`
-		}
-		payload := rpcRequest{
-			JSONRPC: "2.0",
-			ID:      1,
-			Method:  "session/prompt",
-			Params: promptParams{
-				SessionId: acpSessionID,
-				Prompt:    []contentBlock{{Type: "text", Text: message}},
-			},
-		}
-		jsonData, err = json.Marshal(payload)
-		if err != nil {
-			return fmt.Errorf("failed to marshal ACP payload: %w", err)
-		}
-		postURL = baseURL + "/rpc"
-	} else {
-		payload := map[string]interface{}{
-			"content": message,
-			"type":    "user",
-		}
-		var err error
-		jsonData, err = json.Marshal(payload)
-		if err != nil {
-			return fmt.Errorf("failed to marshal message payload: %w", err)
-		}
-		postURL = baseURL + "/message"
-	}
-
-	var lastErr error
-	for i := 0; i < 3; i++ {
-		req, err := http.NewRequestWithContext(ctx, "POST", postURL, bytes.NewBuffer(jsonData))
-		if err != nil {
-			return fmt.Errorf("failed to create HTTP request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := telemetry.Operation(ctx, "sessionmanager.SendMessage.PostToSession", func(operationCtx context.Context) (*http.Response, error) {
-			resp, err := instrumentedHTTPClient.Do(req.WithContext(operationCtx))
-			if resp != nil {
-				telemetry.SetAttributes(operationCtx, telemetry.Int64("http.response.status_code", int64(resp.StatusCode)))
-			}
-			return resp, err
-		},
-			telemetry.String("session.id", id),
-			telemetry.String("session.agent_type", agentType),
-			telemetry.Int64("session.send_attempt", int64(i+1)),
-		)
-		if err == nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted) {
-			_ = resp.Body.Close()
-			now := time.Now()
-			if ks, ok := session.(*KubernetesSession); ok {
-				ks.SetLastMessageAt(now)
-			}
-			svcName := fmt.Sprintf("agentapi-session-%s-svc", id)
-			if patchErr := telemetry.OperationErr(context.WithoutCancel(ctx), "sessionmanager.SendMessage.PatchLastMessageAt", func(operationCtx context.Context) error {
-				return m.patchLastMessageAt(operationCtx, svcName, now)
-			}, telemetry.String("session.id", id), telemetry.String("k8s.service.name", svcName)); patchErr != nil {
-				log.Printf("[K8S_SESSION] Failed to update last-message-at for session %s: %v", id, patchErr)
-			}
-			log.Printf("[K8S_SESSION] Successfully sent message to session %s (agentType=%q)", id, agentType)
-			return nil
-		}
-		if err != nil {
-			lastErr = err
-		} else {
-			lastErr = fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-			_ = resp.Body.Close()
-		}
-		if i < 2 {
-			time.Sleep(1 * time.Second)
-		}
-	}
-
-	return fmt.Errorf("failed to send message after 3 retries: %w", lastErr)
+	return nil
 }
 
-// getACPSessionIDFromPod fetches the ACP session ID from the pod's GET /session endpoint.
-func (m *KubernetesSessionManager) getACPSessionIDFromPod(ctx context.Context, baseURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/session", nil)
-	if err != nil {
-		return "", err
-	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var body struct {
-		SessionId string `json:"sessionId"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", err
-	}
-	if body.SessionId == "" {
-		return "", fmt.Errorf("empty sessionId from /session")
-	}
-	return body.SessionId, nil
-}
-
-// StopAgent sends a stop/cancel signal to the running agent without deleting the session.
-// ACP-backed sessions use JSON-RPC session/cancel; agentapi-compatible sessions use
-// the POST /action stop_agent endpoint.
+// StopAgent queues a cancellation for the session's outbound control client.
 func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) error {
 	// Get session
 	session := m.GetSession(id)
@@ -3867,78 +3698,14 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 	if status != "active" && status != "starting" && status != "running" {
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
-	if store := m.connectedSessionControlStore(ctx, id); store != nil {
-		_, err := store.EnqueueCommand(ctx, id, coresessioncontrol.Command{ID: uuid.NewString(), Type: "cancel", CreatedAt: time.Now().UTC()})
-		if err != nil {
-			return fmt.Errorf("enqueue session control cancel: %w", err)
-		}
-		return nil
+	store := m.connectedSessionControlStore(ctx, id)
+	if store == nil {
+		return fmt.Errorf("session outbound control connection is unavailable")
 	}
-
-	// Build service name and endpoint URL for the agentapi /action endpoint
-	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
-	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/action",
-		serviceName,
-		m.namespace,
-		m.k8sConfig.BasePort,
-	)
-
-	agentType := ""
-	if ks, ok := session.(*KubernetesSession); ok {
-		if req := ks.Request(); req != nil {
-			agentType = req.AgentType
-		}
-	}
-	if agentType == "" {
-		agentType = m.getSessionAgentTypeFromService(ctx, serviceName)
-	}
-
-	var payload interface{}
-	if isACPAgentType(agentType) {
-		url = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/rpc",
-			serviceName,
-			m.namespace,
-			m.k8sConfig.BasePort,
-		)
-		payload = map[string]interface{}{
-			"jsonrpc": "2.0",
-			"method":  "session/cancel",
-			"params": map[string]string{
-				"sessionId": id,
-			},
-		}
-	} else {
-		payload = map[string]interface{}{
-			"type": "stop_agent",
-		}
-	}
-
-	jsonData, err := json.Marshal(payload)
+	_, err := store.EnqueueCommand(ctx, id, coresessioncontrol.Command{ID: uuid.NewString(), Type: "cancel", CreatedAt: time.Now().UTC()})
 	if err != nil {
-		return fmt.Errorf("failed to marshal stop_agent payload: %w", err)
+		return fmt.Errorf("enqueue session control cancel: %w", err)
 	}
-
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	// Send request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send stop_agent signal: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code from stop_agent signal: %d", resp.StatusCode)
-	}
-
-	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s (agentType=%q)", id, agentType)
 	return nil
 }
 
@@ -3961,7 +3728,7 @@ func (m *KubernetesSessionManager) connectedSessionControlStore(ctx context.Cont
 		return connected, err
 	}, telemetry.String("session.id", sessionID))
 	if err != nil {
-		log.Printf("[SESSION_CONTROL] Failed to check connection for session %s; using direct transport: %v", sessionID, err)
+		log.Printf("[SESSION_CONTROL] Failed to check outbound connection for session %s: %v", sessionID, err)
 		return nil
 	}
 	if !connected {
@@ -4073,17 +3840,6 @@ func restoreAgentTypeFromService(svc *corev1.Service) string {
 	return svc.Labels["agentapi.proxy/agent-type"]
 }
 
-func (m *KubernetesSessionManager) getSessionAgentTypeFromService(ctx context.Context, serviceName string) string {
-	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			log.Printf("[K8S_SESSION] Failed to get service %s for agent type fallback: %v", serviceName, err)
-		}
-		return ""
-	}
-	return restoreAgentTypeFromService(svc)
-}
-
 // GetMessages retrieves conversation history from a session
 func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	return telemetry.Operation(ctx, "services.KubernetesSessionManager.GetMessages", func(ctx context.Context) ([]portrepos.Message, error) {
@@ -4092,49 +3848,10 @@ func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) (
 }
 
 func (m *KubernetesSessionManager) getMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
-	// Get session
-	session := m.GetSession(id)
-	if session == nil {
+	if m.GetSession(id) == nil {
 		return nil, fmt.Errorf("session not found: %s", id)
 	}
-
-	// Build service name and endpoint URL
-	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
-	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/messages",
-		serviceName,
-		m.namespace,
-		m.k8sConfig.BasePort,
-	)
-
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-
-	// Send request
-	resp, err := instrumentedHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get messages: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	// Parse response
-	var response struct {
-		Messages []portrepos.Message `json:"messages"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Successfully retrieved %d messages from session %s", len(response.Messages), id)
-	return response.Messages, nil
+	return nil, fmt.Errorf("session history is available only through the outbound runtime connection")
 }
 
 // createPVC creates a PersistentVolumeClaim for the session
@@ -4375,12 +4092,6 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		WorkingDir:      workingDir,
 		Ports: []corev1.ContainerPort{
-			{
-				// agentapi port – available only after provisioning completes.
-				Name:          "http",
-				ContainerPort: int32(m.k8sConfig.BasePort),
-				Protocol:      corev1.ProtocolTCP,
-			},
 			{
 				// agent-provisioner port – available immediately on Pod start.
 				Name:          "provisioner",
@@ -5866,8 +5577,7 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 					log.Printf("[K8S_SESSION] Failed to schedule initial suspend for session %s: %v", session.id, err)
 				}
 
-				// Continue watching deployment health and agentapi runtime status.
-				m.startAgentAPIStatusWatcher(ctx, session)
+				// Continue watching deployment health. Runtime status is pushed outbound.
 				m.runDeploymentStatusWatcher(ctx, session)
 				return
 			}
@@ -5933,20 +5643,17 @@ func (m *KubernetesSessionManager) runDeploymentStatusWatcher(ctx context.Contex
 	m.watchDeploymentStatus(ctx, session)
 }
 
-func (m *KubernetesSessionManager) startAgentAPIStatusWatcher(ctx context.Context, session *KubernetesSession) bool {
-	if !session.agentStatusWatcherActive.CompareAndSwap(false, true) {
-		return false
-	}
-	go func() {
-		defer session.agentStatusWatcherActive.Store(false)
-		m.watchAgentAPIStatus(ctx, session)
-	}()
-	return true
+func (m *KubernetesSessionManager) startWorkloadStatusWatchers(ctx context.Context, session *KubernetesSession) {
+	m.startDeploymentStatusWatcher(ctx, session)
 }
 
-func (m *KubernetesSessionManager) startWorkloadStatusWatchers(ctx context.Context, session *KubernetesSession) {
-	m.startAgentAPIStatusWatcher(ctx, session)
-	m.startDeploymentStatusWatcher(ctx, session)
+func statusWatcherTerminal(status string) bool {
+	switch status {
+	case "stopped", "suspended", "error", "timeout":
+		return true
+	default:
+		return false
+	}
 }
 
 func statusCanRecoverFromWorkloadReadiness(status string) bool {
@@ -6378,24 +6085,6 @@ func ensurePiSettingsEnv(env map[string]string) {
 }
 
 // sanitizeLabelKey sanitizes a string to be used as a Kubernetes label key
-// patchLastMessageAt applies a MergePatch to update the last-message-at annotation.
-func (m *KubernetesSessionManager) patchLastMessageAt(ctx context.Context, svcName string, t time.Time) error {
-	patch := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"annotations": map[string]string{
-				"agentapi.proxy/last-message-at": t.UTC().Format(time.RFC3339),
-			},
-		},
-	}
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("failed to marshal patch: %w", err)
-	}
-	_, err = m.client.CoreV1().Services(m.namespace).Patch(
-		ctx, svcName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
-	return err
-}
-
 func sanitizeLabelKey(s string) string {
 	// Label keys must be 63 characters or less
 	// Must start and end with alphanumeric character
@@ -6806,172 +6495,6 @@ func (m *KubernetesSessionManager) SubscribeStatusEvents() (<-chan SessionStatus
 		}
 	}
 	return ch, cancel
-}
-
-// watchAgentAPIStatus subscribes to the agentapi backend's /events SSE stream for the
-// given session. Whenever the runtime status changes (stable ↔ running), SetStatus is
-// called so the change propagates to proxy-wide SSE subscribers.
-// The goroutine exits when ctx is cancelled.
-func (m *KubernetesSessionManager) watchAgentAPIStatus(ctx context.Context, session *KubernetesSession) {
-	backoff := 2 * time.Second
-	const maxBackoff = 30 * time.Second
-	url := fmt.Sprintf("http://%s/events", session.Addr())
-
-	for {
-		if statusWatcherTerminal(session.Status()) {
-			log.Printf("[AGENT_STATUS] Session %s status is %s; stopping /events watcher", session.id, session.Status())
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		if err := m.streamAgentAPIEvents(ctx, session, url); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			log.Printf("[AGENT_STATUS] Session %s: /events stream error: %v; retrying in %s", session.id, err, backoff)
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff):
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-		}
-	}
-}
-
-func statusWatcherTerminal(status string) bool {
-	switch status {
-	case "stopped", "suspended", "error", "timeout":
-		return true
-	default:
-		return false
-	}
-}
-
-// streamAgentAPIEvents connects to the agentapi backend's /events SSE endpoint and
-// maps status_change events to proxy-level session status changes.
-// Returns when the stream ends or the context is cancelled.
-func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, session *KubernetesSession, url string) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d from /events", resp.StatusCode)
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	var eventType string
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-
-		line := scanner.Text()
-		if line == "" {
-			eventType = ""
-			continue
-		}
-		if strings.HasPrefix(line, "event: ") {
-			eventType = strings.TrimPrefix(line, "event: ")
-			continue
-		}
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-			switch eventType {
-			case "status_change":
-				var body struct {
-					Status string `json:"status"`
-				}
-				if jsonErr := json.Unmarshal([]byte(data), &body); jsonErr != nil {
-					continue
-				}
-				epoch := session.agentRuntimeStatusEpoch.Add(1)
-				if body.Status == "stable" {
-					herdrRunning, _ := kubernetesSessionHerdrRunning(ctx, session)
-					if herdrRunning {
-						applyAgentRuntimeStatus(session, "running")
-						go m.waitForKubernetesSessionHerdr(ctx, session, epoch)
-						continue
-					}
-				}
-				applyAgentRuntimeStatus(session, body.Status)
-				if body.Status == "stable" && session.Status() != "stopped" {
-					if scheduleErr := m.ScheduleSessionSuspend(ctx, session.ID()); scheduleErr != nil {
-						log.Printf("[AGENT_STATUS] Failed to schedule suspend for stable session %s: %v", session.id, scheduleErr)
-					}
-				}
-			case "message_update":
-				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
-				m.broadcastMessageUpdate(session.id)
-			}
-		}
-	}
-	return scanner.Err()
-}
-
-func (m *KubernetesSessionManager) waitForKubernetesSessionHerdr(ctx context.Context, session *KubernetesSession, epoch uint64) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		if session.agentRuntimeStatusEpoch.Load() != epoch || statusWatcherTerminal(session.Status()) {
-			return
-		}
-		running, ok := kubernetesSessionHerdrRunning(ctx, session)
-		if !ok || running {
-			continue
-		}
-		if session.agentRuntimeStatusEpoch.Load() != epoch {
-			return
-		}
-		applyAgentRuntimeStatus(session, "stable")
-		if session.Status() != "stopped" {
-			if err := m.ScheduleSessionSuspend(ctx, session.ID()); err != nil {
-				log.Printf("[AGENT_STATUS] Failed to schedule suspend after herdr completion for stable session %s: %v", session.id, err)
-			}
-		}
-		return
-	}
-}
-
-func kubernetesSessionHerdrRunning(ctx context.Context, session *KubernetesSession) (bool, bool) {
-	if session == nil {
-		return false, false
-	}
-	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{"all":false}}`)
-	requestCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
-	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, fmt.Sprintf("http://%s:%d/herdr/rpc", session.ServiceDNS(), ProvisionerPort), body)
-	if err != nil {
-		return false, false
-	}
-	req.Header.Set("Content-Type", "application/json")
-	return herdrResponseHasRunningTerminal(defaultPodStatusHTTPClient, req)
 }
 
 func herdrResponseHasRunningTerminal(client *http.Client, req *http.Request) (bool, bool) {
@@ -7601,14 +7124,8 @@ service:
 }
 
 // buildServicePorts builds the service ports for the session
-func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession) []corev1.ServicePort {
+func (m *KubernetesSessionManager) buildServicePorts(_ *KubernetesSession) []corev1.ServicePort {
 	ports := []corev1.ServicePort{
-		{
-			Name:       "http",
-			Port:       int32(session.ServicePort()),
-			TargetPort: intstr.FromInt(m.k8sConfig.BasePort),
-			Protocol:   corev1.ProtocolTCP,
-		},
 		{
 			// Expose agent-provisioner for local status and sandbox-domain queries.
 			Name:       "provisioner",

@@ -813,6 +813,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Otherwise /search keeps synthesizing an active session from a route whose
 	// workload no longer exists.
 	if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok && sessionRouteRepo != nil {
+		k8sManager.SetSessionRouteRepository(sessionRouteRepo)
 		k8sManager.AddSessionDeletedHandler(func(ctx context.Context, sess entities.Session) {
 			cleanupLocalSessionRoutes(ctx, sessionRouteRepo, sess.ID())
 		})
