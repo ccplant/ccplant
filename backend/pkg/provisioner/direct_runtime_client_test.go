@@ -4,8 +4,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -137,13 +139,35 @@ func TestDirectRuntimeLocalStatusDoesNotDowngradeToReadyWhenAgentUnavailable(t *
 }
 
 func TestDirectRuntimeWorkerSeparatesAgentAndProvisionerPorts(t *testing.T) {
-	t.Setenv("AGENTAPI_PORT", "19000")
 	worker := newDirectRuntimeWorker(nil, &sessionsettings.ParentRuntimeConfig{}, "runner-a", 19001)
-	if got, want := worker.agentURL, "http://127.0.0.1:19000"; got != want {
+	if got, want := worker.agentURL, "http://agent.local"; got != want {
 		t.Fatalf("agentURL = %q, want %q", got, want)
 	}
 	if got, want := worker.provisionerURL, "http://127.0.0.1:19001"; got != want {
 		t.Fatalf("provisionerURL = %q, want %q", got, want)
+	}
+}
+
+func TestDirectRuntimeWorkerConnectsToAgentUnixSocket(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "agent.sock")
+	t.Setenv("AGENTAPI_LOCAL_SOCKET", socketPath)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "stable"})
+	})}
+	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+
+	worker := newDirectRuntimeWorker(nil, &sessionsettings.ParentRuntimeConfig{}, "runner-a", 19001)
+	if got := worker.readLocalStatus(context.Background(), worker.agentURL+"/status", false); got != "stable" {
+		t.Fatalf("status = %q, want stable", got)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,6 +43,20 @@ var directRuntimeReadyPollInterval = time.Second
 
 const directRuntimeStatusRefreshInterval = 5 * time.Second
 
+const directRuntimeAgentHost = "agent.local"
+
+type directRuntimeTransport struct {
+	upstream http.RoundTripper
+	agent    http.RoundTripper
+}
+
+func (t *directRuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Host == directRuntimeAgentHost {
+		return t.agent.RoundTrip(req)
+	}
+	return t.upstream.RoundTrip(req)
+}
+
 func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cfg *sessionsettings.ParentRuntimeConfig, instanceID string, provisionerPort int) {
 	if cfg == nil || !cfg.Enabled || cfg.Endpoint == "" || cfg.SessionID == "" || cfg.Token == "" || cfg.Generation <= 0 {
 		return
@@ -58,14 +73,14 @@ func newDirectRuntimeWorker(transport http.RoundTripper, cfg *sessionsettings.Pa
 	if provisionerPort <= 0 {
 		provisionerPort = 9001
 	}
-	agentPort := os.Getenv("AGENTAPI_PORT")
-	if agentPort == "" {
-		agentPort = "9000"
-	}
+	agentSocket := localAgentSocketPath()
+	agentTransport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", agentSocket)
+	}}
 	return &directRuntimeWorker{
 		cfg:            cfg,
-		client:         &http.Client{Transport: transport},
-		agentURL:       "http://127.0.0.1:" + agentPort,
+		client:         &http.Client{Transport: &directRuntimeTransport{upstream: transport, agent: agentTransport}},
+		agentURL:       "http://" + directRuntimeAgentHost,
 		provisionerURL: fmt.Sprintf("http://127.0.0.1:%d", provisionerPort),
 		instanceID:     instanceID,
 	}
