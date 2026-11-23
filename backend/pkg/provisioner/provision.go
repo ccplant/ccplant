@@ -52,6 +52,8 @@ var antigravityMCPConfigPath = filepath.Join(runtimeHome, ".gemini", "config", "
 const sessionRestoreMarkerPrefix = "agentapi-session-restore-complete-"
 const sessionProvisionAbortedMarkerPrefix = "agentapi-session-provision-aborted-"
 
+const mountedSettingsSanitizeTimeout = 2 * time.Minute
+
 func sessionRestoreMarkerPath(sessionID string) string {
 	return filepath.Join(os.TempDir(), sessionRestoreMarkerPrefix+sessionID)
 }
@@ -286,6 +288,15 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// A delayed Pod whose allocation was requeued must never run the old prompt.
 	if err := confirmRuntimeStart(ctx, settings.ParentRuntime); err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("runtime start rejected: %v", err))
+		return
+	}
+
+	// A claimed stock Pod may still expose the previous revision of its
+	// projected Secret briefly after the manager updates settings.yaml. Never
+	// start an agent while that stale file still contains the bootstrap key.
+	s.setPhase("provision:wait-mounted-settings")
+	if err := waitForMountedSettingsSanitized(ctx, s.settingsFile, mountedSettingsSanitizeTimeout); err != nil {
+		s.setStatus(StatusError, "mounted session settings were not sanitized: "+err.Error())
 		return
 	}
 
@@ -694,6 +705,37 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func waitForMountedSettingsSanitized(ctx context.Context, path string, timeout time.Duration) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err == nil {
+			mounted, parseErr := sessionsettings.LoadSettingsFromBytes(data)
+			if parseErr == nil {
+				if _, present := mounted.Env["AGENTAPI_KEY"]; !present {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("timed out waiting for %s to drop AGENTAPI_KEY", path)
+		case <-ticker.C:
+		}
+	}
 }
 
 func usesACPUnixSocket(agentType string) bool {
