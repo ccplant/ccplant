@@ -281,7 +281,7 @@ type SciaConfig struct {
 // DefaultKubernetesSessionImage is the immutable agent-assets revision used by
 // Kubernetes session Pods. Application releases supply the ccplant CLI from
 // the session-manager image independently.
-const DefaultKubernetesSessionImage = "ghcr.io/ccplant/ccplant-agent:assets-3c5b315d598484015f494ab2a659b287"
+const DefaultKubernetesSessionImage = "ghcr.io/ccplant/ccplant-agent:assets-a906c04a3e805ada770a51c2e4b50670"
 
 const DefaultMoliImage = "ghcr.io/ccplant/ccplant-browser:moli-1.1.24-r1"
 

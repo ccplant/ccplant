@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
@@ -38,6 +39,27 @@ func TestKubernetesSessionRouteRepositoryLabelsRoutesWithOwningSessionID(t *test
 	if got := external.Labels["agentapi.proxy/session-id"]; got != "public-external" {
 		t.Fatalf("external route session-id label = %q, want public-external", got)
 	}
+}
+
+func TestKubernetesSessionRouteRepositoryPersistsAnnotations(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	writer := NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	want := entities.SessionAnnotations{
+		PRURL: "https://example.test/pull/1", Description: "remote work", RunningTask: "testing",
+	}
+	if err := writer.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a", Annotations: want}); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := NewKubernetesSessionRouteRepository(client, "test")
+	route, err := reader.Get(ctx, "session-a")
+	require.NoError(t, err)
+	require.Equal(t, want, route.Annotations)
+	routes, err := reader.List(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, routes, 1)
+	require.Equal(t, want, routes[0].Annotations)
 }
 
 func TestKubernetesSessionRouteRepositorySaveUpdatesExistingSecret(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
@@ -30,24 +31,25 @@ const (
 )
 
 type routeJSON struct {
-	SessionID         string            `json:"session_id"`
-	RemoteSessionID   string            `json:"remote_session_id"`
-	ManagerID         string            `json:"manager_id,omitempty"`
-	HMACSecret        string            `json:"hmac_secret"`
-	Transport         string            `json:"transport,omitempty"`
-	RuntimeTokenHash  string            `json:"runtime_token_hash,omitempty"`
-	Generation        int64             `json:"generation,omitempty"`
-	UserID            string            `json:"user_id,omitempty"`
-	Scope             string            `json:"scope,omitempty"`
-	TeamID            string            `json:"team_id,omitempty"`
-	Pool              string            `json:"pool,omitempty"`
-	Tags              map[string]string `json:"tags,omitempty"`
-	StartedAt         time.Time         `json:"started_at,omitempty"`
-	InitialMessage    string            `json:"initial_message,omitempty"`
-	Status            string            `json:"status,omitempty"`
-	StatusUpdatedAt   time.Time         `json:"status_updated_at,omitempty"`
-	DeletionRequestID string            `json:"deletion_request_id,omitempty"`
-	ContextTemplateID string            `json:"context_template_id,omitempty"`
+	SessionID         string                      `json:"session_id"`
+	RemoteSessionID   string                      `json:"remote_session_id"`
+	ManagerID         string                      `json:"manager_id,omitempty"`
+	HMACSecret        string                      `json:"hmac_secret"`
+	Transport         string                      `json:"transport,omitempty"`
+	RuntimeTokenHash  string                      `json:"runtime_token_hash,omitempty"`
+	Generation        int64                       `json:"generation,omitempty"`
+	UserID            string                      `json:"user_id,omitempty"`
+	Scope             string                      `json:"scope,omitempty"`
+	TeamID            string                      `json:"team_id,omitempty"`
+	Pool              string                      `json:"pool,omitempty"`
+	Tags              map[string]string           `json:"tags,omitempty"`
+	StartedAt         time.Time                   `json:"started_at,omitempty"`
+	InitialMessage    string                      `json:"initial_message,omitempty"`
+	Annotations       entities.SessionAnnotations `json:"annotations,omitempty"`
+	Status            string                      `json:"status,omitempty"`
+	StatusUpdatedAt   time.Time                   `json:"status_updated_at,omitempty"`
+	DeletionRequestID string                      `json:"deletion_request_id,omitempty"`
+	ContextTemplateID string                      `json:"context_template_id,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -97,6 +99,7 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		Tags:              route.Tags,
 		StartedAt:         route.StartedAt,
 		InitialMessage:    route.InitialMessage,
+		Annotations:       route.Annotations,
 		Status:            route.Status,
 		StatusUpdatedAt:   route.StatusUpdatedAt,
 		DeletionRequestID: route.DeletionRequestID,
@@ -216,6 +219,7 @@ func (r *KubernetesSessionRouteRepository) load(ctx context.Context, sessionID s
 		Tags:              rj.Tags,
 		StartedAt:         rj.StartedAt,
 		InitialMessage:    rj.InitialMessage,
+		Annotations:       rj.Annotations,
 		Status:            rj.Status,
 		StatusUpdatedAt:   rj.StatusUpdatedAt,
 		DeletionRequestID: rj.DeletionRequestID,
@@ -378,6 +382,7 @@ func decodeSessionRoutes(secrets []corev1.Secret) []*portrepos.SessionRoute {
 			Tags:              rj.Tags,
 			StartedAt:         rj.StartedAt,
 			InitialMessage:    rj.InitialMessage,
+			Annotations:       rj.Annotations,
 			Status:            rj.Status,
 			StatusUpdatedAt:   rj.StatusUpdatedAt,
 			DeletionRequestID: rj.DeletionRequestID,

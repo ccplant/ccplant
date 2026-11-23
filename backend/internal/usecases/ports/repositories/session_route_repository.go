@@ -31,6 +31,7 @@ type SessionRoute struct {
 	Tags            map[string]string
 	StartedAt       time.Time
 	InitialMessage  string // The initial message/prompt for the session (shown as description)
+	Annotations     entities.SessionAnnotations
 	Status          string // Last status confirmed by the allocated session runtime
 	StatusUpdatedAt time.Time
 	// DeletionRequestID identifies the durable manager command that must finish
