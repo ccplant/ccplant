@@ -4239,6 +4239,18 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			corev1.Volume{Name: "herdr-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			corev1.Volume{Name: "agent-local-sockets", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		)
+		rootUID := int64(0)
+		falseVal := false
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "prepare-agent-local-sockets",
+			Image:           m.k8sConfig.Image,
+			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+			Command:         []string{"/bin/sh", "-ec", "chown 999:999 /tmp/ccplant && chmod 0700 /tmp/ccplant"},
+			SecurityContext: &corev1.SecurityContext{RunAsUser: &rootUID, RunAsNonRoot: &falseVal},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name: "agent-local-sockets", MountPath: filepath.Dir(provisionerSocketPath),
+			}},
+		})
 	}
 
 	// Run the executor as a native sidecar so kubelet restarts it independently
