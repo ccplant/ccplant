@@ -35,7 +35,11 @@ func TestRestoreObjectStorages(t *testing.T) {
 			Files: []sessionsettings.StorageFile{{Path: "dir/value.txt", Digest: digest, Mode: 0o600}},
 		}},
 	}
-	require.NoError(t, restoreObjectStorages(context.Background(), settings))
+	provisioner := NewWithHost("127.0.0.1", 0, "")
+	provisioner.ConfigureCLIBroker(server.URL, "session-1")
+	provisioner.brokerKey = "secret"
+	delete(settings.Env, "AGENTAPI_KEY")
+	require.NoError(t, provisioner.restoreObjectStorages(context.Background(), settings))
 	data, err := os.ReadFile(filepath.Join(mount, "dir", "value.txt"))
 	require.NoError(t, err)
 	require.Equal(t, content, data)
@@ -61,7 +65,11 @@ func TestRestoreObjectStorageUsesStoragePath(t *testing.T) {
 			Files: []sessionsettings.StorageFile{{Path: "sessions/rollout.jsonl", Digest: hex.EncodeToString(digestBytes[:])}},
 		}},
 	}
-	require.NoError(t, restoreObjectStorages(context.Background(), settings))
+	provisioner := NewWithHost("127.0.0.1", 0, "")
+	provisioner.ConfigureCLIBroker(server.URL, "session-1")
+	provisioner.brokerKey = "secret"
+	delete(settings.Env, "AGENTAPI_KEY")
+	require.NoError(t, provisioner.restoreObjectStorages(context.Background(), settings))
 	data, err := os.ReadFile(filepath.Join(mount, "sessions", "rollout.jsonl"))
 	require.NoError(t, err)
 	require.Equal(t, content, data)
