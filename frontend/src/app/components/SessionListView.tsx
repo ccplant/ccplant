@@ -589,7 +589,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   }
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 max-w-full space-y-4">
       {/* フローティング一括操作バー */}
       <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-full shadow-2xl transition-all duration-300 ${selectedSessions.size > 0 ? 'translate-y-0 opacity-100' : 'translate-y-24 opacity-0 pointer-events-none'}`}>
         <span className="text-sm font-semibold tabular-nums whitespace-nowrap">{selectedSessions.size}件選択中</span>
@@ -941,7 +941,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                     }`}
                     style={isOld ? { filter: 'grayscale(50%)', opacity: 0.7 } : {}}
                   >
-                    <div className="flex gap-3">
+                    <div className="flex min-w-0 gap-3">
                       {/* カスタムチェックボックス（選択モード時は常時表示、非選択モードではホバー時のみ表示） */}
                       <div className="flex-shrink-0 pt-1">
                         <button
@@ -965,7 +965,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between space-y-3 sm:space-y-0 flex-1 min-w-0">
                       <div className="flex-1 min-w-0">
                         {/* タイトルとステータス */}
-                        <div className="flex items-start gap-3 mb-2">
+                        <div className="flex min-w-0 flex-wrap items-start gap-2 sm:gap-3 mb-2">
                           {/* 作成中/起動中/準備中セッションの場合はスピナーを表示 */}
                           {(session.status === 'creating' || session.status === 'starting' || (isNew && agentStatusInfo.status === 'preparing')) && (
                             <div className="flex-shrink-0 mt-0.5">
@@ -979,7 +979,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                               </svg>
                             </div>
                           )}
-                          <h3 className={`text-sm sm:text-base font-medium leading-5 sm:leading-6 ${
+                          <h3 className={`min-w-0 flex-1 break-words [overflow-wrap:anywhere] text-sm sm:text-base font-medium leading-5 sm:leading-6 ${
                             description === '読み込み中...'
                               ? 'text-gray-500 dark:text-gray-400 italic'
                               : 'text-gray-900 dark:text-white'
@@ -1033,14 +1033,14 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                         </div>
 
                         {annotations.runningTask && (
-                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <div className="mb-2 min-w-0 max-w-full">
                             <span
-                              className="inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400"
+                              className="flex min-w-0 max-w-full items-start gap-1.5 text-xs text-gray-500 dark:text-gray-400"
                               title={annotations.runningTask}
                             >
-                              <LoaderCircle className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
-                              <span>作業中:</span>
-                              <span className="truncate">{truncateText(annotations.runningTask, isMobile ? 32 : 64)}</span>
+                              <LoaderCircle className="mt-px h-3 w-3 flex-shrink-0 animate-spin" aria-hidden="true" />
+                              <span className="flex-shrink-0">作業中:</span>
+                              <span className="min-w-0 flex-1 truncate">{truncateText(annotations.runningTask, isMobile ? 32 : 64)}</span>
                             </span>
                           </div>
                         )}
