@@ -458,7 +458,7 @@ func TestMergeHooksIntoSettingsFile_ManagedOverwritesCompiled(t *testing.T) {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "command",
-							"command": "agentapi-proxy client delete-session --confirm",
+							"command": "ccplant client delete-session --confirm",
 						},
 					},
 				},
@@ -527,7 +527,7 @@ func TestMergeHooksIntoSettingsFile_PreservesExistingHooks(t *testing.T) {
 			"Stop": []interface{}{
 				map[string]interface{}{
 					"hooks": []interface{}{
-						map[string]interface{}{"type": "command", "command": "agentapi-proxy client delete-session --confirm"},
+						map[string]interface{}{"type": "command", "command": "ccplant client delete-session --confirm"},
 					},
 				},
 			},
@@ -582,7 +582,7 @@ func TestBuildCodexRequirementsTOML(t *testing.T) {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "command",
-							"command": "agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1",
+							"command": "ccplant client memory save-session >> /tmp/memory-save-session.log 2>&1",
 						},
 					},
 				},
@@ -611,7 +611,7 @@ func TestBuildCodexRequirementsTOML(t *testing.T) {
 		"[[hooks.Stop]]",
 		"[[hooks.Stop.hooks]]",
 		"type = \"command\"",
-		"command = \"agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1\"",
+		"command = \"ccplant client memory save-session >> /tmp/memory-save-session.log 2>&1\"",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(got, want) {

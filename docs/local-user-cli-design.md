@@ -4,7 +4,7 @@
 
 ## 目的と対象
 
-管理者が `agentapi-proxy client user create` で、GitHub アカウントを持たないユーザーを作成できるようにする。サーバーが不変の UUID Principal ID を発行し、username は変更可能な属性として分離する。認証後の User ID と個人リソースの owner ID は常に Principal ID を使う。発行された API トークンで既存 API と Web UI を利用できる。
+管理者が `ccplant client user create` で、GitHub アカウントを持たないユーザーを作成できるようにする。サーバーが不変の UUID Principal ID を発行し、username は変更可能な属性として分離する。認証後の User ID と個人リソースの owner ID は常に Principal ID を使う。発行された API トークンで既存 API と Web UI を利用できる。
 
 ここでいうユーザーは CCPlant のユーザーであり、OS アカウントではない。初版は通常ユーザーと管理者を対象にする。パスワード認証、チーム所属の編集、ユーザー削除・改名は対象外。認証済み管理者による API 操作とし、最初の管理者には既存の Bootstrap Admin を使用する。
 
@@ -25,17 +25,17 @@
 
 ```bash
 # 管理者の接続先と認証情報は既存の --endpoint / 環境変数で指定
-agentapi-proxy client user create --username alice --display-name 'Alice'
+ccplant client user create --username alice --display-name 'Alice'
 # => {"id":"alice","username":"alice","role":"user","status":"active"}
 
-agentapi-proxy client user create --username operator --role admin
-agentapi-proxy client user get alice
+ccplant client user create --username operator --role admin
+ccplant client user get alice
 
 # 初期トークンは別操作。秘密値は指定ファイルだけに書き込む
-agentapi-proxy client user token create PRINCIPAL_ID \
+ccplant client user token create PRINCIPAL_ID \
   --name initial --expires-in 720h --secret-file ./alice-token
-agentapi-proxy client user token list PRINCIPAL_ID
-agentapi-proxy client user token revoke PRINCIPAL_ID TOKEN_ID
+ccplant client user token list PRINCIPAL_ID
+ccplant client user token revoke PRINCIPAL_ID TOKEN_ID
 ```
 
 | 引数 | 仕様 |

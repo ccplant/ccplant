@@ -333,7 +333,7 @@ func (r *filteringListRouteRepo) ListFiltered(_ context.Context, filter reposito
 
 func TestSearchSessionsPushesPersonalOwnerIntoRouteQuery(t *testing.T) {
 	routeRepo := &filteringListRouteRepo{routes: []*repositories.SessionRoute{
-		{SessionID: "mine", UserID: "user-1", Scope: string(entities.ScopeUser)},
+		{SessionID: "mine", UserID: "user-1", Scope: string(entities.ScopeUser), InitialMessage: "original", Annotations: entities.SessionAnnotations{Description: "annotated", RunningTask: "testing"}},
 		{SessionID: "not-mine", UserID: "user-2", Scope: string(entities.ScopeUser)},
 	}}
 	controller := controllers.NewSessionController(
@@ -349,6 +349,8 @@ func TestSearchSessionsPushesPersonalOwnerIntoRouteQuery(t *testing.T) {
 	require.NoError(t, controller.SearchSessions(ctx))
 	require.Equal(t, "user-1", routeRepo.lastFilter.UserID)
 	require.Equal(t, string(entities.ScopeUser), routeRepo.lastFilter.Scope)
+	require.Contains(t, rec.Body.String(), `"annotations":{"description":"annotated","running_task":"testing"}`)
+	require.Contains(t, rec.Body.String(), `"metadata":{"description":"annotated"}`)
 }
 
 func TestSearchSessionsPushesAuthorizedTeamsIntoRouteQuery(t *testing.T) {
@@ -414,6 +416,64 @@ func (r *deletionRouteRepo) Delete(context.Context, string) error {
 	r.deleted = true
 	r.route = nil
 	return nil
+}
+
+func TestUpdateSessionAnnotationsPersistsRoutedSession(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	routes := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+		UserID: "user-1", Scope: string(entities.ScopeUser),
+		Annotations: entities.SessionAnnotations{PRURL: "https://example.test/old"},
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routes),
+	)
+	req := httptest.NewRequest(http.MethodPatch, "/sessions/public-id/annotations", strings.NewReader(`{"description":"updated","running_task":"testing"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.SetPath("/sessions/:sessionId/annotations")
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("public-id")
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser("user-1", entities.UserTypeRegular, "user-1"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanCreate: true, CanRead: true, CanUpdate: true},
+	})
+
+	require.NoError(t, controller.UpdateSessionAnnotations(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, routes.saved)
+	require.Equal(t, "updated", routes.route.Annotations.Description)
+	require.Equal(t, "testing", routes.route.Annotations.RunningTask)
+	require.Equal(t, "https://example.test/old", routes.route.Annotations.PRURL)
+	require.JSONEq(t, `{"session_id":"public-id","annotations":{"pr_url":"https://example.test/old","description":"updated","running_task":"testing"},"metadata":{"description":"updated"}}`, rec.Body.String())
+}
+
+func TestUpdateSessionAnnotationsRejectsUnauthorizedRoutedSession(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	routes := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", UserID: "owner", Scope: string(entities.ScopeUser),
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routes),
+	)
+	req := httptest.NewRequest(http.MethodPatch, "/sessions/public-id/annotations", strings.NewReader(`{"description":"updated"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	ctx := echo.New().NewContext(req, httptest.NewRecorder())
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("public-id")
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser("other", entities.UserTypeRegular, "other"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "other", CanUpdate: true},
+	})
+
+	err := controller.UpdateSessionAnnotations(ctx)
+	httpErr, ok := err.(*echo.HTTPError)
+	require.True(t, ok)
+	require.Equal(t, http.StatusForbidden, httpErr.Code)
+	require.False(t, routes.saved)
 }
 
 func (t *directRuntimeTunnel) IsConnected(_ context.Context, managerID string) bool {

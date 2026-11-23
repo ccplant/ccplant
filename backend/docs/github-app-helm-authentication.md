@@ -333,7 +333,7 @@ print(sessions)
 export GITHUB_TOKEN="ghp_xxxxxxxxxxxx"
 
 # agentapi CLIでの使用
-agentapi-proxy client --server https://agentapi.example.com
+ccplant client --server https://agentapi.example.com
 ```
 
 ## トラブルシューティング

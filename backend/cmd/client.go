@@ -99,9 +99,9 @@ Examples:
   echo "Please continue the task" > /tmp/check/CYCLE_ENABLED
 
   # Stop after 10 cycles at most
-  agentapi-proxy client cycle --max-count 10
+  ccplant client cycle --max-count 10
 
-  agentapi-proxy client cycle --session-id my-session`,
+  ccplant client cycle --session-id my-session`,
 	Args: cobra.NoArgs,
 	RunE: runCycle,
 }
@@ -162,10 +162,10 @@ environment variables:
 
 Examples:
   # Delete current session (with confirmation)
-  agentapi-proxy client delete-session
+  ccplant client delete-session
 
   # Delete current session without confirmation
-  agentapi-proxy client delete-session --confirm`,
+  ccplant client delete-session --confirm`,
 	Run: runDeleteSession,
 }
 
@@ -178,7 +178,7 @@ The supported fields are PR URL, issue URL, description, and running task.
 At least one flag must be specified. Use an explicit empty string to clear a field.
 
 Examples:
-  agentapi-proxy client annotate-session \
+  ccplant client annotate-session \
     --endpoint http://proxy:8080 \
     --session-id my-session \
     --pr-url https://github.com/owner/repo/pull/123 \
@@ -187,7 +187,7 @@ Examples:
     --running-task "Implement session annotations"
 
   # Clear the running task
-  agentapi-proxy client annotate-session --running-task ""`,
+  ccplant client annotate-session --running-task ""`,
 	Run: runAnnotateSession,
 }
 

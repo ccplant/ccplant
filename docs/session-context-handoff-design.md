@@ -253,14 +253,14 @@ manifest export は `schema_version`, `template_id`, source metadata のみを�
 CLI:
 
 ```bash
-agentapi-proxy client session templateize SESSION_ID \
+ccplant client session templateize SESSION_ID \
   --name "認証障害調査済みテンプレート" \
   --wait-for-idle
 
-agentapi-proxy client template list
-agentapi-proxy client template start TEMPLATE_ID \
+ccplant client template list
+ccplant client template start TEMPLATE_ID \
   --message "別の方式を試してください"
-agentapi-proxy client template delete TEMPLATE_ID
+ccplant client template delete TEMPLATE_ID
 ```
 
 ## 10. 実装順序

@@ -75,7 +75,7 @@ ccplant client send-notification \
 
 ### セッション情報の更新
 
-作業中は、セッションに紐づく情報を `agentapi-proxy client annotate-session` で更新してください。
+作業中は、セッションに紐づく情報を `ccplant client annotate-session` で更新してください。
 更新できる情報は `pr_url`, `issue_url`, `description`, `running_task` です。
 
 特に以下のタイミングでは、該当する情報を更新してください：
@@ -88,7 +88,7 @@ ccplant client send-notification \
 例：
 
 ```bash
-agentapi-proxy client annotate-session \
+ccplant client annotate-session \
   --pr-url "https://github.com/owner/repo/pull/123" \
   --issue-url "https://github.com/owner/repo/issues/456" \
   --description "セッションアノテーション機能の実装" \
@@ -98,5 +98,5 @@ agentapi-proxy client annotate-session \
 値を空文字で指定すると、その情報をクリアできます。
 
 ```bash
-agentapi-proxy client annotate-session --running-task ""
+ccplant client annotate-session --running-task ""
 ```
