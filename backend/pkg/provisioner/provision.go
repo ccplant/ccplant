@@ -227,12 +227,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	if settings.Env == nil {
 		settings.Env = make(map[string]string)
 	}
-	s.mu.Lock()
-	s.brokerKey = settings.Env["AGENTAPI_KEY"]
-	if endpoint := strings.TrimSpace(settings.Env["AGENTAPI_PROXY_ENDPOINT"]); endpoint != "" && !strings.HasPrefix(endpoint, "unix:") && !strings.HasPrefix(endpoint, "http+unix:") {
-		s.brokerURL = strings.TrimRight(endpoint, "/")
-	}
-	s.mu.Unlock()
+	s.configureCLIBrokerForSession(settings)
 	delete(settings.Env, "AGENTAPI_KEY")
 	settings.Env["AGENTAPI_PROXY_ENDPOINT"] = "http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock"
 	markerPath := sessionRestoreMarkerPath(settings.Session.ID)
@@ -705,6 +700,16 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionSettings) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.brokerKey = settings.Env["AGENTAPI_KEY"]
+	s.brokerSessionID = settings.Session.ID
+	if endpoint := strings.TrimSpace(settings.Env["AGENTAPI_PROXY_ENDPOINT"]); endpoint != "" && !strings.HasPrefix(endpoint, "unix:") && !strings.HasPrefix(endpoint, "http+unix:") {
+		s.brokerURL = strings.TrimRight(endpoint, "/")
+	}
 }
 
 func waitForMountedSettingsSanitized(ctx context.Context, path string, timeout time.Duration) error {

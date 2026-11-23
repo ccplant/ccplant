@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestCLIBrokerAuthenticatesAndScopesNotification(t *testing.T) {
@@ -48,5 +50,29 @@ func TestCLIBrokerRejectsAnotherSession(t *testing.T) {
 	server.handleCLIBroker(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestConfigureCLIBrokerForClaimedStockSessionUsesPublicSessionID(t *testing.T) {
+	server := NewWithSocket("", "")
+	server.ConfigureCLIBroker("https://manager.example", "allocation-id")
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{ID: "public-session-id"},
+		Env: map[string]string{
+			"AGENTAPI_KEY":            "personal-key",
+			"AGENTAPI_PROXY_ENDPOINT": "https://parent.example/api/v1",
+		},
+	}
+
+	server.configureCLIBrokerForSession(settings)
+
+	if server.brokerSessionID != "public-session-id" {
+		t.Fatalf("broker session ID = %q, want public-session-id", server.brokerSessionID)
+	}
+	if server.brokerURL != "https://parent.example/api/v1" {
+		t.Fatalf("broker URL = %q", server.brokerURL)
+	}
+	if server.brokerKey != "personal-key" {
+		t.Fatal("broker key was not captured")
 	}
 }
