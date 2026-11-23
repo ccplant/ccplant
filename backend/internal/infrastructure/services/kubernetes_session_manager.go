@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -2808,7 +2809,7 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 		}
 	}
 	if getErr == nil {
-		yamlData, err := sessionsettings.MarshalYAML(settings)
+		yamlData, err := marshalMountedSessionSettings(settings)
 		if err != nil {
 			return fmt.Errorf("marshal restart settings: %w", err)
 		}
@@ -4166,6 +4167,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		container.VolumeMounts = append(container.VolumeMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
 			corev1.VolumeMount{Name: "herdr-runtime", MountPath: defaultHerdrRuntimePath},
+			corev1.VolumeMount{Name: "agent-local-sockets", MountPath: filepath.Dir(provisionerSocketPath)},
 		)
 	}
 
@@ -4235,7 +4237,20 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		volumes = append(volumes,
 			corev1.Volume{Name: "executor-socket", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			corev1.Volume{Name: "herdr-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			corev1.Volume{Name: "agent-local-sockets", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		)
+		rootUID := int64(0)
+		falseVal := false
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "prepare-agent-local-sockets",
+			Image:           m.k8sConfig.Image,
+			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+			Command:         []string{"/bin/sh", "-ec", "chown 999:999 /tmp/ccplant && chmod 0700 /tmp/ccplant"},
+			SecurityContext: &corev1.SecurityContext{RunAsUser: &rootUID, RunAsNonRoot: &falseVal},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name: "agent-local-sockets", MountPath: filepath.Dir(provisionerSocketPath),
+			}},
+		})
 	}
 
 	// Run the executor as a native sidecar so kubelet restarts it independently
@@ -4246,6 +4261,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		executorMounts = append(executorMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
 			corev1.VolumeMount{Name: "herdr-runtime", MountPath: defaultHerdrRuntimePath},
+			corev1.VolumeMount{Name: "agent-local-sockets", MountPath: filepath.Dir(provisionerSocketPath)},
 			corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true},
 		)
 		restartAlways := corev1.ContainerRestartPolicyAlways
@@ -8243,7 +8259,7 @@ func (m *KubernetesSessionManager) createSessionSettingsSecretFromSettings(
 	req *entities.RunServerRequest,
 	settings *sessionsettings.SessionSettings,
 ) error {
-	yamlData, err := sessionsettings.MarshalYAML(settings)
+	yamlData, err := marshalMountedSessionSettings(settings)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session settings to YAML: %w", err)
 	}
@@ -8274,6 +8290,17 @@ func (m *KubernetesSessionManager) createSessionSettingsSecretFromSettings(
 
 	log.Printf("[K8S_SESSION] Created session settings Secret %s for session %s", secretName, session.id)
 	return nil
+}
+
+// marshalMountedSessionSettings removes bootstrap-only credentials from the
+// settings file visible to the agent. The provisioner receives the complete
+// settings through the authenticated claim response and keeps the key only in
+// memory for its local CLI broker.
+func marshalMountedSessionSettings(settings *sessionsettings.SessionSettings) ([]byte, error) {
+	persisted := *settings
+	persisted.Env = maps.Clone(settings.Env)
+	delete(persisted.Env, "AGENTAPI_KEY")
+	return sessionsettings.MarshalYAML(&persisted)
 }
 
 // deleteSessionSettingsSecret deletes the unified session settings Secret.

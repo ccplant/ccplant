@@ -88,6 +88,38 @@ func TestPrepareSessionResumeWithoutParentRuntime(t *testing.T) {
 	}
 }
 
+func TestPrepareSessionResumeDoesNotPersistAPIKeyInMountedSettings(t *testing.T) {
+	m := newResumeEndpointTestManager(t,
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-one-svc", Namespace: "test"}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-one-settings", Namespace: "test"}},
+	)
+	ks := NewKubernetesSession("one", &entities.RunServerRequest{UserID: "alice", AgentType: "codex-acp"}, "agentapi-session-one", "agentapi-session-one-svc", "", "test", 9000, nil, nil)
+	m.sessions["one"] = ks
+
+	settings := resumeEndpointSettings("https://cc-api.example.com")
+	settings.Env = map[string]string{"AGENTAPI_KEY": "bootstrap-only", "KEEP": "value"}
+	if err := m.PrepareSessionResume(context.Background(), "one", settings); err != nil {
+		t.Fatal(err)
+	}
+
+	persisted, err := m.CurrentSessionSettings(context.Background(), "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := persisted.Env["AGENTAPI_KEY"]; ok {
+		t.Fatal("AGENTAPI_KEY was persisted in mounted settings")
+	}
+	if persisted.Env["KEEP"] != "value" {
+		t.Fatalf("unrelated environment variable = %q, want value", persisted.Env["KEEP"])
+	}
+	if settings.Env["AGENTAPI_KEY"] != "bootstrap-only" {
+		t.Fatal("input settings were mutated")
+	}
+	if got := ks.ProvisionSettings().Env["AGENTAPI_KEY"]; got != "bootstrap-only" {
+		t.Fatalf("in-memory provisioner credential = %q, want bootstrap-only", got)
+	}
+}
+
 func TestPreparePersistentWorkloadResumeUsesPublicSessionID(t *testing.T) {
 	m := newResumeEndpointTestManager(t,
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-allocation-svc", Namespace: "test"}},

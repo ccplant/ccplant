@@ -11,6 +11,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestSessionControlTokenIsBoundToSession(t *testing.T) {
@@ -27,6 +28,34 @@ func TestSessionControlTokenIsBoundToSession(t *testing.T) {
 	}
 	if validateSessionControlToken("different-master", "session-a", token) {
 		t.Fatal("token must not validate with a different master key")
+	}
+}
+
+func TestConnectProvisionerRequeuesReadyRequestWithBrokerCredential(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	settings := &sessionsettings.SessionSettings{Env: map[string]string{"AGENTAPI_KEY": "broker-key"}}
+	if err := manager.CreateProvisionRequestFromSettings(ctx, "session-1", settings); err != nil {
+		t.Fatal(err)
+	}
+	request, err := manager.getProvisionRequest(ctx, "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Status = "ready"
+	if err := manager.saveProvisionRequest(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.ConnectProvisioner(ctx, ProvisionerConnectRequest{SessionID: "session-1", PodName: "replacement-pod"}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := manager.ClaimProvisionRequest(ctx, "session-1", "replacement-pod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || claimed.Settings.Env["AGENTAPI_KEY"] != "broker-key" {
+		t.Fatalf("requeued request = %#v, claimed = %t", claimed, ok)
 	}
 }
 

@@ -109,6 +109,11 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 	} else {
 		srv = provisioner.NewWithHost(host, port, settingsFile)
 	}
+	brokerURL := os.Getenv("PROVISIONER_PROXY_URL")
+	if brokerURL == "" {
+		brokerURL = os.Getenv("PROVISIONER_LOCAL_PROXY_URL")
+	}
+	srv.ConfigureCLIBroker(brokerURL, os.Getenv("AGENTAPI_SESSION_ID"))
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)

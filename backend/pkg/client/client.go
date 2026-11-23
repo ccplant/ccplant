@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -66,9 +67,19 @@ type ClientOption func(*Client)
 
 // NewClient creates a new ccplant client with options
 func NewClient(baseURL string, opts ...ClientOption) *Client {
+	httpClient := utils.NewDefaultHTTPClient()
+	if socketPath, ok := unixSocketPath(baseURL); ok {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		}
+		httpClient = &http.Client{Timeout: 30 * time.Second, Transport: transport}
+		baseURL = "http://localhost"
+	}
 	c := &Client{
 		baseURL:     baseURL,
-		httpClient:  utils.NewDefaultHTTPClient(),
+		httpClient:  httpClient,
 		middlewares: []RequestMiddleware{},
 	}
 
@@ -77,6 +88,26 @@ func NewClient(baseURL string, opts ...ClientOption) *Client {
 	}
 
 	return c
+}
+
+// unixSocketPath resolves the local endpoint forms accepted by the CLI.
+// http+unix uses a percent-encoded socket path in the authority, while unix
+// accepts the more familiar unix:///absolute/path spelling.
+func unixSocketPath(endpoint string) (string, bool) {
+	if encoded, ok := strings.CutPrefix(endpoint, "http+unix://"); ok {
+		path, err := url.PathUnescape(encoded)
+		return path, err == nil && strings.HasPrefix(path, "/")
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", false
+	}
+	switch u.Scheme {
+	case "unix":
+		return u.Path, u.Path != ""
+	default:
+		return "", false
+	}
 }
 
 // WithHTTPClient sets a custom HTTP client

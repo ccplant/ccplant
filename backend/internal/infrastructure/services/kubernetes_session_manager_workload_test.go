@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -366,6 +367,19 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 	}
 	if !hasMount(executor.VolumeMounts, "herdr-runtime", defaultHerdrRuntimePath, "") {
 		t.Fatalf("executor mounts = %#v, want shared herdr runtime", executor.VolumeMounts)
+	}
+	if !hasMount(main.VolumeMounts, "agent-local-sockets", filepath.Dir(provisionerSocketPath), "") {
+		t.Fatalf("agent mounts = %#v, want shared local sockets", main.VolumeMounts)
+	}
+	if !hasMount(executor.VolumeMounts, "agent-local-sockets", filepath.Dir(provisionerSocketPath), "") {
+		t.Fatalf("executor mounts = %#v, want shared local sockets", executor.VolumeMounts)
+	}
+	prepareSockets := findContainerByName(deployment.Spec.Template.Spec.InitContainers, "prepare-agent-local-sockets")
+	if prepareSockets == nil {
+		t.Fatal("initContainers do not prepare shared local socket permissions")
+	}
+	if !hasMount(prepareSockets.VolumeMounts, "agent-local-sockets", filepath.Dir(provisionerSocketPath), "") {
+		t.Fatalf("socket preparation mounts = %#v, want shared local sockets", prepareSockets.VolumeMounts)
 	}
 	if !hasMount(main.VolumeMounts, "ccplant-cli", "/bin/bash", "ccplant") {
 		t.Fatalf("agent mounts = %#v, want ccplant mounted over /bin/bash", main.VolumeMounts)

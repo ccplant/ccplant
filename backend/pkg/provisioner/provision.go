@@ -52,6 +52,8 @@ var antigravityMCPConfigPath = filepath.Join(runtimeHome, ".gemini", "config", "
 const sessionRestoreMarkerPrefix = "agentapi-session-restore-complete-"
 const sessionProvisionAbortedMarkerPrefix = "agentapi-session-provision-aborted-"
 
+const mountedSettingsSanitizeTimeout = 2 * time.Minute
+
 func sessionRestoreMarkerPath(sessionID string) string {
 	return filepath.Join(os.TempDir(), sessionRestoreMarkerPrefix+sessionID)
 }
@@ -220,6 +222,14 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  8. Send the initial message if specified in settings
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(parent context.Context, settings *sessionsettings.SessionSettings) {
+	// Keep the parent credential inside the provisioner. Agent processes use the
+	// local Unix-socket broker and never receive AGENTAPI_KEY.
+	if settings.Env == nil {
+		settings.Env = make(map[string]string)
+	}
+	s.configureCLIBrokerForSession(settings)
+	delete(settings.Env, "AGENTAPI_KEY")
+	settings.Env["AGENTAPI_PROXY_ENDPOINT"] = "http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock"
 	markerPath := sessionRestoreMarkerPath(settings.Session.ID)
 	abortedMarkerPath := sessionProvisionAbortedMarkerPath(settings.Session.ID)
 	for _, path := range []string{markerPath, abortedMarkerPath} {
@@ -273,6 +283,15 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// A delayed Pod whose allocation was requeued must never run the old prompt.
 	if err := confirmRuntimeStart(ctx, settings.ParentRuntime); err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("runtime start rejected: %v", err))
+		return
+	}
+
+	// A claimed stock Pod may still expose the previous revision of its
+	// projected Secret briefly after the manager updates settings.yaml. Never
+	// start an agent while that stale file still contains the bootstrap key.
+	s.setPhase("provision:wait-mounted-settings")
+	if err := waitForMountedSettingsSanitized(ctx, s.settingsFile, mountedSettingsSanitizeTimeout); err != nil {
+		s.setStatus(StatusError, "mounted session settings were not sanitized: "+err.Error())
 		return
 	}
 
@@ -539,7 +558,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		return
 	}
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
-	agentEnv := mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
+	agentEnv := sessionProcessEnvironment(os.Environ(), settings.UnsetEnv, envMap)
 	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv, settings.Session.AgentType, agentSocket); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to start herdr notification bridge: %v", err)
 	} else {
@@ -681,6 +700,47 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionSettings) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.brokerKey = settings.Env["AGENTAPI_KEY"]
+	s.brokerSessionID = settings.Session.ID
+	if endpoint := strings.TrimSpace(settings.Env["AGENTAPI_PROXY_ENDPOINT"]); endpoint != "" && !strings.HasPrefix(endpoint, "unix:") && !strings.HasPrefix(endpoint, "http+unix:") {
+		s.brokerURL = strings.TrimRight(endpoint, "/")
+	}
+}
+
+func waitForMountedSettingsSanitized(ctx context.Context, path string, timeout time.Duration) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err == nil {
+			mounted, parseErr := sessionsettings.LoadSettingsFromBytes(data)
+			if parseErr == nil {
+				if _, present := mounted.Env["AGENTAPI_KEY"]; !present {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("timed out waiting for %s to drop AGENTAPI_KEY", path)
+		case <-ticker.C:
+		}
+	}
 }
 
 func usesACPUnixSocket(agentType string) bool {
@@ -953,7 +1013,7 @@ func (s *Server) runDockerLogins(ctx context.Context, docker *sessionsettings.Do
 // It inherits the session environment and streams stdout/stderr to the provisioner log.
 func (s *Server) runPreScript(ctx context.Context, script string, envMap map[string]string) error {
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
-	cmd.Env = mergeEnv(os.Environ(), envMap)
+	cmd.Env = sessionProcessEnvironment(os.Environ(), nil, envMap)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -984,11 +1044,11 @@ func (s *Server) runAcpPosts(ctx context.Context, params *sessionsettings.SlackP
 	log.Printf("[ACP_POSTS] History file found, starting acp-posts")
 
 	cmd := exec.CommandContext(ctx, acpPostsBin, "--file", historyFile)
-	cmd.Env = append(os.Environ(),
-		"SLACK_BOT_TOKEN="+params.BotToken,
-		"SLACK_CHANNEL_ID="+params.Channel,
-		"SLACK_THREAD_TS="+params.ThreadTS,
-	)
+	cmd.Env = sessionProcessEnvironment(os.Environ(), nil, map[string]string{
+		"SLACK_BOT_TOKEN":  params.BotToken,
+		"SLACK_CHANNEL_ID": params.Channel,
+		"SLACK_THREAD_TS":  params.ThreadTS,
+	})
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -2518,6 +2578,18 @@ func cloneEnvironment(source map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+// sessionProcessEnvironment builds the environment for every process that can
+// execute session-controlled code. The API key is a provisioner bootstrap
+// credential and must remain available only to the in-process CLI broker.
+func sessionProcessEnvironment(base []string, unset []string, overlay map[string]string) []string {
+	blocked := append([]string(nil), unset...)
+	blocked = append(blocked, "AGENTAPI_KEY")
+
+	sanitizedOverlay := cloneEnvironment(overlay)
+	delete(sanitizedOverlay, "AGENTAPI_KEY")
+	return mergeEnv(withoutEnvironment(base, blocked), sanitizedOverlay)
 }
 
 // configureNetworkFilterPolicy calls POST /policy on the nfa control server to
