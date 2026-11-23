@@ -307,7 +307,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// ── Step 2: run setup ─────────────────────────────────────────────────────
 	compileOpts := sessionsettings.DefaultCompileOptions()
 	managedStorage := true
-	if err := restoreObjectStoragesMatching(ctx, settings, &managedStorage); err != nil {
+	if err := s.restoreObjectStoragesMatching(ctx, settings, &managedStorage); err != nil {
 		s.setStatus(StatusError, "failed to restore managed session state: "+err.Error())
 		return
 	}
@@ -439,7 +439,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		}
 	}
 	managedStorage = false
-	if err := restoreObjectStoragesMatching(ctx, settings, &managedStorage); err != nil {
+	if err := s.restoreObjectStoragesMatching(ctx, settings, &managedStorage); err != nil {
 		s.setStatus(StatusError, "failed to restore persistent storage: "+err.Error())
 		return
 	}
