@@ -2809,7 +2809,7 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 		}
 	}
 	if getErr == nil {
-		yamlData, err := sessionsettings.MarshalYAML(settings)
+		yamlData, err := marshalMountedSessionSettings(settings)
 		if err != nil {
 			return fmt.Errorf("marshal restart settings: %w", err)
 		}
@@ -8244,12 +8244,7 @@ func (m *KubernetesSessionManager) createSessionSettingsSecretFromSettings(
 	req *entities.RunServerRequest,
 	settings *sessionsettings.SessionSettings,
 ) error {
-	// AGENTAPI_KEY is only bootstrap material for the in-process CLI broker. Do
-	// not persist it in the Secret mounted into the session filesystem.
-	persisted := *settings
-	persisted.Env = maps.Clone(settings.Env)
-	delete(persisted.Env, "AGENTAPI_KEY")
-	yamlData, err := sessionsettings.MarshalYAML(&persisted)
+	yamlData, err := marshalMountedSessionSettings(settings)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session settings to YAML: %w", err)
 	}
@@ -8280,6 +8275,17 @@ func (m *KubernetesSessionManager) createSessionSettingsSecretFromSettings(
 
 	log.Printf("[K8S_SESSION] Created session settings Secret %s for session %s", secretName, session.id)
 	return nil
+}
+
+// marshalMountedSessionSettings removes bootstrap-only credentials from the
+// settings file visible to the agent. The provisioner receives the complete
+// settings through the authenticated claim response and keeps the key only in
+// memory for its local CLI broker.
+func marshalMountedSessionSettings(settings *sessionsettings.SessionSettings) ([]byte, error) {
+	persisted := *settings
+	persisted.Env = maps.Clone(settings.Env)
+	delete(persisted.Env, "AGENTAPI_KEY")
+	return sessionsettings.MarshalYAML(&persisted)
 }
 
 // deleteSessionSettingsSecret deletes the unified session settings Secret.
