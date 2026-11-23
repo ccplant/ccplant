@@ -4167,6 +4167,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		container.VolumeMounts = append(container.VolumeMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
 			corev1.VolumeMount{Name: "herdr-runtime", MountPath: defaultHerdrRuntimePath},
+			corev1.VolumeMount{Name: "agent-local-sockets", MountPath: filepath.Dir(provisionerSocketPath)},
 		)
 	}
 
@@ -4236,6 +4237,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		volumes = append(volumes,
 			corev1.Volume{Name: "executor-socket", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			corev1.Volume{Name: "herdr-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			corev1.Volume{Name: "agent-local-sockets", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		)
 	}
 
@@ -4247,6 +4249,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		executorMounts = append(executorMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
 			corev1.VolumeMount{Name: "herdr-runtime", MountPath: defaultHerdrRuntimePath},
+			corev1.VolumeMount{Name: "agent-local-sockets", MountPath: filepath.Dir(provisionerSocketPath)},
 			corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true},
 		)
 		restartAlways := corev1.ContainerRestartPolicyAlways
