@@ -44,8 +44,20 @@ type storageLocalFile struct {
 	mode   uint32
 }
 
-func storageSyncConnection(settings *sessionsettings.SessionSettings) (string, string) {
-	endpoint := ""
+func (s *Server) storageSyncConnection(settings *sessionsettings.SessionSettings) (string, string) {
+	s.mu.RLock()
+	endpoint, apiKey := s.brokerURL, s.brokerKey
+	s.mu.RUnlock()
+
+	// The provision payload's API key is captured by the provisioner before it
+	// is removed from settings.Env. Storage synchronization runs afterwards, so
+	// it must use that in-memory credential instead of requiring the key to be
+	// mounted into the agent environment.
+	if endpoint != "" && apiKey != "" {
+		return strings.TrimRight(endpoint, "/"), apiKey
+	}
+
+	endpoint = ""
 	if settings.ParentRuntime != nil {
 		endpoint = settings.ParentRuntime.Endpoint
 	}
@@ -55,19 +67,19 @@ func storageSyncConnection(settings *sessionsettings.SessionSettings) (string, s
 	if endpoint == "" {
 		endpoint = os.Getenv("PROVISIONER_PROXY_URL")
 	}
-	apiKey := ""
+	apiKey = ""
 	if settings.Env != nil {
 		apiKey = settings.Env["AGENTAPI_KEY"]
 	}
 	return strings.TrimRight(endpoint, "/"), apiKey
 }
 
-func restoreObjectStorages(ctx context.Context, settings *sessionsettings.SessionSettings) error {
-	return restoreObjectStoragesMatching(ctx, settings, nil)
+func (s *Server) restoreObjectStorages(ctx context.Context, settings *sessionsettings.SessionSettings) error {
+	return s.restoreObjectStoragesMatching(ctx, settings, nil)
 }
 
-func restoreObjectStoragesMatching(ctx context.Context, settings *sessionsettings.SessionSettings, managed *bool) error {
-	endpoint, apiKey := storageSyncConnection(settings)
+func (s *Server) restoreObjectStoragesMatching(ctx context.Context, settings *sessionsettings.SessionSettings, managed *bool) error {
+	endpoint, apiKey := s.storageSyncConnection(settings)
 	for _, storage := range settings.Storages {
 		if storage.Kind != "object_snapshot" {
 			continue
@@ -134,7 +146,7 @@ func restoreStorageFile(ctx context.Context, client *http.Client, endpoint, apiK
 }
 
 func (s *Server) runStorageSync(ctx context.Context, settings *sessionsettings.SessionSettings) {
-	endpoint, apiKey := storageSyncConnection(settings)
+	endpoint, apiKey := s.storageSyncConnection(settings)
 	if endpoint == "" || apiKey == "" {
 		if len(settings.Storages) > 0 {
 			log.Printf("[STORAGE_SYNC] Parent endpoint or API key missing; object storage sync disabled")
