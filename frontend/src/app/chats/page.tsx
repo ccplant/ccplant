@@ -82,7 +82,7 @@ function ChatsPageInner() {
         </div>
       </TopBar>
 
-      <div className="flex">
+      <div className="flex min-w-0 max-w-full">
         {/* フィルタサイドバー */}
         <TagFilterSidebar
           onFiltersChange={setTagFilters}
@@ -92,7 +92,7 @@ function ChatsPageInner() {
         />
 
         {/* メインコンテンツ */}
-        <div className="flex-1 px-4 md:px-6 lg:px-8 pt-2 md:pt-8 pb-6 md:pb-8">
+        <div className="min-w-0 flex-1 px-4 md:px-6 lg:px-8 pt-2 md:pt-8 pb-6 md:pb-8">
           {/* セッション開始ボタン（デスクトップのみ） */}
           <div className="mb-6 flex justify-end hidden md:flex">
             <Link
