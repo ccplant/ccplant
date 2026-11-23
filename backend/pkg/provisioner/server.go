@@ -57,12 +57,15 @@ type Server struct {
 	activeSettings *sessionsettings.SessionSettings
 	restartID      string
 
-	port         int
-	host         string
-	socketPath   string
-	settingsFile string // path to optional auto-provision settings file
-	httpClient   *http.Client
-	filterURL    string
+	port            int
+	host            string
+	socketPath      string
+	settingsFile    string // path to optional auto-provision settings file
+	httpClient      *http.Client
+	filterURL       string
+	brokerURL       string
+	brokerKey       string
+	brokerSessionID string
 
 	mu                     sync.RWMutex
 	status                 Status
@@ -198,6 +201,10 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
 	mux.HandleFunc("/one-time-secrets/", s.handleOneTimeSecret)
 	mux.HandleFunc("/herdr/rpc", s.handleHerdrRPC)
+	mux.HandleFunc("/notifications/send", s.handleCLIBroker)
+	mux.HandleFunc("/internal/usage-events", s.handleCLIBroker)
+	mux.HandleFunc("/sessions/", s.handleCLIBroker)
+	mux.HandleFunc("/", s.handleCLIBroker)
 
 	srv := &http.Server{Handler: mux}
 	var listener net.Listener
@@ -236,6 +243,84 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
 	return nil
+}
+
+// ConfigureCLIBroker supplies the parent endpoint used for credentialed CLI
+// requests. The credential itself is learned from the in-memory provision
+// settings and is never accepted from the local caller.
+func (s *Server) ConfigureCLIBroker(parentURL, sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.brokerURL = strings.TrimRight(parentURL, "/")
+	s.brokerSessionID = sessionID
+}
+
+func (s *Server) handleCLIBroker(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	parentURL, apiKey, sessionID := s.brokerURL, s.brokerKey, s.brokerSessionID
+	s.mu.RUnlock()
+	if parentURL == "" || apiKey == "" || sessionID == "" {
+		http.Error(w, "CLI broker is not ready", http.StatusServiceUnavailable)
+		return
+	}
+	if !allowedCLIBrokerRequest(r, sessionID) {
+		http.Error(w, "CLI broker request is not allowed", http.StatusForbidden)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
+	if err != nil {
+		http.Error(w, "request body is too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if r.URL.Path == "/notifications/send" {
+		var notification map[string]any
+		if err := json.Unmarshal(body, &notification); err != nil {
+			http.Error(w, "invalid notification request", http.StatusBadRequest)
+			return
+		}
+		delete(notification, "user_id")
+		notification["session_id"] = sessionID
+		body, _ = json.Marshal(notification)
+	}
+	upstream, err := http.NewRequestWithContext(r.Context(), r.Method, parentURL+r.URL.RequestURI(), bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "invalid broker request", http.StatusBadRequest)
+		return
+	}
+	upstream.Header.Set("Authorization", "Bearer "+apiKey)
+	for _, name := range []string{"Accept", "Content-Type", "Last-Event-ID"} {
+		if value := r.Header.Get(name); value != "" {
+			upstream.Header.Set(name, value)
+		}
+	}
+	resp, err := http.DefaultClient.Do(upstream)
+	if err != nil {
+		http.Error(w, "CLI broker upstream request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	for _, name := range []string{"Content-Type", "Cache-Control"} {
+		if value := resp.Header.Get(name); value != "" {
+			w.Header().Set(name, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func allowedCLIBrokerRequest(r *http.Request, sessionID string) bool {
+	path := r.URL.Path
+	if path == "/notifications/send" {
+		return r.Method == http.MethodPost
+	}
+	if path == "/internal/usage-events" {
+		return r.Method == http.MethodPost
+	}
+	escapedID := url.PathEscape(sessionID)
+	if path == "/sessions/"+escapedID || strings.HasPrefix(path, "/sessions/"+escapedID+"/") {
+		return true
+	}
+	return path == "/"+escapedID+"/message" && r.Method == http.MethodPost
 }
 
 var allowedHerdrMethods = map[string]struct{}{
@@ -364,6 +449,7 @@ func (s *Server) handleOneTimeSecret(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+runtime.Token)
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		log.Printf("[PROVISIONER] one-time secret parent request failed: %v", err)
 		http.Error(w, "parent runtime unavailable", http.StatusBadGateway)
 		return
 	}

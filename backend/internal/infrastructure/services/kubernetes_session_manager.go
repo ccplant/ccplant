@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -8243,7 +8244,12 @@ func (m *KubernetesSessionManager) createSessionSettingsSecretFromSettings(
 	req *entities.RunServerRequest,
 	settings *sessionsettings.SessionSettings,
 ) error {
-	yamlData, err := sessionsettings.MarshalYAML(settings)
+	// AGENTAPI_KEY is only bootstrap material for the in-process CLI broker. Do
+	// not persist it in the Secret mounted into the session filesystem.
+	persisted := *settings
+	persisted.Env = maps.Clone(settings.Env)
+	delete(persisted.Env, "AGENTAPI_KEY")
+	yamlData, err := sessionsettings.MarshalYAML(&persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session settings to YAML: %w", err)
 	}

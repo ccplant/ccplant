@@ -211,6 +211,15 @@ func (m *KubernetesSessionManager) ConnectProvisioner(ctx context.Context, req P
 	if err != nil {
 		return err
 	}
+	// A ready request belongs to the previous Pod instance. Requeue it so a
+	// replacement provisioner receives the full in-memory settings again,
+	// including broker bootstrap credentials that are deliberately absent from
+	// the settings Secret mounted into the Pod.
+	if provisionReq.Status == "ready" {
+		provisionReq.Status = "pending"
+		provisionReq.Message = ""
+		provisionReq.ErrorCode = ""
+	}
 	provisionReq.ClaimedBy = req.PodName
 	provisionReq.UpdatedAt = time.Now().UTC()
 	return m.saveProvisionRequest(ctx, provisionReq)

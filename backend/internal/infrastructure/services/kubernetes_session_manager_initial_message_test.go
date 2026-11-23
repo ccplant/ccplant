@@ -70,6 +70,7 @@ func TestInitialMessageStoredInSettingsYAML(t *testing.T) {
 
 	// Build settings and create the Secret using the new function.
 	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings.Env["AGENTAPI_KEY"] = "must-not-be-mounted"
 	err = manager.createSessionSettingsSecretFromSettings(context.Background(), session, req, settings)
 	if err != nil {
 		t.Fatalf("Failed to create session settings secret: %v", err)
@@ -97,6 +98,12 @@ func TestInitialMessageStoredInSettingsYAML(t *testing.T) {
 	}
 	if parsed.InitialMessage != message {
 		t.Errorf("Expected InitialMessage %q inside settings.yaml, got %q", message, parsed.InitialMessage)
+	}
+	if _, ok := parsed.Env["AGENTAPI_KEY"]; ok {
+		t.Error("AGENTAPI_KEY must not be persisted in the mounted settings Secret")
+	}
+	if settings.Env["AGENTAPI_KEY"] != "must-not-be-mounted" {
+		t.Error("creating the restart Secret must not mutate in-memory broker credentials")
 	}
 }
 

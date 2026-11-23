@@ -220,6 +220,19 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  8. Send the initial message if specified in settings
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(parent context.Context, settings *sessionsettings.SessionSettings) {
+	// Keep the parent credential inside the provisioner. Agent processes use the
+	// local Unix-socket broker and never receive AGENTAPI_KEY.
+	if settings.Env == nil {
+		settings.Env = make(map[string]string)
+	}
+	s.mu.Lock()
+	s.brokerKey = settings.Env["AGENTAPI_KEY"]
+	if endpoint := strings.TrimSpace(settings.Env["AGENTAPI_PROXY_ENDPOINT"]); endpoint != "" && !strings.HasPrefix(endpoint, "unix:") && !strings.HasPrefix(endpoint, "http+unix:") {
+		s.brokerURL = strings.TrimRight(endpoint, "/")
+	}
+	s.mu.Unlock()
+	delete(settings.Env, "AGENTAPI_KEY")
+	settings.Env["AGENTAPI_PROXY_ENDPOINT"] = "http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock"
 	markerPath := sessionRestoreMarkerPath(settings.Session.ID)
 	abortedMarkerPath := sessionProvisionAbortedMarkerPath(settings.Session.ID)
 	for _, path := range []string{markerPath, abortedMarkerPath} {

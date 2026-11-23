@@ -20,7 +20,7 @@ func ConfigFromEnv() (*Config, error) {
 	}
 
 	apiKey := os.Getenv("AGENTAPI_KEY")
-	if apiKey == "" {
+	if apiKey == "" && !isLocalSocketEndpoint(os.Getenv("AGENTAPI_PROXY_ENDPOINT")) {
 		return nil, fmt.Errorf("AGENTAPI_KEY environment variable is not set")
 	}
 
@@ -34,6 +34,11 @@ func ConfigFromEnv() (*Config, error) {
 		SessionID: sessionID,
 		APIKey:    apiKey,
 	}, nil
+}
+
+func isLocalSocketEndpoint(endpoint string) bool {
+	_, ok := unixSocketPath(endpoint)
+	return ok
 }
 
 // EndpointFromEnv builds the endpoint URL from environment variables.
