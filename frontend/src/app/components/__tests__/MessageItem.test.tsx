@@ -123,3 +123,27 @@ describe('MessageItem plan messages', () => {
     expect(screen.queryByRole('button', { name: /View plan details/i })).not.toBeInTheDocument();
   });
 });
+
+describe('MessageItem links', () => {
+  it('allows a long URL in a prompt to wrap within the message', () => {
+    const url = 'https://example.com/a/very/long/path/that/must/not/expand/the/chat/layout';
+
+    render(
+      <MessageItem
+        message={{
+          id: 1,
+          role: 'user',
+          content: url,
+          time: '2026-07-25T00:00:00Z',
+          type: 'normal',
+        }}
+        formatTimestamp={() => '00:00'}
+        fontSettings={{ fontSize: 14, fontFamily: 'sans-serif' }}
+      />,
+    );
+
+    const link = screen.getByRole('link', { name: url });
+    expect(link).toHaveClass('break-words');
+    expect(link).not.toHaveClass('whitespace-nowrap');
+  });
+});

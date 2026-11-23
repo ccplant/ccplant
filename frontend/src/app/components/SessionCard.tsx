@@ -45,6 +45,7 @@ function getURLNumber(url: string): string | null {
 export default function SessionCard({ session, onDelete, isDeleting, isSelected, onToggleSelect, isSelectionMode }: SessionCardProps) {
   const [isMobile, setIsMobile] = useState(false)
   const [showAnnotationMenu, setShowAnnotationMenu] = useState(false)
+  const [showFullRunningTask, setShowFullRunningTask] = useState(false)
 
   useEffect(() => {
     const checkMobile = () => {
@@ -116,23 +117,30 @@ export default function SessionCard({ session, onDelete, isDeleting, isSelected,
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between space-y-3 sm:space-y-0 flex-1 min-w-0">
         <div className="flex-1 min-w-0">
           {/* タイトルとステータス */}
-          <div className="flex items-start gap-3 mb-2">
-            <h3 className="text-sm sm:text-base font-medium text-gray-900 dark:text-white leading-5 sm:leading-6">
+          <div className="flex min-w-0 items-start gap-3 mb-2">
+            <h3 className="min-w-0 break-words [overflow-wrap:anywhere] text-sm sm:text-base font-medium text-gray-900 dark:text-white leading-5 sm:leading-6">
               {truncateText(title, isMobile ? 100 : 120)}
             </h3>
-            <StatusBadge status={session.status} />
+            <div className="flex-shrink-0"><StatusBadge status={session.status} /></div>
           </div>
 
           {annotations.runningTask && (
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              <span
-                className="inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400"
-                title={annotations.runningTask}
+            <div className="mb-2 min-w-0">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setShowFullRunningTask(previous => !previous)
+                }}
+                className="flex max-w-full items-start gap-1.5 rounded text-left text-xs text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:text-gray-400 dark:hover:text-gray-200"
+                aria-expanded={showFullRunningTask}
+                aria-label={`${showFullRunningTask ? '進捗を閉じる' : '進捗を全文表示'}: ${annotations.runningTask}`}
               >
-                <LoaderCircle className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
-                <span>作業中:</span>
-                <span className="truncate">{truncateText(annotations.runningTask, isMobile ? 32 : 64)}</span>
-              </span>
+                <LoaderCircle className="mt-px h-3 w-3 flex-shrink-0 animate-spin" aria-hidden="true" />
+                <span className={showFullRunningTask ? 'break-words [overflow-wrap:anywhere]' : 'truncate'}>
+                  {showFullRunningTask ? annotations.runningTask : truncateText(annotations.runningTask, isMobile ? 32 : 64)}
+                </span>
+              </button>
             </div>
           )}
 
