@@ -110,7 +110,7 @@ function hasMarkdownSyntax(text: string): boolean {
 // Markdown をレンダリングするコンポーネント
 function MarkdownContent({ content }: { content: string }): React.ReactElement {
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none">
+    <div className="prose prose-sm dark:prose-invert max-w-none min-w-0 break-words [overflow-wrap:anywhere]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -164,7 +164,7 @@ function MarkdownContent({ content }: { content: string }): React.ReactElement {
               {...props}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline"
+              className="break-words [overflow-wrap:anywhere] text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline"
             />
           ),
           // コードブロックのスタイリング
@@ -272,7 +272,7 @@ function formatTextWithLinks(text: string): React.ReactElement {
               href={cleanUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline whitespace-nowrap"
+              className="break-words [overflow-wrap:anywhere] text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline"
             >
               {cleanUrl}
             </a>

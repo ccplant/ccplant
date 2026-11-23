@@ -2082,14 +2082,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     return new Date(timestamp).toLocaleTimeString();
   }, []);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'stable': return 'text-green-600 dark:text-green-400';
-      case 'running': return 'text-yellow-600 dark:text-yellow-400';
-      default: return 'text-gray-600 dark:text-gray-400';
-    }
-  };
-
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-900" style={{ position: 'relative', minHeight: 0 }}>
       {/* ── Unified full-width header ── */}
@@ -2130,11 +2122,13 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           <div className="flex items-center space-x-2 sm:space-x-4">
             {/* Agent Status */}
             {agentStatus && (
-              <div className="flex items-center space-x-1 sm:space-x-2">
-                <div className={`w-2 h-2 rounded-full ${agentStatus.status === 'stable' ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
-                <span className={`text-xs ${getStatusColor(agentStatus.status)} hidden sm:inline`}>
-                  {agentStatus.status === 'stable' ? 'Agent Available' : agentStatus.status === 'running' ? 'Agent Running' : agentStatus.status}
-                </span>
+              <div
+                className="flex items-center justify-center p-1"
+                role="status"
+                aria-label={agentStatus.status === 'stable' ? 'エージェント利用可能' : agentStatus.status === 'running' ? 'エージェント進行中' : `エージェント: ${agentStatus.status}`}
+                title={agentStatus.status === 'stable' ? 'エージェント利用可能' : agentStatus.status === 'running' ? 'エージェント進行中' : `エージェント: ${agentStatus.status}`}
+              >
+                <div className={`h-2.5 w-2.5 rounded-full ${agentStatus.status === 'stable' ? 'bg-green-500' : 'bg-yellow-500'} ${agentStatus.status === 'running' ? 'animate-pulse' : ''}`}></div>
               </div>
             )}
 
@@ -3149,19 +3143,19 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                     const shortLabel = link.type === 'pr' ? 'PR' : 'Issue';
                     
                     return (
-                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-md">
+                      <div key={index} className="flex min-w-0 items-center justify-between gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-md">
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm text-gray-900 dark:text-white truncate">
+                          <div className="break-words [overflow-wrap:anywhere] font-medium text-sm text-gray-900 dark:text-white">
                             {repoName || link.url}
                           </div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                          <div className="break-words [overflow-wrap:anywhere] text-xs text-gray-500 dark:text-gray-400">
                             {!isGitHubCom && (
                               <span>{domain} • </span>
                             )}
                             {label}{number ? ` #${number}` : ''}
                           </div>
                         </div>
-                        <div className="flex items-center space-x-2 ml-4">
+                        <div className="flex flex-shrink-0 items-center space-x-2">
                           <button
                             onClick={() => navigator.clipboard.writeText(link.url)}
                             className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded"
