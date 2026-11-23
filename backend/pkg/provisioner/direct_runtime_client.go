@@ -44,15 +44,20 @@ var directRuntimeReadyPollInterval = time.Second
 const directRuntimeStatusRefreshInterval = 5 * time.Second
 
 const directRuntimeAgentHost = "agent.local"
+const directRuntimeProvisionerHost = "provisioner.local"
 
 type directRuntimeTransport struct {
-	upstream http.RoundTripper
-	agent    http.RoundTripper
+	upstream    http.RoundTripper
+	agent       http.RoundTripper
+	provisioner http.RoundTripper
 }
 
 func (t *directRuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Host == directRuntimeAgentHost {
 		return t.agent.RoundTrip(req)
+	}
+	if req.URL.Host == directRuntimeProvisionerHost && t.provisioner != nil {
+		return t.provisioner.RoundTrip(req)
 	}
 	return t.upstream.RoundTrip(req)
 }
@@ -77,11 +82,19 @@ func newDirectRuntimeWorker(transport http.RoundTripper, cfg *sessionsettings.Pa
 	agentTransport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", agentSocket)
 	}}
+	provisionerURL := fmt.Sprintf("http://127.0.0.1:%d", provisionerPort)
+	var provisionerTransport http.RoundTripper
+	if provisionerSocket := strings.TrimSpace(os.Getenv("PROVISIONER_LOCAL_SOCKET")); provisionerSocket != "" {
+		provisionerURL = "http://" + directRuntimeProvisionerHost
+		provisionerTransport = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", provisionerSocket)
+		}}
+	}
 	return &directRuntimeWorker{
 		cfg:            cfg,
-		client:         &http.Client{Transport: &directRuntimeTransport{upstream: transport, agent: agentTransport}},
+		client:         &http.Client{Transport: &directRuntimeTransport{upstream: transport, agent: agentTransport, provisioner: provisionerTransport}},
 		agentURL:       "http://" + directRuntimeAgentHost,
-		provisionerURL: fmt.Sprintf("http://127.0.0.1:%d", provisionerPort),
+		provisionerURL: provisionerURL,
 		instanceID:     instanceID,
 	}
 }

@@ -138,13 +138,40 @@ func TestDirectRuntimeLocalStatusDoesNotDowngradeToReadyWhenAgentUnavailable(t *
 	}
 }
 
-func TestDirectRuntimeWorkerSeparatesAgentAndProvisionerPorts(t *testing.T) {
+func TestDirectRuntimeWorkerFallsBackToProvisionerPort(t *testing.T) {
+	t.Setenv("PROVISIONER_LOCAL_SOCKET", "")
 	worker := newDirectRuntimeWorker(nil, &sessionsettings.ParentRuntimeConfig{}, "runner-a", 19001)
 	if got, want := worker.agentURL, "http://agent.local"; got != want {
 		t.Fatalf("agentURL = %q, want %q", got, want)
 	}
 	if got, want := worker.provisionerURL, "http://127.0.0.1:19001"; got != want {
 		t.Fatalf("provisionerURL = %q, want %q", got, want)
+	}
+}
+
+func TestDirectRuntimeWorkerConnectsToProvisionerUnixSocket(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "provisioner.sock")
+	t.Setenv("PROVISIONER_LOCAL_SOCKET", socketPath)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusReady})
+	})}
+	defer func() { _ = server.Close() }()
+	go func() { _ = server.Serve(listener) }()
+
+	worker := newDirectRuntimeWorker(nil, &sessionsettings.ParentRuntimeConfig{}, "runner-a", 19001)
+	if got, want := worker.provisionerURL, "http://provisioner.local"; got != want {
+		t.Fatalf("provisionerURL = %q, want %q", got, want)
+	}
+	if got := worker.readLocalStatus(context.Background(), worker.provisionerURL+"/status", true); got != string(StatusReady) {
+		t.Fatalf("status = %q, want %q", got, StatusReady)
 	}
 }
 
