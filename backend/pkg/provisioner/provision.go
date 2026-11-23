@@ -558,7 +558,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		return
 	}
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
-	agentEnv := mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
+	agentEnv := sessionProcessEnvironment(os.Environ(), settings.UnsetEnv, envMap)
 	if parentID, err := ensureHerdrNotificationBridge(ctx, agentEnv, settings.Session.AgentType, agentSocket); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to start herdr notification bridge: %v", err)
 	} else {
@@ -1013,7 +1013,7 @@ func (s *Server) runDockerLogins(ctx context.Context, docker *sessionsettings.Do
 // It inherits the session environment and streams stdout/stderr to the provisioner log.
 func (s *Server) runPreScript(ctx context.Context, script string, envMap map[string]string) error {
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
-	cmd.Env = mergeEnv(os.Environ(), envMap)
+	cmd.Env = sessionProcessEnvironment(os.Environ(), nil, envMap)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -1044,11 +1044,11 @@ func (s *Server) runAcpPosts(ctx context.Context, params *sessionsettings.SlackP
 	log.Printf("[ACP_POSTS] History file found, starting acp-posts")
 
 	cmd := exec.CommandContext(ctx, acpPostsBin, "--file", historyFile)
-	cmd.Env = append(os.Environ(),
-		"SLACK_BOT_TOKEN="+params.BotToken,
-		"SLACK_CHANNEL_ID="+params.Channel,
-		"SLACK_THREAD_TS="+params.ThreadTS,
-	)
+	cmd.Env = sessionProcessEnvironment(os.Environ(), nil, map[string]string{
+		"SLACK_BOT_TOKEN":  params.BotToken,
+		"SLACK_CHANNEL_ID": params.Channel,
+		"SLACK_THREAD_TS":  params.ThreadTS,
+	})
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -2578,6 +2578,18 @@ func cloneEnvironment(source map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+// sessionProcessEnvironment builds the environment for every process that can
+// execute session-controlled code. The API key is a provisioner bootstrap
+// credential and must remain available only to the in-process CLI broker.
+func sessionProcessEnvironment(base []string, unset []string, overlay map[string]string) []string {
+	blocked := append([]string(nil), unset...)
+	blocked = append(blocked, "AGENTAPI_KEY")
+
+	sanitizedOverlay := cloneEnvironment(overlay)
+	delete(sanitizedOverlay, "AGENTAPI_KEY")
+	return mergeEnv(withoutEnvironment(base, blocked), sanitizedOverlay)
 }
 
 // configureNetworkFilterPolicy calls POST /policy on the nfa control server to
