@@ -51,6 +51,8 @@ type directRuntimeTunnel struct {
 type lifecycleTunnel struct {
 	path     string
 	body     []byte
+	ctxErr   error
+	reqErr   error
 	enqueued bool
 	done     bool
 	status   int
@@ -82,10 +84,12 @@ func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool 
 	return managerID == "manager-a"
 }
 
-func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
+func (t *lifecycleTunnel) Do(ctx context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
 	if t.onDo != nil {
 		t.onDo()
 	}
+	t.ctxErr = ctx.Err()
+	t.reqErr = req.Context().Err()
 	t.path = req.URL.Path
 	if req.Body != nil {
 		t.body, _ = io.ReadAll(req.Body)

@@ -246,6 +246,9 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 	if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
 	}
+	if strings.EqualFold(route.Status, "suspended") {
+		return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": route.SessionID, "status": "suspended"})
+	}
 	if route.RemoteSessionID == "" || c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
@@ -269,12 +272,17 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session resume data; the session was not suspended")
 	}
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(settingsBody))
+	// Suspend is a durable lifecycle operation. A caller disconnect or an
+	// upstream request timeout must not cancel checkpointing after the command
+	// has been accepted by the external session manager.
+	suspendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx.Request().Context()), 10*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(suspendCtx, http.MethodPost, targetURL, bytes.NewReader(settingsBody))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build suspend request")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	resp, err := c.esmControlTunnel.Do(suspendCtx, route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
 	}
@@ -283,9 +291,17 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		log.Printf("[SESSION_SUSPEND] remote command failed public_session=%s manager=%s remote_session=%s runner=%s status=%d",
 			route.SessionID, route.ManagerID, route.RemoteSessionID, allocation.RunnerID, resp.StatusCode)
+		if c.sessionRouteRepo != nil {
+			checkCtx, checkCancel := context.WithTimeout(context.WithoutCancel(ctx.Request().Context()), 3*time.Second)
+			latest, lookupErr := c.sessionRouteRepo.Get(checkCtx, route.SessionID)
+			checkCancel()
+			if lookupErr == nil && latest != nil && strings.EqualFold(latest.Status, "suspended") {
+				return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": route.SessionID, "status": "suspended"})
+			}
+		}
 		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "suspended"); err != nil {
+	if err := c.recordRemoteLifecycleStatus(suspendCtx, route, "suspended"); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist suspended session status")
 	}
 	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": route.SessionID, "status": "suspended"})

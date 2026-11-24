@@ -1,9 +1,11 @@
 package controllers_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -276,12 +278,19 @@ func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 		}}),
 	)
 	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/suspend", "public-id")
+	requestCtx, cancelRequest := context.WithCancel(ctx.Request().Context())
+	defer cancelRequest()
+	ctx.SetRequest(ctx.Request().WithContext(requestCtx))
+	tunnel.onDo = cancelRequest
 
 	if err := controller.SuspendSession(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if tunnel.ctxErr != nil || tunnel.reqErr != nil {
+		t.Fatalf("suspend tunnel inherited caller cancellation: ctx=%v request=%v", tunnel.ctxErr, tunnel.reqErr)
 	}
 	if tunnel.path != "/api/v1/sessions/remote-id/suspend" {
 		t.Fatalf("suspend path = %q, want allocated session path", tunnel.path)
@@ -301,6 +310,33 @@ func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 	}
 	if unrelated.status != "active" {
 		t.Fatalf("unrelated cache status = %q, want active", unrelated.status)
+	}
+}
+
+func TestSuspendRemoteSessionTreatsConcurrentCompletionAsSuccess(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{status: http.StatusServiceUnavailable}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+		UserID: "user-1", Scope: string(entities.ScopeUser), Status: "active",
+	}}
+	tunnel.onDo = func() { routeRepo.route.Status = "suspended" }
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(&allocationReader{allocation: &sessionrunnercore.Allocation{
+			SessionID: "public-id", RuntimeToken: "runtime-token", Generation: 2,
+			ProvisionSettings: []byte(`{"session":{"user_id":"user-1","scope":"user"}}`),
+		}}),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/suspend", "public-id")
+
+	if err := controller.SuspendSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"suspended"`) {
+		t.Fatalf("status=%d body=%s, want idempotent suspended response", rec.Code, rec.Body.String())
 	}
 }
 
