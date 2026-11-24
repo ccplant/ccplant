@@ -100,6 +100,8 @@ func managerInventory(t *testing.T, c *apitest.Client) string {
 				Name string `json:"name"`
 			} `json:"manager"`
 			Status struct {
+				Namespace        string   `json:"namespace"`
+				ServingInstance   string   `json:"serving_instance"`
 				RunningRunnerIDs []string `json:"running_runner_ids"`
 				UsedRunnerIDs    []string `json:"used_runner_ids"`
 			} `json:"status"`
@@ -135,8 +137,10 @@ func waitForRunnerAssignment(t *testing.T, c *apitest.Client, tag, sessionID str
 						Manager struct {
 							ID string `json:"id"`
 						} `json:"manager"`
-						Status struct {
-							RunningRunnerIDs []string `json:"running_runner_ids"`
+			Status struct {
+				Namespace        string   `json:"namespace"`
+				ServingInstance   string   `json:"serving_instance"`
+				RunningRunnerIDs []string `json:"running_runner_ids"`
 							UsedRunnerIDs    []string `json:"used_runner_ids"`
 						} `json:"status"`
 					} `json:"session_managers"`

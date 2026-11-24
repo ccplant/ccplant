@@ -76,7 +76,7 @@ func (m *KubernetesSessionManager) OperationalStatus(ctx context.Context, pools 
 	if m.config != nil && m.config.SessionManager.CurrentVersion != "" {
 		version = m.config.SessionManager.CurrentVersion
 	}
-	return map[string]interface{}{"status": "online", "version": version, "running_runners": running, "used_runners": used, "running_runner_ids": runningIDs, "used_runner_ids": usedIDs}, nil
+	return map[string]interface{}{"status": "online", "version": version, "namespace": m.namespace, "serving_instance": os.Getenv("HOSTNAME"), "running_runners": running, "used_runners": used, "running_runner_ids": runningIDs, "used_runner_ids": usedIDs}, nil
 }
 
 func (m *KubernetesSessionManager) OperationalLogs(ctx context.Context, runnerID, sessionID string, tail int) ([]string, string, error) {
