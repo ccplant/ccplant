@@ -2609,6 +2609,7 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 	if m.config != nil && m.config.SessionManager.RunnerPool != "" {
 		owner := svc.Labels["agentapi.proxy/session-manager-id"]
 		if owner != "" && owner != sanitizeLabelValue(m.config.SessionManager.ID) {
+			log.Printf("[K8S_SESSION] Refusing foreign runner session=%s owner_manager=%s local_manager=%s", id, owner, sanitizeLabelValue(m.config.SessionManager.ID))
 			return nil
 		}
 	}
