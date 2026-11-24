@@ -56,6 +56,7 @@ func TestSessionPersistenceSuspendResume(t *testing.T) {
 	})
 
 	waitForConversationMarker(t, c, created.SessionID, marker, 4*time.Minute)
+	waitForRunnerAssignment(t, c, marker, created.SessionID, 2*time.Minute)
 	t.Logf("public session route before concurrent suspend: %s", sessionRouteInventory(t, c, marker, created.SessionID))
 	t.Logf("session-pool inventory before concurrent suspend: %s", managerInventory(t, c))
 	if err := suspendConcurrently(t, c, marker, created.SessionID, sessionPath); err != nil {
