@@ -1,15 +1,5 @@
 import { describe, it, expect } from 'vitest';
-
-// Import the functions to test them in isolation
-// We'll extract them to a utility file first for testing
-function isValidSessionMessageResponse(response: unknown): response is { messages: unknown[] } {
-  return (
-    response !== null &&
-    typeof response === 'object' &&
-    'messages' in response &&
-    Array.isArray((response as { messages: unknown[] }).messages)
-  );
-}
+import { getACPModelDisplay, isValidSessionMessageResponse } from '../agentChatPresentation';
 
 function convertSessionMessageId(id: string | number, fallbackId: number): number {
   // Convert to string safely
@@ -41,6 +31,17 @@ function convertSessionMessageId(id: string | number, fallbackId: number): numbe
 }
 
 describe('AgentAPIChat utility functions', () => {
+  it('reads a model label from agent config choices', () => {
+    expect(getACPModelDisplay({
+      sessionId: 'session', status: 'ready',
+      configOptions: [{ category: 'model', currentValue: 'model-id', options: [{ value: 'model-id', name: 'Model Name' }] }],
+    })).toBe('Model Name (model-id)');
+  });
+
+  it('prefers the model reported directly by the agent', () => {
+    expect(getACPModelDisplay({ sessionId: 'session', status: 'ready', model: ' direct-model ' })).toBe('direct-model');
+    expect(getACPModelDisplay(null)).toBeNull();
+  });
   describe('isValidSessionMessageResponse', () => {
     it('should return true for valid response', () => {
       const validResponse = { messages: [], total: 0 };
