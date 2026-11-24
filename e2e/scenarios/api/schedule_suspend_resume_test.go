@@ -4,6 +4,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
@@ -64,7 +65,7 @@ func TestScheduleSuspendResume(t *testing.T) {
 	}
 	sessionID = first.SessionID
 	waitForSessionStatus(t, c, name, sessionID, 4*time.Minute, "active", "running", "stable")
-
+	t.Logf("session-pool inventory before suspend: %s", managerInventory(t, c))
 	suspendSession(t, c, sessionID, 2*time.Minute)
 	waitForSessionStatus(t, c, name, sessionID, 2*time.Minute, "suspended")
 
@@ -80,6 +81,28 @@ func triggerSchedule(t *testing.T, c *apitest.Client, schedulePath string) trigg
 	var out triggerResult
 	request(t, c, http.MethodPost, schedulePath+"/trigger", nil, &out, http.StatusOK)
 	return out
+}
+
+func managerInventory(t *testing.T, c *apitest.Client) string {
+	t.Helper()
+	var out struct {
+		SessionManagers []struct {
+			Manager struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"manager"`
+			Status struct {
+				RunningRunnerIDs []string `json:"running_runner_ids"`
+			} `json:"status"`
+		} `json:"session_managers"`
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := c.Do(ctx, http.MethodGet, "/session-pools/status", nil, &out, http.StatusOK); err != nil {
+		return "unavailable: " + err.Error()
+	}
+	raw, _ := json.Marshal(out.SessionManagers)
+	return string(raw)
 }
 
 func suspendSession(t *testing.T, c *apitest.Client, sessionID string, timeout time.Duration) {
@@ -100,7 +123,7 @@ func suspendSession(t *testing.T, c *apitest.Client, sessionID string, timeout t
 			return
 		}
 		if !strings.Contains(strings.ToLower(response.Message), "session is busy") {
-			t.Fatalf("suspend session %s failed: %s", sessionID, response.Message)
+			t.Fatalf("suspend session %s failed: %s; manager inventory: %s", sessionID, response.Message, managerInventory(t, c))
 		}
 		if time.Now().Add(2 * time.Second).After(deadline) {
 			t.Fatal("session remained busy while waiting to suspend")
