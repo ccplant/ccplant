@@ -47,6 +47,7 @@ e2e APIサービスにはstdio MCPモードがあり、`start_e2e`と`reload_e2e
 - `E2E_TARGET_FRONTEND_URL`: Playwrightシナリオの検証対象frontend
 - `E2E_AUTH_TYPE`: `none`、`bearer`、`api-key`。省略時はtokenがあれば`bearer`、なければ`none`
 - `E2E_AUTH_VALUE`: 対象環境のtoken。MCP設定のsecret環境変数として渡す
+- Cloudflare Accessで保護されたfrontendをPlaywrightで検証する場合は、`E2E_CF_ACCESS_CLIENT_ID` と `E2E_CF_ACCESS_CLIENT_SECRET` を両方設定します。Playwrightは `CF-Access-Client-Id` / `CF-Access-Client-Secret` headerとして使用します。値は環境変数のsecretとして渡し、コマンド引数やログに含めないでください。認証情報をheaderに設定したrunでは、trace artifactに値が残らないようtrace recordingを無効にします。
 
 `reload_e2e_scenarios`は`E2E_CATALOG`（既定値`scenarios/catalog.yaml`）を再読込し、検証に成功した場合だけ稼働中のカタログを差し替えます。すでに作成済みのrunは作成時のscenario定義を使用します。
 
