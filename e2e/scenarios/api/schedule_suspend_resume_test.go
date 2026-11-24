@@ -100,7 +100,7 @@ func suspendSession(t *testing.T, c *apitest.Client, sessionID string, timeout t
 			return
 		}
 		if !strings.Contains(strings.ToLower(response.Message), "session is busy") {
-			t.Fatalf("suspend failed: %s", response.Message)
+			t.Fatalf("suspend session %s failed: %s", sessionID, response.Message)
 		}
 		if time.Now().Add(2 * time.Second).After(deadline) {
 			t.Fatal("session remained busy while waiting to suspend")
