@@ -258,7 +258,8 @@ func (c *SessionController) routeSessionData(ctx context.Context, route *reposit
 		description = route.Annotations.Description
 	}
 	data := map[string]interface{}{
-		"session_id": route.SessionID, "allocated_session_id": route.RemoteSessionID, "user_id": route.UserID,
+		"session_id": route.SessionID, "allocated_session_id": route.RemoteSessionID,
+		"manager_id": route.ManagerID, "remote_session_id": route.RemoteSessionID, "user_id": route.UserID,
 		"scope": route.Scope, "team_id": route.TeamID, "status": routedSessionStatus(route, allocated),
 		"started_at": route.StartedAt, "updated_at": route.StartedAt, "last_message_at": route.StartedAt,
 		"addr": "", "tags": tags, "annotations": route.Annotations, "metadata": map[string]interface{}{"description": description},
