@@ -173,6 +173,34 @@ func TestGetSessionRepairsStockAdoptionMetadataFromService(t *testing.T) {
 	}
 }
 
+func TestGetSessionDoesNotRestoreRunnerOwnedByDifferentSessionManager(t *testing.T) {
+	manager := newWorkloadTestManager(t, true)
+	manager.config.SessionManager.ID = "manager-a"
+	manager.config.SessionManager.RunnerPool = "fly-dev"
+	serviceName := "agentapi-session-runner-remote-svc"
+	_, err := manager.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"agentapi.proxy/session-id":         "runner-remote",
+				"agentapi.proxy/session-manager-id": "manager-b",
+				"agentapi.proxy/user-id":            "test-user",
+			},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if session := manager.GetSession("runner-remote"); session != nil {
+		t.Fatalf("runner owned by manager-b was restored by manager-a: %#v", session)
+	}
+	if _, exists := manager.sessions["runner-remote"]; exists {
+		t.Fatal("foreign runner was added to the local session map")
+	}
+}
+
 func TestSessionWorkloadReadyFallsBackToReadyPodWhenDeploymentStatusLags(t *testing.T) {
 	manager := newWorkloadTestManager(t, true)
 	session := newWorkloadTestSession()

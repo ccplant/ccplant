@@ -41,6 +41,13 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 		if !errors.IsNotFound(err) {
 			log.Printf("[K8S_SESSION] Failed to get service %s: %v", serviceName, err)
 		}
+		// Pool runners belong to the Session Manager that created their
+		// Kubernetes resources. A different Session Manager may share the
+		// namespace and even observe the runner through aggregate pool inventory,
+		// but must not restore it into its local session map or operate on it.
+		if errors.IsNotFound(err) && m.config != nil && m.config.SessionManager.ID != "" {
+			return nil
+		}
 		// If we can't reach K8s but have the session in memory, still return it
 		if exists {
 			return session
@@ -54,6 +61,12 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 			return session
 		}
 		return nil
+	}
+	if m.config != nil && m.config.SessionManager.RunnerPool != "" {
+		owner := svc.Labels["agentapi.proxy/session-manager-id"]
+		if owner != "" && owner != sanitizeLabelValue(m.config.SessionManager.ID) {
+			return nil
+		}
 	}
 
 	// Repair adoption metadata from the canonical Service instead of doing a full
