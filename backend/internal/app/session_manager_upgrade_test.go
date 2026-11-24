@@ -58,7 +58,7 @@ func TestReconcileSessionManagerVersionUpgradesDeploymentAndFutureSessions(t *te
 	cfg := &config.Config{SessionManager: config.SessionManagerConfig{
 		AutoUpgrade: true, DeploymentName: "manager", ImageRepository: "example/manager", CurrentVersion: "v1.2.3",
 	}}
-	if err := reconcileSessionManagerVersion(context.Background(), cfg, client, "sessions", "v1.3.0"); err != nil {
+	if err := reconcileSessionManagerVersion(sessionManagerUpgrade{ctx: context.Background(), config: cfg, client: client, namespace: "sessions", desired: "v1.3.0"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := client.AppsV1().Deployments("sessions").Get(context.Background(), "manager", metav1.GetOptions{})
@@ -92,7 +92,7 @@ func TestReconcileSessionManagerVersionLeavesLegacyLeaseForInstallerMigration(t 
 	cfg := &config.Config{SessionManager: config.SessionManagerConfig{
 		AutoUpgrade: true, DeploymentName: "manager", ImageRepository: "example/manager", CurrentVersion: "v1.2.3",
 	}}
-	if err := reconcileSessionManagerVersion(context.Background(), cfg, client, "sessions", "v1.3.0"); err != nil {
+	if err := reconcileSessionManagerVersion(sessionManagerUpgrade{ctx: context.Background(), config: cfg, client: client, namespace: "sessions", desired: "v1.3.0"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := client.AppsV1().Deployments("sessions").Get(context.Background(), "manager", metav1.GetOptions{})
@@ -114,7 +114,7 @@ func TestReconcileSessionManagerVersionDoesNotDowngrade(t *testing.T) {
 	cfg := &config.Config{SessionManager: config.SessionManagerConfig{
 		AutoUpgrade: true, DeploymentName: "manager", ImageRepository: "example/manager", CurrentVersion: "v1.3.0",
 	}}
-	if err := reconcileSessionManagerVersion(context.Background(), cfg, client, "sessions", "v1.2.3"); err != nil {
+	if err := reconcileSessionManagerVersion(sessionManagerUpgrade{ctx: context.Background(), config: cfg, client: client, namespace: "sessions", desired: "v1.2.3"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.Actions()) != 0 {
@@ -143,7 +143,7 @@ func TestReconcileSessionManagerVersionPreservesCustomCLIAndLegacySupport(t *tes
 			env := []corev1.EnvVar{{Name: "AGENTAPI_K8S_SESSION_IMAGE", Value: tc.session}, {Name: "AGENTAPI_K8S_SESSION_CLI_IMAGE", Value: tc.cli}}
 			client := fake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "manager", Namespace: "sessions"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "session-manager", Image: "example/manager:v1.2.3", Env: env}}}}}})
 			cfg := &config.Config{SessionManager: config.SessionManagerConfig{AutoUpgrade: true, DeploymentName: "manager", ImageRepository: "example/manager", CurrentVersion: "v1.2.3"}}
-			if err := reconcileSessionManagerVersion(context.Background(), cfg, client, "sessions", "v1.3.0"); err != nil {
+			if err := reconcileSessionManagerVersion(sessionManagerUpgrade{ctx: context.Background(), config: cfg, client: client, namespace: "sessions", desired: "v1.3.0"}); err != nil {
 				t.Fatal(err)
 			}
 			got, err := client.AppsV1().Deployments("sessions").Get(context.Background(), "manager", metav1.GetOptions{})
