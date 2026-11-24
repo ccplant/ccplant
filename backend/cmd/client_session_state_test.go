@@ -65,7 +65,7 @@ func TestWriteSessionStateVolumeAtomicallyCreatesArchive(t *testing.T) {
 	// The production archive lives inside the persisted workdir. Packing a
 	// non-Git workspace must not include the archive (or its temporary file).
 	path := filepath.Join(cwd, ".agentapi", "session-state.tar.zst")
-	if err := writeSessionStateVolume(path, "codex-acp", "thread-1", home, cwd); err != nil {
+	if err := writeSessionStateVolume(sessionStateVolumeRequest{path: path, agentType: "codex-acp", acpSessionID: "thread-1", home: home, cwd: cwd}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)

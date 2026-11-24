@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	testassert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +18,7 @@ func TestEnrollNativeManager(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/session-managers/enroll", r.URL.Path)
 		require.Empty(t, r.Header.Get("Authorization"))
-		_ = json.NewEncoder(w).Encode(nativeRegistrationResponse{ID: "manager-1", ConnectionToken: "connection-token", Created: true})
+		testassert.NoError(t, json.NewEncoder(w).Encode(nativeRegistrationResponse{ID: "manager-1", ConnectionToken: "connection-token", Created: true}))
 	}))
 	defer server.Close()
 
@@ -63,9 +64,13 @@ func TestParseNativeManagerEnvironment(t *testing.T) {
 	require.Equal(t, "PATH", key)
 	require.Equal(t, "/opt/mise/bin:/usr/bin:/bin", value)
 
-	_, _, err = parseNativeManagerEnvironment("1INVALID=value")
+	key, value, err = parseNativeManagerEnvironment("1INVALID=value")
+	require.Empty(t, key)
+	require.Empty(t, value)
 	require.EqualError(t, err, `invalid --manager-env "1INVALID=value"; expected KEY=VALUE`)
-	_, _, err = parseNativeManagerEnvironment("MISSING_VALUE")
+	key, value, err = parseNativeManagerEnvironment("MISSING_VALUE")
+	require.Empty(t, key)
+	require.Empty(t, value)
 	require.EqualError(t, err, `invalid --manager-env "MISSING_VALUE"; expected KEY=VALUE`)
 }
 
@@ -167,9 +172,11 @@ func TestNativeLogPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "/logs/native.log", path)
 
-	_, err = nativeLogPath(paths, cfg, "../session-1", false)
+	path, err = nativeLogPath(paths, cfg, "../session-1", false)
+	require.Empty(t, path)
 	require.EqualError(t, err, "invalid session ID")
-	_, err = nativeLogPath(paths, cfg, "", false)
+	path, err = nativeLogPath(paths, cfg, "", false)
+	require.Empty(t, path)
 	require.EqualError(t, err, "session ID is required (or use --daemon)")
 }
 
@@ -227,7 +234,8 @@ func TestNativeInstallPathsDefaultDarwinUsesCcplantBinary(t *testing.T) {
 	if err != nil {
 		t.Skipf("darwin paths require a home directory on this host: %v", err)
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "config.json"), paths.config)
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "credentials.json"), paths.credentials)
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "state"), paths.state)
@@ -241,7 +249,8 @@ func TestNativeInstallPathsNonDefaultDarwinIsIsolated(t *testing.T) {
 	if err != nil {
 		t.Skipf("darwin paths require a home directory on this host: %v", err)
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "config.json"), paths.config)
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "credentials.json"), paths.credentials)
 	// macOS installs a per-instance binary copy, so it is not shared.

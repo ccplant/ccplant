@@ -40,7 +40,9 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = shutdownTelemetry(shutdownCtx)
+		if err := shutdownTelemetry(shutdownCtx); err != nil {
+			log.Printf("Failed to shut down telemetry: %v", err)
+		}
 	}()
 
 	cfg, err := loadRuntimeConfig(workerConfigPath)
@@ -72,10 +74,13 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 		WithSessionAPIURL(cfg.Worker.SessionAPIURL)
 	slackRepo := controlapi.NewSlackBotRepository(remote)
 	startupCtx, startupCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	_, err = slackRepo.ListAll(startupCtx)
+	startupBots, err := slackRepo.ListAll(startupCtx)
 	startupCancel()
 	if err != nil {
 		return fmt.Errorf("worker control API startup check failed: %w", err)
+	}
+	if workerVerbose {
+		log.Printf("Worker control API startup check found %d Slack bots", len(startupBots))
 	}
 	leaseClient := remote
 
@@ -249,7 +254,7 @@ type remoteScheduleWorker struct {
 }
 
 func newRemoteScheduleWorker(cfg *config.Config, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient, namespace string) *remoteScheduleWorker {
-	interval, _ := time.ParseDuration(cfg.ScheduleWorker.CheckInterval)
+	interval := parseWorkerDuration("schedule check interval", cfg.ScheduleWorker.CheckInterval)
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -316,17 +321,17 @@ func (w *remoteScheduleWorker) processOnce(ctx context.Context) {
 func (w *remoteScheduleWorker) Stop() {}
 
 func newRemoteCleanupWorker(cfg *config.Config, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient, namespace string) *slackbotcleanup.LeaderCleanupWorker {
-	check, _ := time.ParseDuration(cfg.SlackbotCleanupWorker.CheckInterval)
-	ttl, _ := time.ParseDuration(cfg.SlackbotCleanupWorker.SessionTTL)
-	ttlCheck, _ := time.ParseDuration(cfg.SlackbotCleanupWorker.SessionTTLCheckInterval)
+	check := parseWorkerDuration("cleanup check interval", cfg.SlackbotCleanupWorker.CheckInterval)
+	ttl := parseWorkerDuration("cleanup session TTL", cfg.SlackbotCleanupWorker.SessionTTL)
+	ttlCheck := parseWorkerDuration("cleanup session TTL check interval", cfg.SlackbotCleanupWorker.SessionTTLCheckInterval)
 	election := workerElection(cfg.SlackbotCleanupWorker.LeaseDuration, cfg.SlackbotCleanupWorker.RenewDeadline, cfg.SlackbotCleanupWorker.RetryPeriod, schedule.SlackbotCleanupWorkerLeaseName, namespace)
 	return slackbotcleanup.NewLeaderCleanupWorker(remote, leaseClient, slackbotcleanup.CleanupWorkerConfig{CheckInterval: check, SessionTTL: ttl, SessionTTLCheckInterval: ttlCheck, Enabled: true, DryRun: cfg.SlackbotCleanupWorker.DryRun}, election)
 }
 
 func workerElection(lease, renew, retry, name, namespace string) schedule.LeaderElectionConfig {
-	l, _ := time.ParseDuration(lease)
-	r, _ := time.ParseDuration(renew)
-	p, _ := time.ParseDuration(retry)
+	l := parseWorkerDuration("leader election lease", lease)
+	r := parseWorkerDuration("leader election renew deadline", renew)
+	p := parseWorkerDuration("leader election retry period", retry)
 	if l <= 0 {
 		l = 9 * time.Minute
 	}
@@ -337,6 +342,14 @@ func workerElection(lease, renew, retry, name, namespace string) schedule.Leader
 		p = time.Minute
 	}
 	return schedule.LeaderElectionConfig{LeaseDuration: l, RenewDeadline: r, RetryPeriod: p, LeaseName: name, Namespace: namespace}
+}
+
+func parseWorkerDuration(name, value string) time.Duration {
+	duration, err := time.ParseDuration(value)
+	if err != nil && value != "" {
+		log.Printf("Invalid %s %q; using the default: %v", name, value, err)
+	}
+	return duration
 }
 
 func loadRuntimeConfig(path string) (*config.Config, error) {

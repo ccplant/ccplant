@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	testassert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
@@ -47,7 +48,7 @@ func TestAPITriggersUseStartEndpoint(t *testing.T) {
 		}
 		starts = append(starts, start)
 		origins = append(origins, claims)
-		_ = json.NewEncoder(w).Encode(map[string]string{"session_id": claims.SessionID})
+		testassert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"session_id": claims.SessionID}))
 	}))
 	defer api.Close()
 	u, err := url.Parse(api.URL)

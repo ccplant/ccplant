@@ -122,8 +122,6 @@ func TestSetupGHFlags(t *testing.T) {
 }
 
 func TestSetGitHubEnvFromFlags(t *testing.T) {
-	// Save original environment
-	originalEnv := make(map[string]string)
 	envVars := []string{
 		"GITHUB_APP_ID",
 		"GITHUB_INSTALLATION_ID",
@@ -136,20 +134,8 @@ func TestSetGitHubEnvFromFlags(t *testing.T) {
 	}
 
 	for _, envVar := range envVars {
-		originalEnv[envVar] = os.Getenv(envVar)
-		_ = os.Unsetenv(envVar)
+		t.Setenv(envVar, "")
 	}
-
-	defer func() {
-		// Restore original environment
-		for _, envVar := range envVars {
-			if val, ok := originalEnv[envVar]; ok && val != "" {
-				_ = os.Setenv(envVar, val)
-			} else {
-				_ = os.Unsetenv(envVar)
-			}
-		}
-	}()
 
 	// Set flag variables
 	githubAppID = "test-app-id"
@@ -210,9 +196,7 @@ func TestMergeMCPConfigCmdInSubcommands(t *testing.T) {
 
 func TestRunMergeMCPConfig(t *testing.T) {
 	// Create temp directories
-	tmpDir, err := os.MkdirTemp("", "mcp-merge-test-*")
-	require.NoError(t, err)
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	inputDir := filepath.Join(tmpDir, "input")
 	require.NoError(t, os.MkdirAll(inputDir, 0755))
@@ -237,7 +221,7 @@ func TestRunMergeMCPConfig(t *testing.T) {
 	mcpMergeVerbose = false
 
 	// Run the command
-	err = runMergeMCPConfig(&cobra.Command{}, []string{})
+	err := runMergeMCPConfig(&cobra.Command{}, []string{})
 	require.NoError(t, err)
 
 	// Verify output file was created
@@ -261,9 +245,7 @@ func TestRunMergeMCPConfig(t *testing.T) {
 
 func TestRunMergeMCPConfigWithEnvExpansion(t *testing.T) {
 	// Create temp directories
-	tmpDir, err := os.MkdirTemp("", "mcp-merge-env-test-*")
-	require.NoError(t, err)
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	inputDir := filepath.Join(tmpDir, "input")
 	require.NoError(t, os.MkdirAll(inputDir, 0755))
@@ -280,8 +262,7 @@ func TestRunMergeMCPConfigWithEnvExpansion(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "config.json"), []byte(config), 0644))
 
 	// Set env var
-	require.NoError(t, os.Setenv("TEST_MCP_URL", "https://custom.example.com"))
-	defer func() { _ = os.Unsetenv("TEST_MCP_URL") }()
+	t.Setenv("TEST_MCP_URL", "https://custom.example.com")
 
 	outputPath := filepath.Join(tmpDir, "output", "merged.json")
 
@@ -292,7 +273,7 @@ func TestRunMergeMCPConfigWithEnvExpansion(t *testing.T) {
 	mcpMergeVerbose = false
 
 	// Run the command
-	err = runMergeMCPConfig(&cobra.Command{}, []string{})
+	err := runMergeMCPConfig(&cobra.Command{}, []string{})
 	require.NoError(t, err)
 
 	// Read and verify content
@@ -311,9 +292,7 @@ func TestRunMergeMCPConfigWithEnvExpansion(t *testing.T) {
 
 func TestRunMergeMCPConfigMultipleDirs(t *testing.T) {
 	// Create temp directories
-	tmpDir, err := os.MkdirTemp("", "mcp-merge-multi-test-*")
-	require.NoError(t, err)
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	baseDir := filepath.Join(tmpDir, "base")
 	userDir := filepath.Join(tmpDir, "user")
@@ -345,7 +324,7 @@ func TestRunMergeMCPConfigMultipleDirs(t *testing.T) {
 	mcpMergeVerbose = false
 
 	// Run the command
-	err = runMergeMCPConfig(&cobra.Command{}, []string{})
+	err := runMergeMCPConfig(&cobra.Command{}, []string{})
 	require.NoError(t, err)
 
 	// Read and verify content - user should override base

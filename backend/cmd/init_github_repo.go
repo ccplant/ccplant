@@ -64,9 +64,18 @@ func RunInitGitHubRepo(repoFullName, cloneDir string, ignoreMissingConfig bool) 
 }
 
 func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
-	repoFullName, _ := cmd.Flags().GetString("repo-fullname")
-	cloneDir, _ := cmd.Flags().GetString("clone-dir")
-	ignoreMissingConfig, _ := cmd.Flags().GetBool("ignore-missing-config")
+	repoFullName, err := cmd.Flags().GetString("repo-fullname")
+	if err != nil {
+		return fmt.Errorf("read repo-fullname flag: %w", err)
+	}
+	cloneDir, err := cmd.Flags().GetString("clone-dir")
+	if err != nil {
+		return fmt.Errorf("read clone-dir flag: %w", err)
+	}
+	ignoreMissingConfig, err := cmd.Flags().GetBool("ignore-missing-config")
+	if err != nil {
+		return fmt.Errorf("read ignore-missing-config flag: %w", err)
+	}
 
 	return initGitHubRepoInternal(repoFullName, cloneDir, ignoreMissingConfig)
 }
@@ -83,58 +92,12 @@ func initGitHubRepoInternal(repoFullNameParam, cloneDirParam string, ignoreMissi
 		return fmt.Errorf("repository fullname is required (use --repo-fullname flag or GITHUB_REPO_FULLNAME environment variable)")
 	}
 
-	token := os.Getenv("GITHUB_TOKEN")
-
-	// If no token provided, try to generate one from GitHub App credentials
+	token, err := resolveGitHubInitToken(repoFullName, ignoreMissingConfig)
+	if err != nil {
+		return err
+	}
 	if token == "" {
-		if ignoreMissingConfig {
-			fmt.Println("Skipping GitHub setup due to --ignore-missing-config flag")
-			return nil
-		}
-		fmt.Println("No GITHUB_TOKEN found, attempting to generate from GitHub App credentials...")
-
-		appID, err := parseAppID(os.Getenv("GITHUB_APP_ID"))
-		if err != nil {
-			return fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
-		}
-
-		installationIDStr := os.Getenv("GITHUB_INSTALLATION_ID")
-		var installationID int64
-
-		if installationIDStr != "" {
-			// Use manually provided installation ID
-			installationID, err = parseInstallationID(installationIDStr)
-			if err != nil {
-				return fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
-			}
-		} else {
-			// Auto-detect installation ID using cache
-			fmt.Println("No GITHUB_INSTALLATION_ID provided, attempting auto-detection with cache...")
-			installationID, err = findInstallationIDForRepoWithCache(appID, os.Getenv("GITHUB_APP_PEM_PATH"), repoFullName, getAPIBase())
-			if err != nil {
-				return fmt.Errorf("failed to auto-detect installation ID: %w", err)
-			}
-			fmt.Printf("Auto-detected installation ID: %d\n", installationID)
-		}
-
-		appConfig := GitHubAppConfig{
-			AppID:          appID,
-			InstallationID: installationID,
-			PEMPath:        os.Getenv("GITHUB_APP_PEM_PATH"),
-			APIBase:        getAPIBase(),
-		}
-
-		if appConfig.AppID == 0 || appConfig.InstallationID == 0 || appConfig.PEMPath == "" {
-			return fmt.Errorf("either GITHUB_TOKEN or GitHub App credentials (GITHUB_APP_ID, GITHUB_APP_PEM_PATH) must be provided")
-		}
-
-		generatedToken, err := generateInstallationToken(appConfig)
-		if err != nil {
-			return fmt.Errorf("failed to generate installation token: %w", err)
-		}
-
-		token = generatedToken
-		fmt.Println("Successfully generated installation token")
+		return nil
 	}
 
 	// Authenticate gh CLI for Enterprise Server if GITHUB_URL is set
@@ -146,15 +109,9 @@ func initGitHubRepoInternal(repoFullNameParam, cloneDirParam string, ignoreMissi
 	}
 
 	// Get clone directory from flag or environment variable
-	if cloneDir == "" {
-		cloneDir = os.Getenv("GITHUB_CLONE_DIR")
-	}
-	if cloneDir == "" {
-		var err error
-		cloneDir, err = os.Getwd()
-		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
-		}
+	cloneDir, err = resolveGitHubCloneDir(cloneDir)
+	if err != nil {
+		return err
 	}
 
 	// Convert fullname to URL for cloning
@@ -162,8 +119,7 @@ func initGitHubRepoInternal(repoFullNameParam, cloneDirParam string, ignoreMissi
 
 	// Setup repository
 	if err := setupRepository(repoURL, token, cloneDir); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to setup repository: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to setup repository: %w", err)
 	}
 
 	// Setup MCP integration
@@ -178,6 +134,66 @@ func initGitHubRepoInternal(repoFullNameParam, cloneDirParam string, ignoreMissi
 
 	fmt.Println("GitHub repository initialization completed successfully!")
 	return nil
+}
+
+func resolveGitHubInitToken(repoFullName string, ignoreMissingConfig bool) (string, error) {
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		return token, nil
+	}
+	if ignoreMissingConfig {
+		fmt.Println("Skipping GitHub setup due to --ignore-missing-config flag")
+		return "", nil
+	}
+	fmt.Println("No GITHUB_TOKEN found, attempting to generate from GitHub App credentials...")
+	appID, err := parseAppID(os.Getenv("GITHUB_APP_ID"))
+	if err != nil {
+		return "", fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
+	}
+	installationID, err := resolveGitHubInstallationID(appID, repoFullName)
+	if err != nil {
+		return "", err
+	}
+	config := GitHubAppConfig{AppID: appID, InstallationID: installationID, PEMPath: os.Getenv("GITHUB_APP_PEM_PATH"), APIBase: getAPIBase()}
+	if config.AppID == 0 || config.InstallationID == 0 || config.PEMPath == "" {
+		return "", fmt.Errorf("either GITHUB_TOKEN or GitHub App credentials (GITHUB_APP_ID, GITHUB_APP_PEM_PATH) must be provided")
+	}
+	token, err := generateInstallationToken(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate installation token: %w", err)
+	}
+	fmt.Println("Successfully generated installation token")
+	return token, nil
+}
+
+func resolveGitHubInstallationID(appID int64, repoFullName string) (int64, error) {
+	if value := os.Getenv("GITHUB_INSTALLATION_ID"); value != "" {
+		installationID, err := parseInstallationID(value)
+		if err != nil {
+			return 0, fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
+		}
+		return installationID, nil
+	}
+	fmt.Println("No GITHUB_INSTALLATION_ID provided, attempting auto-detection with cache...")
+	installationID, err := findInstallationIDForRepoWithCache(appID, os.Getenv("GITHUB_APP_PEM_PATH"), repoFullName, getAPIBase())
+	if err != nil {
+		return 0, fmt.Errorf("failed to auto-detect installation ID: %w", err)
+	}
+	fmt.Printf("Auto-detected installation ID: %d\n", installationID)
+	return installationID, nil
+}
+
+func resolveGitHubCloneDir(configured string) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+	if cloneDir := os.Getenv("GITHUB_CLONE_DIR"); cloneDir != "" {
+		return cloneDir, nil
+	}
+	cloneDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current directory: %w", err)
+	}
+	return cloneDir, nil
 }
 
 func getAPIBase() string {
@@ -234,13 +250,16 @@ func generateInstallationToken(config GitHubAppConfig) (string, error) {
 
 	// Create installation token
 	ctx := context.Background()
-	token, _, err := client.Apps.CreateInstallationToken(
+	token, response, err := client.Apps.CreateInstallationToken(
 		ctx,
 		config.InstallationID,
 		&github.InstallationTokenOptions{},
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create installation token: %w", err)
+	}
+	if token == nil || response == nil {
+		return "", fmt.Errorf("GitHub installation token response was incomplete")
 	}
 
 	return token.GetToken(), nil
@@ -263,62 +282,51 @@ func setupRepository(repoURL, token, cloneDir string) error {
 	}
 
 	if isGitRepo {
-		fmt.Println("Git repository detected, updating...")
-		cmd := exec.Command("git", "pull")
-		cmd.Dir = cloneDir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to pull updates: %w", err)
-		}
-	} else {
-		fmt.Println("Initializing new git repository...")
-
-		// Create directory if it doesn't exist
-		if err := os.MkdirAll(cloneDir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
-
-		// Initialize git
-		cmd := exec.Command("git", "init")
-		cmd.Dir = cloneDir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to initialize git: %w", err)
-		}
-
-		// Add remote
-		cmd = exec.Command("git", "remote", "add", "origin", authURL)
-		cmd.Dir = cloneDir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to add remote: %w", err)
-		}
-
-		// Fetch
-		cmd = exec.Command("git", "fetch")
-		cmd.Dir = cloneDir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to fetch: %w", err)
-		}
-
-		// Try to checkout main, fall back to master
-		branches := []string{"main", "master"}
-		var checkoutErr error
-		for _, branch := range branches {
-			cmd = exec.Command("git", "checkout", branch)
-			cmd.Dir = cloneDir
-			if err := cmd.Run(); err != nil {
-				checkoutErr = err
-				continue
-			}
-			checkoutErr = nil
-			break
-		}
-
-		if checkoutErr != nil {
-			return fmt.Errorf("failed to checkout main or master branch: %w", checkoutErr)
-		}
+		return updateGitHubRepository(cloneDir)
 	}
-
+	if err := initializeGitHubRepository(cloneDir, authURL); err != nil {
+		return err
+	}
 	fmt.Println("Repository setup completed")
 	return nil
+}
+
+func updateGitHubRepository(cloneDir string) error {
+	fmt.Println("Git repository detected, updating...")
+	cmd := exec.Command("git", "pull")
+	cmd.Dir = cloneDir
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to pull updates: %w", err)
+	}
+	fmt.Println("Repository setup completed")
+	return nil
+}
+
+func initializeGitHubRepository(cloneDir, authURL string) error {
+	fmt.Println("Initializing new git repository...")
+	if err := os.MkdirAll(cloneDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	commands := []struct {
+		args  []string
+		label string
+	}{{[]string{"init"}, "initialize git"}, {[]string{"remote", "add", "origin", authURL}, "add remote"}, {[]string{"fetch"}, "fetch"}}
+	for _, command := range commands {
+		cmd := exec.Command("git", command.args...)
+		cmd.Dir = cloneDir
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to %s: %w", command.label, err)
+		}
+	}
+	var checkoutErr error
+	for _, branch := range []string{"main", "master"} {
+		cmd := exec.Command("git", "checkout", branch)
+		cmd.Dir = cloneDir
+		if checkoutErr = cmd.Run(); checkoutErr == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("failed to checkout main or master branch: %w", checkoutErr)
 }
 
 func setupMCPIntegration(token, cloneDir string) error {
@@ -359,69 +367,4 @@ func parseAppID(appIDStr string) (int64, error) {
 		return 0, fmt.Errorf("GITHUB_APP_ID must be a valid integer: %w", err)
 	}
 	return appID, nil
-}
-
-func parseInstallationID(installationIDStr string) (int64, error) {
-	if installationIDStr == "" {
-		return 0, fmt.Errorf("GITHUB_INSTALLATION_ID is required")
-	}
-	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("GITHUB_INSTALLATION_ID must be a valid integer: %w", err)
-	}
-	return installationID, nil
-}
-
-// findInstallationIDForRepoWithCache uses the installation cache to find installation ID
-func findInstallationIDForRepoWithCache(appID int64, pemPath, repoFullName, apiBase string) (int64, error) {
-	// Read private key - try file first, then fallback to environment variable
-	var pemData []byte
-
-	// Try to read from file first
-	pemData, err := os.ReadFile(pemPath)
-	if err != nil {
-		// If file read fails, try to get from environment variable
-		if pemContent := os.Getenv("GITHUB_APP_PEM"); pemContent != "" {
-			pemData = []byte(pemContent)
-		} else {
-			return 0, fmt.Errorf("failed to read PEM file %s and GITHUB_APP_PEM environment variable not set: %w", pemPath, err)
-		}
-	}
-
-	ctx := context.Background()
-	return installationCache.GetInstallationID(ctx, appID, pemData, repoFullName, apiBase)
-}
-
-// Legacy function kept for backward compatibility
-func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase string) (int64, error) {
-	return findInstallationIDForRepoWithCache(appID, pemPath, repoFullName, apiBase)
-}
-
-func authenticateGHCLI(githubURL, token string) error {
-	fmt.Printf("Authenticating gh CLI for Enterprise Server: %s\n", githubURL)
-
-	// Use gh auth login with token for Enterprise Server
-	cmd := exec.Command("gh", "auth", "login", "--hostname", extractHostname(githubURL), "--with-token")
-	cmd.Stdin = strings.NewReader(token)
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("gh auth login failed: %w, stderr: %s", err, stderr.String())
-	}
-
-	fmt.Printf("Successfully authenticated gh CLI for %s\n", githubURL)
-	return nil
-}
-
-func extractHostname(githubURL string) string {
-	return github_pkg.ExtractHostname(githubURL)
-}
-
-func init() {
-	initGitHubRepoCmd.Flags().BoolVar(&ignoreMissingConfig, "ignore-missing-config", false, "Skip execution when required configuration is not provided")
-	initGitHubRepoCmd.Flags().StringVar(&repoFullName, "repo-fullname", "", "GitHub repository in org/repo format")
-	initGitHubRepoCmd.Flags().StringVar(&cloneDir, "clone-dir", "", "Target directory for cloning")
-	HelpersCmd.AddCommand(initGitHubRepoCmd)
 }

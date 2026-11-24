@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/provisioner"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // AgentProvisionerCmd is the "agent-provisioner" sub-command.
@@ -231,7 +232,7 @@ func notifyTerminationSuspend(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("termination suspend failed: HTTP %d", resp.StatusCode)
 	}

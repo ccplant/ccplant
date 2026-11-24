@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 var antigravityAuthRequestFile string
@@ -30,7 +31,9 @@ var AntigravityAuthWorkerCmd = &cobra.Command{
 
 func init() {
 	AntigravityAuthWorkerCmd.Flags().StringVar(&antigravityAuthRequestFile, "request-file", "", "path to the authentication request")
-	_ = AntigravityAuthWorkerCmd.MarkFlagRequired("request-file")
+	if err := AntigravityAuthWorkerCmd.MarkFlagRequired("request-file"); err != nil {
+		panic(fmt.Sprintf("mark Antigravity request-file flag required: %v", err))
+	}
 }
 
 type antigravityInput struct {
@@ -107,60 +110,8 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 		return codexauth.Result{}, err
 	}
 
-	lines := make(chan string, 8)
-	scanErr := make(chan error, 1)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 4096), 64<<10)
-		for scanner.Scan() {
-			lines <- scanner.Text()
-		}
-		close(lines)
-		scanErr <- scanner.Err()
-	}()
-
-	var transcript strings.Builder
-	var verificationURI string
-	var inputVersion int64
-	poll := time.NewTicker(time.Second)
-	defer poll.Stop()
-	for lines != nil {
-		select {
-		case line, ok := <-lines:
-			if !ok {
-				lines = nil
-				continue
-			}
-			clean := codexAuthANSIRegex.ReplaceAllString(line, "")
-			if transcript.Len() < 16<<10 {
-				transcript.WriteString(clean)
-				transcript.WriteByte('\n')
-			}
-			if verificationURI == "" {
-				verificationURI = codexAuthURLRegex.FindString(clean)
-			}
-			if verificationURI != "" {
-				challenge := codexauth.Challenge{VerificationURI: verificationURI, Transcript: transcript.String()}
-				_ = postCodexAuthJSON(ctx, request, "challenge", challenge)
-			}
-		case <-poll.C:
-			if verificationURI == "" {
-				continue
-			}
-			input, err := fetchAntigravityInput(ctx, request, inputVersion)
-			if err == nil && input.Version > inputVersion {
-				inputVersion = input.Version
-				if _, err := io.WriteString(stdin, input.Input+"\n"); err != nil {
-					return codexauth.Result{}, err
-				}
-			}
-		case <-ctx.Done():
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-			return codexauth.Result{}, ctx.Err()
-		}
-	}
-	if err := <-scanErr; err != nil {
+	stream := &antigravityLoginStream{cmd: cmd, stdin: stdin, stdout: stdout}
+	if err := stream.run(ctx, request); err != nil {
 		return codexauth.Result{}, err
 	}
 	if err := cmd.Wait(); err != nil {
@@ -171,6 +122,95 @@ func executeAntigravityAuth(ctx context.Context, request codexauth.WorkloadReque
 		return codexauth.Result{}, err
 	}
 	return codexauth.Result{Status: codexauth.StatusAuthorized, AuthJSON: bundle}, nil
+}
+
+type antigravityLoginStream struct {
+	cmd             *exec.Cmd
+	stdin           io.Writer
+	stdout          io.Reader
+	transcript      strings.Builder
+	verificationURI string
+	inputVersion    int64
+}
+
+func (s *antigravityLoginStream) run(ctx context.Context, request codexauth.WorkloadRequest) error {
+	lines := make(chan string, 8)
+	scanErr := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(s.stdout)
+		scanner.Buffer(make([]byte, 4096), 64<<10)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		close(lines)
+		scanErr <- scanner.Err()
+	}()
+
+	poll := time.NewTicker(time.Second)
+	defer poll.Stop()
+	for lines != nil {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				lines = nil
+				continue
+			}
+			s.handleLine(ctx, request, line)
+		case <-poll.C:
+			if err := s.writePendingInput(ctx, request); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			if err := s.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				log.Printf("[ANTIGRAVITY_AUTH_WORKER] Failed to kill expired login process: %v", err)
+			}
+			if err := s.cmd.Wait(); err != nil {
+				log.Printf("[ANTIGRAVITY_AUTH_WORKER] Login process exit after cancellation: %v", err)
+			}
+			return ctx.Err()
+		}
+	}
+	if err := <-scanErr; err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *antigravityLoginStream) handleLine(ctx context.Context, request codexauth.WorkloadRequest, line string) {
+	clean := codexAuthANSIRegex.ReplaceAllString(line, "")
+	if s.transcript.Len() < 16<<10 {
+		s.transcript.WriteString(clean)
+		s.transcript.WriteByte('\n')
+	}
+	if s.verificationURI == "" {
+		s.verificationURI = codexAuthURLRegex.FindString(clean)
+	}
+	if s.verificationURI != "" {
+		challenge := codexauth.Challenge{VerificationURI: s.verificationURI, Transcript: s.transcript.String()}
+		if err := postCodexAuthJSON(ctx, request, "challenge", challenge); err != nil {
+			log.Printf("[ANTIGRAVITY_AUTH_WORKER] Failed to report challenge: %v", err)
+		}
+	}
+}
+
+func (s *antigravityLoginStream) writePendingInput(ctx context.Context, request codexauth.WorkloadRequest) error {
+	if s.verificationURI == "" {
+		return nil
+	}
+	input, err := fetchAntigravityInput(ctx, request, s.inputVersion)
+	if err != nil || input.Version <= s.inputVersion {
+		return nil
+	}
+	s.inputVersion = input.Version
+	payload := input.Input + "\n"
+	written, err := io.WriteString(s.stdin, payload)
+	if err != nil {
+		return err
+	}
+	if written != len(payload) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func antigravityAuthEnvironment(environment []string) []string {
@@ -191,7 +231,7 @@ func fetchAntigravityInput(ctx context.Context, request codexauth.WorkloadReques
 	if err != nil {
 		return antigravityInput{}, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode != http.StatusOK {
 		return antigravityInput{}, fmt.Errorf("input callback returned %d", resp.StatusCode)
 	}

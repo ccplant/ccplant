@@ -73,7 +73,7 @@ var userGetCmd = &cobra.Command{Use: "get <id>", Args: cobra.ExactArgs(1), RunE:
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 }}
 var userTokenCmd = &cobra.Command{Use: "token", Short: "Manage a user's API tokens"}
-var userTokenCreateCmd = &cobra.Command{Use: "create <user-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var userTokenCreateCmd = &cobra.Command{Use: "create <user-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) (returnErr error) {
 	if localSecretFile == "" {
 		return errors.New("--secret-file is required")
 	}
@@ -84,9 +84,11 @@ var userTokenCreateCmd = &cobra.Command{Use: "create <user-id>", Args: cobra.Exa
 	path := localSecretFile
 	ok := false
 	defer func() {
-		_ = f.Close()
 		if !ok {
-			_ = os.Remove(path)
+			returnErr = errors.Join(returnErr, f.Close())
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				returnErr = errors.Join(returnErr, fmt.Errorf("remove incomplete secret file: %w", err))
+			}
 		}
 	}()
 	c, err := resolveBaseClient()
@@ -133,12 +135,16 @@ func init() {
 	userRepairPrincipalCmd.Flags().StringVar(&principalRepairAvatarURL, "identity-avatar-url", "", "GitHub avatar URL recorded on a newly attached identity")
 	userRepairPrincipalCmd.Flags().BoolVar(&principalRepairReassignIdentity, "reassign-identity", false, "move an existing identity from another principal")
 	userCreateCmd.Flags().StringVar(&localUsername, "username", "", "Username (required)")
-	_ = userCreateCmd.MarkFlagRequired("username")
+	if err := userCreateCmd.MarkFlagRequired("username"); err != nil {
+		panic(fmt.Sprintf("mark username flag required: %v", err))
+	}
 	userCreateCmd.Flags().StringVar(&localDisplayName, "display-name", "", "Display name")
 	userCreateCmd.Flags().StringVar(&localEmail, "email", "", "Email")
 	userCreateCmd.Flags().StringVar(&localRole, "role", "user", "Role: user or admin")
 	userTokenCreateCmd.Flags().StringVar(&localTokenName, "name", "", "Token name (required)")
-	_ = userTokenCreateCmd.MarkFlagRequired("name")
+	if err := userTokenCreateCmd.MarkFlagRequired("name"); err != nil {
+		panic(fmt.Sprintf("mark token name flag required: %v", err))
+	}
 	userTokenCreateCmd.Flags().StringVar(&localExpiresIn, "expires-in", "720h", "Token lifetime")
 	userTokenCreateCmd.Flags().StringVar(&localSecretFile, "secret-file", "", "New file for the token secret (required)")
 	userTokenCmd.AddCommand(userTokenCreateCmd, userTokenListCmd, userTokenRevokeCmd)

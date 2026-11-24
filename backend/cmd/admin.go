@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/takutakahashi/agentapi-proxy/pkg/client"
 )
 
 type adminOptions struct {
@@ -59,6 +57,17 @@ type adminLogs struct {
 	Source string   `json:"source"`
 }
 
+func writeAdminText(w io.Writer, format string, args ...any) error {
+	written, err := fmt.Fprintf(w, format, args...)
+	if err != nil {
+		return err
+	}
+	if format != "" && written == 0 {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
 // AdminCmd exposes operator-oriented inspection commands.
 var AdminCmd = newAdminCommand()
 
@@ -90,13 +99,17 @@ or ~/.ccplant/config.yaml. The API token must have admin permission.`,
 			return writeJSON(cmd.OutOrStdout(), adminRunnerList{Runners: items})
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "RUNNER ID\tLIFECYCLE\tRUNNER\tWORKLOAD\tMANAGER\tSESSION ID\tMANAGER NAME\tPOOL\tLAST SEEN")
+		if err := writeAdminText(w, "RUNNER ID\tLIFECYCLE\tRUNNER\tWORKLOAD\tMANAGER\tSESSION ID\tMANAGER NAME\tPOOL\tLAST SEEN\n"); err != nil {
+			return err
+		}
 		for _, item := range items {
 			manager := item.ManagerName
 			if manager == "" {
 				manager = item.ManagerID
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, item.Status, adminRunnerConnectivity(item), emptyDash(item.WorkloadState), adminRunnerManagerConnectivity(item), emptyDash(item.SessionID), manager, emptyDash(item.Pool), formatAdminTime(item.LastSeen))
+			if err := writeAdminText(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, item.Status, adminRunnerConnectivity(item), emptyDash(item.WorkloadState), adminRunnerManagerConnectivity(item), emptyDash(item.SessionID), manager, emptyDash(item.Pool), formatAdminTime(item.LastSeen)); err != nil {
+				return err
+			}
 		}
 		return w.Flush()
 	}
@@ -116,9 +129,13 @@ or ~/.ccplant/config.yaml. The API token must have admin permission.`,
 			return writeJSON(cmd.OutOrStdout(), item)
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintf(w, "SESSION ID\t%s\nSTATUS\t%s\nUSER ID\t%s\nSTARTED AT\t%s\n", item.SessionID, item.Status, item.UserID, formatAdminTime(item.StartedAt))
+		if err := writeAdminText(w, "SESSION ID\t%s\nSTATUS\t%s\nUSER ID\t%s\nSTARTED AT\t%s\n", item.SessionID, item.Status, item.UserID, formatAdminTime(item.StartedAt)); err != nil {
+			return err
+		}
 		if item.AllocatedSessionID != "" {
-			_, _ = fmt.Fprintf(w, "ALLOCATED SESSION ID\t%s\n", item.AllocatedSessionID)
+			if err := writeAdminText(w, "ALLOCATED SESSION ID\t%s\n", item.AllocatedSessionID); err != nil {
+				return err
+			}
 		}
 		return w.Flush()
 	}
@@ -206,8 +223,7 @@ may leave resources in the manager cluster.`,
 			if opts.json {
 				return writeJSON(cmd.OutOrStdout(), map[string]any{"deleted": true, "runner": runner.ID, "manager_id": runner.ManagerID, "force": force})
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Deleted runner %s (manager=%s).\n", runner.ID, runner.ManagerID)
-			return nil
+			return writeAdminText(cmd.OutOrStdout(), "Deleted runner %s (manager=%s).\n", runner.ID, runner.ManagerID)
 		},
 	}
 	flags := command.Flags()
@@ -254,15 +270,17 @@ offline managers will not recover.`,
 					return writeJSON(cmd.OutOrStdout(), result)
 				}
 				if len(offline) == 0 {
-					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No offline runners found.")
-					return nil
+					return writeAdminText(cmd.OutOrStdout(), "No offline runners found.\n")
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Found %d offline runner(s):\n", len(offline))
+				if err := writeAdminText(cmd.OutOrStdout(), "Found %d offline runner(s):\n", len(offline)); err != nil {
+					return err
+				}
 				for _, item := range offline {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s (manager=%s, session=%s)\n", item.ID, item.ManagerID, emptyDash(item.SessionID))
+					if err := writeAdminText(cmd.OutOrStdout(), "  %s (manager=%s, session=%s)\n", item.ID, item.ManagerID, emptyDash(item.SessionID)); err != nil {
+						return err
+					}
 				}
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Preview only. Re-run with --confirm to clean them up.")
-				return nil
+				return writeAdminText(cmd.OutOrStdout(), "Preview only. Re-run with --confirm to clean them up.\n")
 			}
 
 			var failures []string
@@ -271,13 +289,17 @@ offline managers will not recover.`,
 					result.Failed++
 					failures = append(failures, fmt.Sprintf("%s (manager=%s): %v", item.ID, item.ManagerID, err))
 					if !opts.json {
-						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[FAILED] %s (manager=%s): %v\n", item.ID, item.ManagerID, err)
+						if writeErr := writeAdminText(cmd.OutOrStdout(), "[FAILED] %s (manager=%s): %v\n", item.ID, item.ManagerID, err); writeErr != nil {
+							return writeErr
+						}
 					}
 					continue
 				}
 				result.Deleted++
 				if !opts.json {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[DELETED] %s (manager=%s)\n", item.ID, item.ManagerID)
+					if err := writeAdminText(cmd.OutOrStdout(), "[DELETED] %s (manager=%s)\n", item.ID, item.ManagerID); err != nil {
+						return err
+					}
 				}
 			}
 			if opts.json {
@@ -285,7 +307,9 @@ offline managers will not recover.`,
 					return err
 				}
 			} else {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Cleaned up %d of %d offline runner(s).\n", result.Deleted, result.Matched)
+				if err := writeAdminText(cmd.OutOrStdout(), "Cleaned up %d of %d offline runner(s).\n", result.Deleted, result.Matched); err != nil {
+					return err
+				}
 			}
 			if len(failures) > 0 {
 				return fmt.Errorf("failed to clean up %d offline runner(s): %s", len(failures), strings.Join(failures, "; "))
@@ -350,7 +374,9 @@ func newAdminLogsCommand(opts *adminOptions, use, short string, get func(context
 			return writeJSON(cmd.OutOrStdout(), result)
 		}
 		for _, line := range result.Lines {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), line)
+			if err := writeAdminText(cmd.OutOrStdout(), "%s\n", line); err != nil {
+				return err
+			}
 		}
 		return nil
 	}}
@@ -360,139 +386,4 @@ type adminAPI struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
-}
-
-func (opts *adminOptions) api() (*adminAPI, error) {
-	endpoint, apiKey, err := resolveCLIConnection(context.Background(), opts.endpoint, opts.apiKey)
-	if err != nil {
-		return nil, err
-	}
-	return &adminAPI{baseURL: strings.TrimRight(endpoint, "/"), apiKey: apiKey, client: http.DefaultClient}, nil
-}
-
-func (a *adminAPI) get(ctx context.Context, path string, query url.Values, out any) error {
-	u, err := url.Parse(a.baseURL + path)
-	if err != nil {
-		return err
-	}
-	u.RawQuery = query.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return err
-	}
-	if a.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+a.apiKey)
-	}
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request %s: %w", path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return fmt.Errorf("request %s failed: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
-	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode %s response: %w", path, err)
-	}
-	return nil
-}
-
-func (a *adminAPI) delete(ctx context.Context, path string, query url.Values) error {
-	u, err := url.Parse(a.baseURL + path)
-	if err != nil {
-		return err
-	}
-	u.RawQuery = query.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u.String(), nil)
-	if err != nil {
-		return err
-	}
-	if a.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+a.apiKey)
-	}
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request %s: %w", path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return fmt.Errorf("request %s failed: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
-	}
-	return nil
-}
-
-func (a *adminAPI) runners(ctx context.Context) ([]adminRunner, error) {
-	var result adminRunnerList
-	if err := a.get(ctx, "/admin/session-runners", url.Values{"scope": {"system"}}, &result); err != nil {
-		return nil, err
-	}
-	return result.Runners, nil
-}
-
-func (a *adminAPI) deleteRunner(ctx context.Context, runner adminRunner, force bool) error {
-	query := url.Values{"manager_id": {runner.ManagerID}}
-	if force {
-		query.Set("force", "true")
-	}
-	return a.delete(ctx, "/admin/session-runners/"+url.PathEscape(runner.ID), query)
-}
-
-func (a *adminAPI) session(ctx context.Context, id string) (*client.SessionInfo, error) {
-	var result client.SearchResponse
-	if err := a.get(ctx, "/search", nil, &result); err != nil {
-		return nil, err
-	}
-	for i := range result.Sessions {
-		if result.Sessions[i].SessionID == id {
-			return &result.Sessions[i], nil
-		}
-	}
-	return nil, fmt.Errorf("session %q not found", id)
-}
-
-func (a *adminAPI) logs(ctx context.Context, path string, query url.Values) (*adminLogs, error) {
-	var result adminLogs
-	if err := a.get(ctx, path, query, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-func findRunner(items []adminRunner, matches func(adminRunner) bool, kind, id string) (*adminRunner, error) {
-	var found *adminRunner
-	for i := range items {
-		if !matches(items[i]) {
-			continue
-		}
-		if found != nil {
-			return nil, fmt.Errorf("%s %q matches multiple runners", kind, id)
-		}
-		found = &items[i]
-	}
-	if found == nil {
-		return nil, fmt.Errorf("%s %q not found", kind, id)
-	}
-	return found, nil
-}
-
-func writeJSON(w io.Writer, value any) error {
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(value)
-}
-
-func emptyDash(value string) string {
-	if value == "" {
-		return "-"
-	}
-	return value
-}
-
-func formatAdminTime(value time.Time) string {
-	if value.IsZero() {
-		return "-"
-	}
-	return value.Local().Format(time.RFC3339)
 }

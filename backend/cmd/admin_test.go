@@ -18,6 +18,13 @@ func executeAdmin(t *testing.T, server *httptest.Server, args ...string) (string
 	return output.String(), err
 }
 
+func writeAdminResponse(t *testing.T, w http.ResponseWriter, payload string) {
+	t.Helper()
+	if _, err := w.Write([]byte(payload)); err != nil {
+		t.Fatalf("write admin response: %v", err)
+	}
+}
+
 func TestAdminRunners(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/admin/session-runners" {
@@ -29,7 +36,7 @@ func TestAdminRunners(t *testing.T) {
 		if got := r.URL.Query().Get("scope"); got != "system" {
 			t.Fatalf("scope = %q", got)
 		}
-		_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","manager_name":"native","pool":"default","status":"running","session_id":"session-1","online":true,"connectivity":{"state":"online","source":"direct_runtime"},"workload_state":"present","manager_connectivity":"offline"}]}`))
+		writeAdminResponse(t, w, `{"session_runners":[{"id":"runner-1","manager_id":"manager-1","manager_name":"native","pool":"default","status":"running","session_id":"session-1","online":true,"connectivity":{"state":"online","source":"direct_runtime"},"workload_state":"present","manager_connectivity":"offline"}]}`)
 	}))
 	defer server.Close()
 
@@ -49,7 +56,7 @@ func TestAdminDeleteRunnerRejectsUnknownManagerConnectivity(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.String())
 		}
-		_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":true,"manager_connectivity":"unknown"}]}`))
+		writeAdminResponse(t, w, `{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":true,"manager_connectivity":"unknown"}]}`)
 	}))
 	defer server.Close()
 
@@ -66,7 +73,7 @@ func TestAdminCleanupOfflineRunnersPreview(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/admin/session-runners" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.String())
 		}
-		_, _ = w.Write([]byte(`{"session_runners":[{"id":"offline-1","manager_id":"manager-1","session_id":"session-1","online":false},{"id":"online-1","manager_id":"manager-1","online":true}]}`))
+		writeAdminResponse(t, w, `{"session_runners":[{"id":"offline-1","manager_id":"manager-1","session_id":"session-1","online":false},{"id":"online-1","manager_id":"manager-1","online":true}]}`)
 	}))
 	defer server.Close()
 
@@ -84,7 +91,7 @@ func TestAdminDeleteRunner(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":true}]}`))
+			writeAdminResponse(t, w, `{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":true}]}`)
 		case http.MethodDelete:
 			deletes++
 			if r.URL.Path != "/admin/session-runners/runner-1" || r.URL.Query().Get("manager_id") != "manager-1" || r.URL.Query().Has("force") {
@@ -111,7 +118,7 @@ func TestAdminDeleteOfflineRunnerRequiresForce(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.String())
 		}
-		_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":false}]}`))
+		writeAdminResponse(t, w, `{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":false}]}`)
 	}))
 	defer server.Close()
 
@@ -124,7 +131,7 @@ func TestAdminDeleteOfflineRunnerRequiresForce(t *testing.T) {
 func TestAdminDeleteOfflineRunnerForce(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":false}]}`))
+			writeAdminResponse(t, w, `{"session_runners":[{"id":"runner-1","manager_id":"manager-1","online":false}]}`)
 			return
 		}
 		if r.Method != http.MethodDelete || r.URL.Query().Get("force") != "true" {
@@ -154,7 +161,7 @@ func TestAdminCleanupOfflineRunnersConfirmed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"session_runners":[{"id":"offline/1","manager_id":"manager-1","online":false},{"id":"offline-2","manager_id":"manager-2","online":false},{"id":"online-1","manager_id":"manager-1","online":true},{"id":"unknown-1","manager_id":"manager-3","online":false,"manager_connectivity":"unknown"}]}`))
+			writeAdminResponse(t, w, `{"session_runners":[{"id":"offline/1","manager_id":"manager-1","online":false},{"id":"offline-2","manager_id":"manager-2","online":false},{"id":"online-1","manager_id":"manager-1","online":true},{"id":"unknown-1","manager_id":"manager-3","online":false,"manager_connectivity":"unknown"}]}`)
 		case http.MethodDelete:
 			if r.URL.Query().Get("force") != "true" || r.URL.Query().Get("manager_id") == "" {
 				t.Fatalf("query = %v", r.URL.Query())
@@ -180,7 +187,7 @@ func TestAdminCleanupOfflineRunnersContinuesAfterFailure(t *testing.T) {
 	deletes := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`{"session_runners":[{"id":"offline-1","manager_id":"manager-1","online":false},{"id":"offline-2","manager_id":"manager-2","online":false}]}`))
+			writeAdminResponse(t, w, `{"session_runners":[{"id":"offline-1","manager_id":"manager-1","online":false},{"id":"offline-2","manager_id":"manager-2","online":false}]}`)
 			return
 		}
 		deletes++
@@ -203,7 +210,7 @@ func TestAdminCleanupOfflineRunnersContinuesAfterFailure(t *testing.T) {
 
 func TestAdminSessionJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"sessions":[{"session_id":"session-1","user_id":"user-1","status":"running","started_at":"2026-09-30T00:00:00Z","port":8080}]}`))
+		writeAdminResponse(t, w, `{"sessions":[{"session_id":"session-1","user_id":"user-1","status":"running","started_at":"2026-09-30T00:00:00Z","port":8080}]}`)
 	}))
 	defer server.Close()
 
@@ -222,12 +229,12 @@ func TestAdminSessionLogsResolveRunner(t *testing.T) {
 		requests++
 		switch r.URL.Path {
 		case "/admin/session-runners":
-			_, _ = w.Write([]byte(`{"session_runners":[{"id":"runner-1","manager_id":"manager-1","session_id":"session-1"}]}`))
+			writeAdminResponse(t, w, `{"session_runners":[{"id":"runner-1","manager_id":"manager-1","session_id":"session-1"}]}`)
 		case "/admin/session-runners/runner-1/logs":
 			if r.URL.Query().Get("manager_id") != "manager-1" || r.URL.Query().Get("session_id") != "session-1" || r.URL.Query().Get("scope") != "system" || r.URL.Query().Get("tail") != "42" {
 				t.Fatalf("query = %v", r.URL.Query())
 			}
-			_, _ = w.Write([]byte(`{"lines":["first","second"],"source":"pod/runner-1"}`))
+			writeAdminResponse(t, w, `{"lines":["first","second"],"source":"pod/runner-1"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -248,7 +255,7 @@ func TestAdminManagerLogs(t *testing.T) {
 		if r.URL.Path != "/admin/session-managers/manager-1/logs" || r.URL.Query().Get("tail") != "200" {
 			t.Fatalf("request = %s", r.URL.String())
 		}
-		_, _ = w.Write([]byte(`{"lines":["manager log"],"source":"daemon"}`))
+		writeAdminResponse(t, w, `{"lines":["manager log"],"source":"daemon"}`)
 	}))
 	defer server.Close()
 

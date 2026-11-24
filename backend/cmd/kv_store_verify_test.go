@@ -16,8 +16,12 @@ func TestVerifyKVStoresMatch(t *testing.T) {
 	primary, secondary := newMemoryKVStore(), newMemoryKVStore()
 	value := []byte(`{"metadata":{"name":"memory","namespace":"test","labels":{"agentapi.proxy/type":"memory"}}}`)
 	record := kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "memory", Value: value}
-	_, _ = primary.Create(ctx, record)
-	_, _ = secondary.Create(ctx, record)
+	if _, err := primary.Create(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secondary.Create(ctx, record); err != nil {
+		t.Fatal(err)
+	}
 	result, err := verifyKVStores(ctx, primary, secondary, "test")
 	if err != nil || result.Matched != 1 || result.mismatchCount() != 0 {
 		t.Fatalf("result=%#v err=%v", result, err)
@@ -57,10 +61,20 @@ func TestVerifyKVStoresReportsAllMismatchTypes(t *testing.T) {
 	configMap := func(key, value string) kvstore.Record {
 		return kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: key, Value: []byte(`{"metadata":{"name":"` + key + `","namespace":"test","labels":{"agentapi.proxy/type":"memory"}},"data":{"memory.json":"` + value + `"}}`)}
 	}
-	_, _ = primary.Create(ctx, configMap("primary-only", "value"))
-	_, _ = secondary.Create(ctx, configMap("secondary-only", "value"))
-	_, _ = primary.Create(ctx, configMap("different", "primary"))
-	_, _ = secondary.Create(ctx, configMap("different", "secondary"))
+	for store, record := range map[*memoryKVStore]kvstore.Record{
+		primary:   configMap("primary-only", "value"),
+		secondary: configMap("secondary-only", "value"),
+	} {
+		if _, err := store.Create(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := primary.Create(ctx, configMap("different", "primary")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secondary.Create(ctx, configMap("different", "secondary")); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := verifyKVStores(ctx, primary, secondary, "test")
 	if !strings.Contains(err.Error(), "3 mismatched") || result.MissingPrimary != 1 || result.MissingSecondary != 1 || result.Different != 1 {

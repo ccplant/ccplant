@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 var nativeManagementExit = os.Exit
@@ -59,7 +61,10 @@ func registerNativeManagementRoutes(e *echo.Echo, options struct {
 		})
 	})
 	group.GET("/logs", func(c echo.Context) error {
-		tail, _ := strconv.Atoi(c.QueryParam("tail"))
+		tail, err := strconv.Atoi(c.QueryParam("tail"))
+		if err != nil {
+			tail = 200
+		}
 		if tail < 1 || tail > 5000 {
 			tail = 200
 		}
@@ -135,7 +140,11 @@ func nativeDaemonLogPath(configPath string) string {
 		}
 	}
 	if runtime.GOOS == "darwin" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Printf("Failed to resolve native daemon home directory: %v", err)
+			return "/var/log/agentapi-native/native.log"
+		}
 		return filepath.Join(home, "Library", "Application Support", "agentapi-native", "logs", "native.log")
 	}
 	return "/var/log/agentapi-native/native.log"
@@ -205,24 +214,31 @@ func installNativeRelease(ctx context.Context, version string) error {
 }
 
 func downloadNativeAsset(ctx context.Context, target string, limit int64) ([]byte, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create native asset request: %w", err)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download %s: HTTP %d", filepath.Base(target), resp.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, limit))
 }
 
-func extractNativeBinary(data []byte) ([]byte, error) {
+func extractNativeBinary(data []byte) (binary []byte, returnErr error) {
 	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = gz.Close() }()
+	defer func() {
+		if err := gz.Close(); err != nil && returnErr == nil {
+			returnErr = fmt.Errorf("close release archive: %w", err)
+		}
+	}()
 	tarReader := tar.NewReader(gz)
 	for {
 		header, err := tarReader.Next()

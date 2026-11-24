@@ -1,16 +1,11 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
+	"log"
 	"os"
 	"strings"
 
@@ -20,7 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/yaml"
 )
@@ -92,7 +86,9 @@ func newSessionManagerInstallCommand() *cobra.Command {
 	flags.BoolVar(&opts.createNamespace, "create-namespace", true, "create the namespace if missing")
 	flags.BoolVar(&opts.wait, "wait", true, "wait for Helm resources to become ready")
 	flags.StringVar(&opts.timeout, "timeout", "10m", "Helm operation timeout")
-	_ = command.MarkFlagRequired("upstream")
+	if err := command.MarkFlagRequired("upstream"); err != nil {
+		panic(fmt.Sprintf("mark upstream flag required: %v", err))
+	}
 	return command
 }
 
@@ -153,12 +149,16 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 		return fmt.Errorf("create Kubernetes client: %w", err)
 	}
 	if opts.createNamespace {
-		_, err = client.CoreV1().Namespaces().Get(ctx, opts.namespace, metav1.GetOptions{})
+		namespaceResource, getErr := client.CoreV1().Namespaces().Get(ctx, opts.namespace, metav1.GetOptions{})
+		err = getErr
 		if apierrors.IsNotFound(err) {
-			_, err = client.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: opts.namespace}}, metav1.CreateOptions{})
+			namespaceResource, err = client.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: opts.namespace}}, metav1.CreateOptions{})
 		}
 		if err != nil {
 			return fmt.Errorf("ensure namespace: %w", err)
+		}
+		if namespaceResource == nil {
+			return errors.New("ensure namespace returned no resource")
 		}
 	}
 	if err = ensureSessionServiceAccount(ctx, client, opts.namespace, opts.sessionServiceAccount); err != nil {
@@ -168,10 +168,10 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	if err != nil {
 		return err
 	}
-	if err = ensureOpaqueSecret(ctx, client, opts.namespace, opts.internalSecret, "token"); err != nil {
+	if err = ensureOpaqueSecret(ctx, client, opaqueSecretConfig{namespace: opts.namespace, name: opts.internalSecret, key: "token"}); err != nil {
 		return err
 	}
-	if err = ensureOpaqueSecret(ctx, client, opts.namespace, opts.provisionerSecret, "provisioner-token"); err != nil {
+	if err = ensureOpaqueSecret(ctx, client, opaqueSecretConfig{namespace: opts.namespace, name: opts.provisionerSecret, key: "provisioner-token"}); err != nil {
 		return err
 	}
 	legacyLeaseMigration, err := requiresLegacySessionManagerLeaseMigration(ctx, client, opts.namespace, opts.release)
@@ -189,17 +189,28 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) //nolint:errcheck
-	if _, err = tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
+	defer func() {
+		if err := os.Remove(tmpName); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("remove temporary Helm values file: %v", err)
+		}
+	}()
+	written, writeErr := tmp.Write(data)
+	if writeErr != nil || written != len(data) {
+		closeErr := tmp.Close()
+		if writeErr != nil {
+			return errors.Join(writeErr, closeErr)
+		}
+		return errors.Join(io.ErrShortWrite, closeErr)
 	}
 	if err = tmp.Close(); err != nil {
 		return err
 	}
 	args := sessionManagerHelmUpgradeArgs(opts, tmpName, legacyLeaseMigration)
 	if legacyLeaseMigration {
-		_, _ = fmt.Fprintf(stdout, "Migrating session manager %s from the legacy shared Lease\n", opts.release)
+		message := fmt.Sprintf("Migrating session manager %s from the legacy shared Lease\n", opts.release)
+		if err := writeInstallOutput(stdout, message); err != nil {
+			return err
+		}
 	}
 	if err = runner.Run(ctx, stdout, stderr, "helm", args...); err != nil {
 		return fmt.Errorf("helm upgrade --install: %w", err)
@@ -207,8 +218,17 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	if err = verifyManagerCredential(ctx, opts.upstream, credentials); err != nil {
 		return fmt.Errorf("verify installed manager credentials: %w", err)
 	}
-	if _, err = fmt.Fprintf(stdout, "Session manager %s installed in namespace %s (manager %s)\n", opts.release, opts.namespace, credentials.ManagerID); err != nil {
+	message := fmt.Sprintf("Session manager %s installed in namespace %s (manager %s)\n", opts.release, opts.namespace, credentials.ManagerID)
+	return writeInstallOutput(stdout, message)
+}
+
+func writeInstallOutput(writer io.Writer, message string) error {
+	written, err := io.WriteString(writer, message)
+	if err != nil {
 		return err
+	}
+	if written != len(message) {
+		return io.ErrShortWrite
 	}
 	return nil
 }
@@ -351,7 +371,8 @@ func ensureManagerCredentials(ctx context.Context, client kubernetes.Interface, 
 		drifted := (storedPool != "" && storedPool != opts.pool) || (storedUpstream != "" && storedUpstream != apiBaseURL(opts.upstream))
 		if !drifted && opts.registrationToken == "" {
 			if verifyErr := verifyManagerCredential(ctx, opts.upstream, credentials); verifyErr == nil {
-				if err = persistManagerCredentials(ctx, secrets, existing, opts, credentials); err != nil {
+				persistence := managerCredentialPersistence{existing: existing, opts: opts, credentials: credentials}
+				if err = persistManagerCredentials(ctx, secrets, persistence); err != nil {
 					return nil, err
 				}
 				return credentials, nil
@@ -363,7 +384,8 @@ func ensureManagerCredentials(ctx context.Context, client kubernetes.Interface, 
 		if enrollErr != nil {
 			return nil, enrollErr
 		}
-		if err = persistManagerCredentials(ctx, secrets, existing, opts, registration); err != nil {
+		persistence := managerCredentialPersistence{existing: existing, opts: opts, credentials: registration}
+		if err = persistManagerCredentials(ctx, secrets, persistence); err != nil {
 			return nil, err
 		}
 		return registration, nil
@@ -375,206 +397,9 @@ func ensureManagerCredentials(ctx context.Context, client kubernetes.Interface, 
 	if err != nil {
 		return nil, err
 	}
-	if err = persistManagerCredentials(ctx, secrets, nil, opts, registration); err != nil {
+	persistence := managerCredentialPersistence{opts: opts, credentials: registration}
+	if err = persistManagerCredentials(ctx, secrets, persistence); err != nil {
 		return nil, err
 	}
 	return registration, nil
-}
-
-func enrollWithResolvedToken(ctx context.Context, opts sessionManagerInstallOptions) (*installedManagerCredentials, error) {
-	if opts.registrationToken == "" {
-		token, err := issueManagerRegistrationToken(ctx, opts)
-		if err != nil {
-			return nil, err
-		}
-		opts.registrationToken = token
-	}
-	return enrollKubernetesManager(ctx, opts)
-}
-
-func persistManagerCredentials(ctx context.Context, secrets typedcorev1.SecretInterface, existing *corev1.Secret, opts sessionManagerInstallOptions, credentials *installedManagerCredentials) error {
-	secret := existing
-	if secret == nil {
-		secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: opts.connectionSecret, Namespace: opts.namespace}, Type: corev1.SecretTypeOpaque}
-	}
-	if secret.Annotations == nil {
-		secret.Annotations = map[string]string{}
-	}
-	secret.Annotations["helm.sh/resource-policy"] = "keep"
-	secret.Data = map[string][]byte{
-		"manager-id": []byte(credentials.ManagerID), "connection-token": []byte(credentials.ConnectionToken),
-		"hmac-secret": []byte(credentials.ConnectionToken), "instance-id": []byte(opts.instanceID),
-		"pool": []byte(opts.pool), "upstream-url": []byte(apiBaseURL(opts.upstream)),
-	}
-	var err error
-	if existing == nil {
-		_, err = secrets.Create(ctx, secret, metav1.CreateOptions{})
-	} else {
-		_, err = secrets.Update(ctx, secret, metav1.UpdateOptions{})
-	}
-	if err != nil {
-		return fmt.Errorf("persist connection Secret: %w", err)
-	}
-	return nil
-}
-
-func issueManagerRegistrationToken(ctx context.Context, opts sessionManagerInstallOptions) (string, error) {
-	apiKey := readInstallAPIKey(opts)
-	if apiKey == "" {
-		return "", errors.New("--registration-token is required unless a parent API key is available through --api-key-file or --api-key-env")
-	}
-	base := apiBaseURL(opts.upstream)
-	listReq, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/session-managers", nil)
-	if err != nil {
-		return "", err
-	}
-	listReq.Header.Set("X-API-Key", apiKey)
-	listResp, err := http.DefaultClient.Do(listReq)
-	if err != nil {
-		return "", fmt.Errorf("list session managers: %w", err)
-	}
-	if listResp.StatusCode != http.StatusOK {
-		defer listResp.Body.Close() //nolint:errcheck
-		return "", responseError(listResp)
-	}
-	var listed struct {
-		Managers []struct {
-			ID     string            `json:"id"`
-			Name   string            `json:"name"`
-			Labels map[string]string `json:"labels"`
-		} `json:"session_managers"`
-	}
-	if err = json.NewDecoder(listResp.Body).Decode(&listed); err != nil {
-		_ = listResp.Body.Close()
-		return "", err
-	}
-	_ = listResp.Body.Close()
-	for _, manager := range listed.Managers {
-		if manager.Name != opts.name || manager.Labels["namespace"] != opts.namespace || manager.Labels["release"] != opts.release {
-			continue
-		}
-		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, base+"/session-managers/"+url.PathEscape(manager.ID)+"/registration-token", nil)
-		if requestErr != nil {
-			return "", requestErr
-		}
-		req.Header.Set("X-API-Key", apiKey)
-		return requestRegistrationToken(req, http.StatusOK)
-	}
-	payload, _ := json.Marshal(map[string]any{"name": opts.name, "scope": opts.scope, "team_id": opts.teamID,
-		"labels": map[string]string{"type": "kubernetes", "namespace": opts.namespace, "release": opts.release}})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/session-managers/registration-tokens", bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", apiKey)
-	return requestRegistrationToken(req, http.StatusCreated)
-}
-
-func requestRegistrationToken(req *http.Request, expectedStatus int) (string, error) {
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("issue manager registration token: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != expectedStatus {
-		return "", responseError(resp)
-	}
-	var result struct {
-		RegistrationToken string `json:"registration_token"`
-	}
-	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-	if result.RegistrationToken == "" {
-		return "", errors.New("registration response did not contain a token")
-	}
-	return result.RegistrationToken, nil
-}
-
-func readInstallAPIKey(opts sessionManagerInstallOptions) string {
-	if opts.apiKeyFile != "" {
-		data, err := os.ReadFile(opts.apiKeyFile)
-		if err == nil {
-			return strings.TrimSpace(string(data))
-		}
-		return ""
-	}
-	return strings.TrimSpace(os.Getenv(opts.apiKeyEnv))
-}
-
-func verifyManagerCredential(ctx context.Context, upstream string, credentials *installedManagerCredentials) error {
-	if strings.TrimSpace(upstream) == "" {
-		return nil
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBaseURL(upstream)+"/internal/session-managers/"+url.PathEscape(credentials.ManagerID)+"/runtime-profile", nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+credentials.ConnectionToken)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusOK {
-		return responseError(resp)
-	}
-	return nil
-}
-
-func enrollKubernetesManager(ctx context.Context, opts sessionManagerInstallOptions) (*installedManagerCredentials, error) {
-	payload, _ := json.Marshal(map[string]any{"registration_token": opts.registrationToken, "instance_id": opts.instanceID,
-		"labels":       map[string]string{"type": "kubernetes", "namespace": opts.namespace, "release": opts.release},
-		"capabilities": []string{"runner_claim_v1", "direct_session_runtime_v1"}})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBaseURL(opts.upstream)+"/session-managers/enroll", bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("enroll manager: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusOK {
-		return nil, responseError(resp)
-	}
-	var result struct {
-		ID              string `json:"id"`
-		ConnectionToken string `json:"connection_token"`
-	}
-	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	if result.ID == "" || result.ConnectionToken == "" {
-		return nil, errors.New("enrollment response did not contain manager credentials")
-	}
-	return &installedManagerCredentials{ManagerID: result.ID, ConnectionToken: result.ConnectionToken}, nil
-}
-
-func ensureOpaqueSecret(ctx context.Context, client kubernetes.Interface, namespace, name, key string) error {
-	secrets := client.CoreV1().Secrets(namespace)
-	if _, err := secrets.Get(ctx, name, metav1.GetOptions{}); err == nil {
-		return nil
-	} else if !apierrors.IsNotFound(err) {
-		return err
-	}
-	random := make([]byte, 32)
-	if _, err := rand.Read(random); err != nil {
-		return err
-	}
-	_, err := secrets.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace,
-		Annotations: map[string]string{"helm.sh/resource-policy": "keep"}}, Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{key: []byte(hex.EncodeToString(random))}}, metav1.CreateOptions{})
-	return err
-}
-
-func apiBaseURL(raw string) string {
-	value := strings.TrimRight(raw, "/")
-	parsed, err := url.Parse(value)
-	if err == nil && (parsed.Path == "" || parsed.Path == "/") {
-		return value + "/api/v1"
-	}
-	return value
 }

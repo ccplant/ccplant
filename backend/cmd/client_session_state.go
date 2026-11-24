@@ -1,23 +1,22 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionstate"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 var backupSessionStateCmd = &cobra.Command{Use: "backup-session-state", Short: "Back up ACP state through the proxy", Args: cobra.NoArgs, RunE: runBackupSessionState}
@@ -38,7 +37,7 @@ func runScheduleSessionSuspend(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("schedule session suspend failed: HTTP %d", resp.StatusCode)
 	}
@@ -46,17 +45,11 @@ func runScheduleSessionSuspend(_ *cobra.Command, _ []string) error {
 }
 
 func runBackupSessionState(_ *cobra.Command, _ []string) error {
-	proxy := strings.TrimRight(os.Getenv("SESSION_STATE_PROXY_URL"), "/")
-	if proxy == "" {
-		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
-	}
-	token := os.Getenv("PROVISIONER_TOKEN")
-	id := os.Getenv("AGENTAPI_SESSION_ID")
-	agentType := os.Getenv("AGENTAPI_AGENT_TYPE")
-	if proxy == "" || token == "" || id == "" {
+	config := readSessionBackupConfig()
+	if config.proxy == "" || config.token == "" || config.sessionID == "" {
 		return fmt.Errorf("PROVISIONER_PROXY_URL, PROVISIONER_TOKEN and AGENTAPI_SESSION_ID are required")
 	}
-	markerPath := filepath.Join(os.TempDir(), "agentapi-session-restore-complete-"+id)
+	markerPath := filepath.Join(os.TempDir(), "agentapi-session-restore-complete-"+config.sessionID)
 	if _, err := os.Stat(markerPath); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("session state backup rejected: restore has not completed")
@@ -67,65 +60,108 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	home := os.Getenv("HOME")
-	if home == "" {
-		home = "/home/agentapi"
-	}
+	home := sessionBackupHome()
 	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
-		if err := writeSessionStateVolume(volumePath, agentType, readACPSessionID(cwd), home, cwd); err != nil {
+		volume := sessionStateVolumeRequest{path: volumePath, agentType: config.agentType, acpSessionID: readACPSessionID(cwd), home: home, cwd: cwd}
+		if err := writeSessionStateVolume(volume); err != nil {
 			return err
 		}
 		if snapshotID := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_TEMPLATE_SNAPSHOT_ID")); snapshotID != "" {
-			return uploadVolumeTemplateSnapshot(proxy, token, snapshotID, volumePath)
+			return uploadVolumeTemplateSnapshot(config.proxy, config.token, snapshotID, volumePath)
 		}
 		return nil
 	}
+	return backupSessionStateRemote(config, home, cwd)
+}
+
+type sessionBackupConfig struct {
+	proxy, token, sessionID, agentType string
+	strict                             bool
+}
+
+func readSessionBackupConfig() sessionBackupConfig {
+	proxy := strings.TrimRight(os.Getenv("SESSION_STATE_PROXY_URL"), "/")
+	if proxy == "" {
+		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	}
+	return sessionBackupConfig{
+		proxy: proxy, token: os.Getenv("PROVISIONER_TOKEN"),
+		sessionID: os.Getenv("AGENTAPI_SESSION_ID"), agentType: os.Getenv("AGENTAPI_AGENT_TYPE"),
+		strict: os.Getenv("AGENTAPI_REQUIRE_SESSION_STATE_BACKUP") == "1",
+	}
+}
+
+func sessionBackupHome() string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		return "/home/agentapi"
+	}
+	return home
+}
+
+func backupSessionStateRemote(config sessionBackupConfig, home, cwd string) error {
 	client := &http.Client{Timeout: 10 * time.Minute}
-	strict := os.Getenv("AGENTAPI_REQUIRE_SESSION_STATE_BACKUP") == "1"
-	direct, err := beginDirectUpload(client, proxy, token, id)
+	direct, err := beginDirectUpload(client, config.proxy, config.token, config.sessionID)
 	if err == nil && direct != nil {
-		if err := uploadSessionStateDirect(context.Background(), client, proxy, token, id, agentType, readACPSessionID(cwd), home, cwd, *direct); err != nil {
-			if strict {
-				return fmt.Errorf("session state backup required before suspend: %w", err)
-			}
-			_, _ = fmt.Fprintf(os.Stderr, "session state backup skipped: direct persistence transfer failed: %v\n", err)
-		}
-		return nil
+		upload := directUploadRequest{client: client, proxy: config.proxy, token: config.token, sessionID: config.sessionID, agentType: config.agentType, acpID: readACPSessionID(cwd), home: home, cwd: cwd, upload: *direct}
+		return backupSessionStateDirect(config.strict, upload)
 	}
 	if err != nil {
+		return handleUnavailableSessionBackup(config.strict, err)
+	}
+	return streamSessionStateBackup(config, client, home, cwd)
+}
+
+func backupSessionStateDirect(strict bool, upload directUploadRequest) error {
+	if err := uploadSessionStateDirect(context.Background(), upload); err != nil {
 		if strict {
 			return fmt.Errorf("session state backup required before suspend: %w", err)
 		}
-		_, _ = fmt.Fprintf(os.Stderr, "session state backup skipped: persistence backend is unavailable: %v\n", err)
-		return nil
+		return writeBackupWarning("session state backup skipped: direct persistence transfer failed: %v\n", err)
 	}
+	return nil
+}
+
+func handleUnavailableSessionBackup(strict bool, cause error) error {
+	if strict {
+		return fmt.Errorf("session state backup required before suspend: %w", cause)
+	}
+	return writeBackupWarning("session state backup skipped: persistence backend is unavailable: %v\n", cause)
+}
+
+func streamSessionStateBackup(config sessionBackupConfig, client *http.Client, home, cwd string) error {
 	bodyReader, bodyWriter := io.Pipe()
 	go func() {
-		bodyWriter.CloseWithError(sessionstate.Pack(bodyWriter, agentType, readACPSessionID(cwd), home, cwd))
+		if closeErr := bodyWriter.CloseWithError(sessionstate.Pack(bodyWriter, config.agentType, readACPSessionID(cwd), home, cwd)); closeErr != nil {
+			return
+		}
 	}()
-	req, err := http.NewRequest(http.MethodPut, proxy+"/internal/session-state/"+id, bodyReader)
+	req, err := http.NewRequest(http.MethodPut, config.proxy+"/internal/session-state/"+config.sessionID, bodyReader)
 	if err != nil {
-		_ = bodyReader.Close()
+		if closeErr := bodyReader.Close(); closeErr != nil {
+			return fmt.Errorf("create backup request: %w (close stream: %v)", err, closeErr)
+		}
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+config.token)
 	req.Header.Set("Content-Type", "application/zstd")
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode != http.StatusNoContent {
-		if resp.StatusCode == http.StatusServiceUnavailable {
-			if strict {
-				return fmt.Errorf("session state backup required before suspend: persistence backend is unavailable")
-			}
-			_, _ = fmt.Fprintln(os.Stderr, "session state backup skipped: persistence backend is unavailable")
-			return nil
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			return fmt.Errorf("session state backup failed: HTTP %d", resp.StatusCode)
 		}
-		return fmt.Errorf("session state backup failed: HTTP %d", resp.StatusCode)
+		return handleUnavailableSessionBackup(config.strict, fmt.Errorf("HTTP %d", resp.StatusCode))
 	}
 	return nil
+}
+
+func writeBackupWarning(format string, args ...any) error {
+	_, err := fmt.Fprintf(os.Stderr, format, args...)
+	return err
 }
 
 func uploadVolumeTemplateSnapshot(proxy, token, snapshotID, path string) error {
@@ -136,7 +172,11 @@ func uploadVolumeTemplateSnapshot(proxy, token, snapshotID, path string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = archive.Close() }()
+	defer func() {
+		if closeErr := archive.Close(); closeErr != nil {
+			return
+		}
+	}()
 	req, err := internalRequest(http.MethodPut, proxy+"/internal/session-state/"+url.PathEscape(snapshotID), token, archive)
 	if err != nil {
 		return err
@@ -146,42 +186,51 @@ func uploadVolumeTemplateSnapshot(proxy, token, snapshotID, path string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("template snapshot upload failed: HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
 
-func writeSessionStateVolume(path, agentType, acpSessionID, home, cwd string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+type sessionStateVolumeRequest struct {
+	path, agentType, acpSessionID, home, cwd string
+}
+
+func writeSessionStateVolume(request sessionStateVolumeRequest) error {
+	dir := filepath.Dir(request.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	release, err := sessionstate.LockVolume(filepath.Dir(path))
+	release, err := sessionstate.LockVolume(dir)
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := sessionstate.RemoveStaleVolumeTemps(filepath.Dir(path)); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "remove stale session state temporary archives: %v\n", err)
+	if err := sessionstate.RemoveStaleVolumeTemps(dir); err != nil {
+		if writeErr := writeBackupWarning("remove stale session state temporary archives: %v\n", err); writeErr != nil {
+			return writeErr
+		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), sessionstate.VolumeTempPattern)
+	tmp, err := os.CreateTemp(dir, sessionstate.VolumeTempPattern)
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
+	defer func() {
+		if removeErr := os.Remove(tmpName); removeErr != nil && !os.IsNotExist(removeErr) {
+			return
+		}
+	}()
 	pack := sessionstate.Pack
-	if volumeHoldsWorkspace(path, cwd) && strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_TEMPLATE_SNAPSHOT_ID")) == "" {
+	if volumeHoldsWorkspace(request.path, request.cwd) && strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_TEMPLATE_SNAPSHOT_ID")) == "" {
 		pack = sessionstate.PackConversation
 	}
-	if err := pack(tmp, agentType, acpSessionID, home, cwd); err != nil {
-		_ = tmp.Close()
-		return err
+	if err := pack(tmp, request.agentType, request.acpSessionID, request.home, request.cwd); err != nil {
+		return errors.Join(err, tmp.Close())
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
+		return errors.Join(err, tmp.Close())
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -189,7 +238,7 @@ func writeSessionStateVolume(path, agentType, acpSessionID, home, cwd string) er
 	if err := os.Chmod(tmpName, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return os.Rename(tmpName, request.path)
 }
 
 func volumeHoldsWorkspace(archivePath, cwd string) bool {
@@ -228,6 +277,58 @@ type uploadedPart struct {
 	ETag   string `json:"etag"`
 }
 
+type directUploadRequest struct {
+	client                      *http.Client
+	proxy, token, sessionID     string
+	agentType, acpID, home, cwd string
+	upload                      directUpload
+}
+
+type directPartRequest struct {
+	client                  *http.Client
+	proxy, token, sessionID string
+	uploadID                string
+	number                  int32
+	data                    []byte
+}
+
+type directUploadJob struct {
+	number int32
+	data   []byte
+}
+
+type directUploadProgress struct {
+	mu       sync.Mutex
+	parts    []uploadedPart
+	firstErr error
+}
+
+type directUploadWorker struct {
+	ctx      context.Context
+	request  directUploadRequest
+	jobs     <-chan directUploadJob
+	progress *directUploadProgress
+	cancel   context.CancelFunc
+	wg       *sync.WaitGroup
+}
+
+func (progress *directUploadProgress) recordPart(number int32, etag string, err error, cancel context.CancelFunc) {
+	progress.mu.Lock()
+	defer progress.mu.Unlock()
+	if err != nil && progress.firstErr == nil {
+		progress.firstErr = err
+		cancel()
+	} else if err == nil {
+		progress.parts = append(progress.parts, uploadedPart{Number: number, ETag: etag})
+	}
+}
+
+func (progress *directUploadProgress) result() ([]uploadedPart, error) {
+	progress.mu.Lock()
+	defer progress.mu.Unlock()
+	return progress.parts, progress.firstErr
+}
+
 func internalRequest(method, url, token string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequest(method, url, body)
 	if err == nil {
@@ -245,7 +346,7 @@ func beginDirectUpload(client *http.Client, proxy, token, id string) (*directUpl
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode == http.StatusNotImplemented {
 		return nil, nil
 	}
@@ -260,164 +361,4 @@ func beginDirectUpload(client *http.Client, proxy, token, id string) (*directUpl
 		return nil, fmt.Errorf("invalid multipart response")
 	}
 	return &result, nil
-}
-
-func uploadSessionStateDirect(ctx context.Context, client *http.Client, proxy, token, id, agentType, acpID, home, cwd string, upload directUpload) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	reader, writer := io.Pipe()
-	go func() { writer.CloseWithError(sessionstate.Pack(writer, agentType, acpID, home, cwd)) }()
-	type job struct {
-		number int32
-		data   []byte
-	}
-	jobs := make(chan job, 2)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var parts []uploadedPart
-	var firstErr error
-	worker := func() {
-		defer wg.Done()
-		for job := range jobs {
-			if ctx.Err() != nil {
-				continue
-			}
-			etag, err := uploadDirectPart(ctx, client, proxy, token, id, upload.UploadID, job.number, job.data)
-			mu.Lock()
-			if err != nil && firstErr == nil {
-				firstErr = err
-				cancel()
-			} else if err == nil {
-				parts = append(parts, uploadedPart{Number: job.number, ETag: etag})
-			}
-			mu.Unlock()
-		}
-	}
-	for range 2 {
-		wg.Add(1)
-		go worker()
-	}
-	var number int32 = 1
-	for {
-		buf := make([]byte, upload.PartSize)
-		n, readErr := io.ReadFull(reader, buf)
-		if n > 0 {
-			select {
-			case jobs <- job{number: number, data: buf[:n]}:
-				number++
-			case <-ctx.Done():
-			}
-		}
-		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			break
-		}
-		if readErr != nil {
-			mu.Lock()
-			if firstErr == nil {
-				firstErr = readErr
-			}
-			mu.Unlock()
-			cancel()
-			break
-		}
-	}
-	close(jobs)
-	wg.Wait()
-	mu.Lock()
-	err := firstErr
-	mu.Unlock()
-	if err != nil {
-		abortDirectUpload(client, proxy, token, id, upload.UploadID)
-		return err
-	}
-	if len(parts) == 0 {
-		abortDirectUpload(client, proxy, token, id, upload.UploadID)
-		return fmt.Errorf("empty snapshot")
-	}
-	sort.Slice(parts, func(i, j int) bool { return parts[i].Number < parts[j].Number })
-	payload, _ := json.Marshal(map[string]any{"parts": parts})
-	req, err := internalRequest(http.MethodPost, proxy+"/internal/session-state/"+id+"/uploads/"+upload.UploadID+"/complete", token, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("complete upload HTTP %d", resp.StatusCode)
-	}
-	return nil
-}
-
-func uploadDirectPart(ctx context.Context, client *http.Client, proxy, token, id, uploadID string, number int32, data []byte) (string, error) {
-	req, err := internalRequest(http.MethodGet, proxy+"/internal/session-state/"+id+"/uploads/"+uploadID+"/parts/"+strconv.Itoa(int(number)), token, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	var signed struct {
-		URL string `json:"url"`
-	}
-	if resp.StatusCode == http.StatusOK {
-		err = json.NewDecoder(resp.Body).Decode(&signed)
-	} else {
-		err = fmt.Errorf("presign part HTTP %d", resp.StatusCode)
-	}
-	_ = resp.Body.Close()
-	if err != nil {
-		return "", err
-	}
-	put, err := http.NewRequestWithContext(ctx, http.MethodPut, signed.URL, bytes.NewReader(data))
-	if err != nil {
-		return "", err
-	}
-	put.ContentLength = int64(len(data))
-	result, err := objectStorageClient(signed.URL, client.Timeout).Do(put)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = result.Body.Close() }()
-	if result.StatusCode/100 != 2 {
-		return "", fmt.Errorf("upload part HTTP %d", result.StatusCode)
-	}
-	return result.Header.Get("ETag"), nil
-}
-
-func objectStorageClient(rawURL string, timeout time.Duration) *http.Client {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return &http.Client{Timeout: timeout}
-	}
-	hostname := parsed.Hostname()
-	if strings.Contains(hostname, ".") && !strings.HasSuffix(hostname, ".svc") && !strings.HasSuffix(hostname, ".cluster.local") {
-		return &http.Client{Timeout: timeout}
-	}
-	transport, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return &http.Client{Timeout: timeout}
-	}
-	direct := transport.Clone()
-	direct.Proxy = nil
-	return &http.Client{Timeout: timeout, Transport: direct}
-}
-
-func abortDirectUpload(client *http.Client, proxy, token, id, uploadID string) {
-	req, err := internalRequest(http.MethodDelete, proxy+"/internal/session-state/"+id+"/uploads/"+uploadID, token, nil)
-	if err == nil {
-		resp, callErr := client.Do(req)
-		if callErr == nil {
-			_ = resp.Body.Close()
-		}
-	}
-}
-
-func readACPSessionID(cwd string) string {
-	data, _ := os.ReadFile(filepath.Join(cwd, ".acp-session-id"))
-	return strings.TrimSpace(string(data))
 }

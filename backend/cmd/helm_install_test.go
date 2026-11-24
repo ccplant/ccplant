@@ -369,7 +369,8 @@ func TestValidateUmbrellaChartRequiresBothComponents(t *testing.T) {
 
 func TestExistingCookieSecretMustContainConfiguredKey(t *testing.T) {
 	client := installTestClient(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ccplant"}}, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: defaultCookieSecretName, Namespace: "ccplant"}})
-	err := ensureCookieSecret(context.Background(), client, "ccplant", defaultCookieSecretName, defaultCookieSecretKey, "")
+	config := cookieSecretConfig{namespace: "ccplant", name: defaultCookieSecretName, key: defaultCookieSecretKey}
+	err := ensureCookieSecret(context.Background(), client, config)
 	if err == nil || !strings.Contains(err.Error(), "does not contain") {
 		t.Fatalf("error = %v", err)
 	}

@@ -14,7 +14,7 @@ func TestHelperWriteSessionStateVolume(t *testing.T) {
 		t.Skip("helper process only")
 	}
 	path := filepath.Join(dir, ".agentapi", "session-state.tar.zst")
-	if err := writeSessionStateVolume(path, "claude-acp", "thread-1", os.Getenv("BACKUP_HELPER_HOME"), dir); err != nil {
+	if err := writeSessionStateVolume(sessionStateVolumeRequest{path: path, agentType: "claude-acp", acpSessionID: "thread-1", home: os.Getenv("BACKUP_HELPER_HOME"), cwd: dir}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -105,7 +105,7 @@ func TestKilledBackupTemporaryArchiveIsRemovedByNextBackup(t *testing.T) {
 	if err := os.Remove(backup.big); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionStateVolume(backup.path, "claude-acp", "thread-1", backup.home, backup.cwd); err != nil {
+	if err := writeSessionStateVolume(sessionStateVolumeRequest{path: backup.path, agentType: "claude-acp", acpSessionID: "thread-1", home: backup.home, cwd: backup.cwd}); err != nil {
 		t.Fatal(err)
 	}
 	if after := backup.temps(t); len(after) != 0 {
@@ -122,7 +122,7 @@ func TestConcurrentBackupWaitsForRunningBackup(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- writeSessionStateVolume(backup.path, "claude-acp", "thread-1", backup.home, backup.cwd)
+		done <- writeSessionStateVolume(sessionStateVolumeRequest{path: backup.path, agentType: "claude-acp", acpSessionID: "thread-1", home: backup.home, cwd: backup.cwd})
 	}()
 	select {
 	case err := <-done:

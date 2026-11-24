@@ -85,7 +85,7 @@ func TestWriteSessionStateVolumeChoosesWorkspaceEntries(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(volume, ".agentapi", "session-state.tar.zst")
-			if err := writeSessionStateVolume(path, "codex-acp", "thread-1", home, cwd); err != nil {
+			if err := writeSessionStateVolume(sessionStateVolumeRequest{path: path, agentType: "codex-acp", acpSessionID: "thread-1", home: home, cwd: cwd}); err != nil {
 				t.Fatal(err)
 			}
 			if !volumeArchiveHas(t, path, "cwd/.acp-session-id") {

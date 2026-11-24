@@ -103,7 +103,6 @@ func init() {
 }
 
 func runMigrate(cmd *cobra.Command, args []string) error {
-	// Build Kubernetes client
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
 		return fmt.Errorf("failed to get Kubernetes config: %w", err)
@@ -113,117 +112,121 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
-
 	ctx := context.Background()
+	if err := verifySettingsSecrets(ctx, client); err != nil {
+		return err
+	}
+	if !migrateCleanup {
+		printCleanupSkipped()
+		return nil
+	}
+	return cleanupDerivedSecrets(ctx, client)
+}
 
-	// -------------------------------------------------------------------------
-	// Phase 1: Verify agentapi-settings-* Secrets
-	// -------------------------------------------------------------------------
+func verifySettingsSecrets(ctx context.Context, client kubernetes.Interface) error {
 	fmt.Printf("=== Phase 1: Verifying agentapi-settings-* Secrets (namespace: %s) ===\n", migrateNamespace)
-
 	settingsList, err := client.CoreV1().Secrets(migrateNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "agentapi.proxy/settings=true",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list settings secrets: %w", err)
 	}
-
 	fmt.Printf("Found %d agentapi-settings-* secret(s)\n", len(settingsList.Items))
-
 	for _, secret := range settingsList.Items {
 		rawJSON, ok := secret.Data["settings.json"]
 		if !ok {
 			fmt.Printf("  [WARN] %s: missing settings.json key\n", secret.Name)
 			continue
 		}
-
 		var sj migrateSettingsJSON
 		if err := json.Unmarshal(rawJSON, &sj); err != nil {
 			fmt.Printf("  [WARN] %s: failed to parse settings.json: %v\n", secret.Name, err)
 			continue
 		}
-
-		// Build a summary of what's present in this secret
-		var parts []string
-		if len(sj.MCPServers) > 0 {
-			serverNames := make([]string, 0, len(sj.MCPServers))
-			for k := range sj.MCPServers {
-				serverNames = append(serverNames, k)
-			}
-			parts = append(parts, fmt.Sprintf("mcp_servers=%d(%s)", len(sj.MCPServers), strings.Join(serverNames, ",")))
-		} else {
-			parts = append(parts, "mcp_servers=0")
-		}
-
-		if len(sj.Marketplaces) > 0 {
-			marketplaceNames := make([]string, 0, len(sj.Marketplaces))
-			for k := range sj.Marketplaces {
-				marketplaceNames = append(marketplaceNames, k)
-			}
-			parts = append(parts, fmt.Sprintf("marketplaces=%d(%s)", len(sj.Marketplaces), strings.Join(marketplaceNames, ",")))
-		} else {
-			parts = append(parts, "marketplaces=0")
-		}
-
-		if len(sj.EnvVars) > 0 {
-			parts = append(parts, fmt.Sprintf("env_vars=%d", len(sj.EnvVars)))
-		} else {
-			parts = append(parts, "env_vars=0")
-		}
-
-		if sj.AuthMode != "" {
-			parts = append(parts, fmt.Sprintf("auth_mode=%s", sj.AuthMode))
-		}
-		if sj.ClaudeCodeOAuthToken != "" {
-			parts = append(parts, "oauth_token=set")
-		}
-		if sj.Bedrock != nil && sj.Bedrock.Enabled {
-			parts = append(parts, "bedrock=enabled")
-		}
-		if len(sj.EnabledPlugins) > 0 {
-			parts = append(parts, fmt.Sprintf("plugins=%d", len(sj.EnabledPlugins)))
-		}
-
-		fmt.Printf("  [OK] %s (name=%s): %s\n", secret.Name, sj.Name, strings.Join(parts, ", "))
-
-		if migrateVerbose && len(sj.MCPServers) > 0 {
-			for serverName, server := range sj.MCPServers {
-				fmt.Printf("       MCP: %s (type=%s", serverName, server.Type)
-				if server.URL != "" {
-					fmt.Printf(", url=%s", server.URL)
-				}
-				if server.Command != "" {
-					fmt.Printf(", cmd=%s", server.Command)
-				}
-				fmt.Println(")")
-			}
-		}
-
-		if migrateVerbose && len(sj.EnvVars) > 0 {
-			envKeys := make([]string, 0, len(sj.EnvVars))
-			for k := range sj.EnvVars {
-				envKeys = append(envKeys, k)
-			}
-			fmt.Printf("       EnvVars: %s\n", strings.Join(envKeys, ", "))
-		}
+		printSettingsSecret(secret.Name, sj)
 	}
+	return nil
+}
 
-	// -------------------------------------------------------------------------
-	// Phase 2: Cleanup derived Secrets (only if --cleanup is set)
-	// -------------------------------------------------------------------------
-	if !migrateCleanup {
-		fmt.Println("\nPhase 2 (cleanup) skipped.")
-		fmt.Println("Run with --cleanup to delete derived Secrets.")
-		fmt.Println("Run with --cleanup --dry-run to preview what would be deleted.")
-		return nil
+func printSettingsSecret(secretName string, settings migrateSettingsJSON) {
+	parts := []string{namedCount("mcp_servers", mcpServerNames(settings.MCPServers)), namedCount("marketplaces", marketplaceNames(settings.Marketplaces))}
+	parts = append(parts, fmt.Sprintf("env_vars=%d", len(settings.EnvVars)))
+	if settings.AuthMode != "" {
+		parts = append(parts, fmt.Sprintf("auth_mode=%s", settings.AuthMode))
 	}
+	if settings.ClaudeCodeOAuthToken != "" {
+		parts = append(parts, "oauth_token=set")
+	}
+	if settings.Bedrock != nil && settings.Bedrock.Enabled {
+		parts = append(parts, "bedrock=enabled")
+	}
+	if len(settings.EnabledPlugins) > 0 {
+		parts = append(parts, fmt.Sprintf("plugins=%d", len(settings.EnabledPlugins)))
+	}
+	fmt.Printf("  [OK] %s (name=%s): %s\n", secretName, settings.Name, strings.Join(parts, ", "))
+	if migrateVerbose {
+		printVerboseSettings(settings)
+	}
+}
 
+func namedCount(name string, values []string) string {
+	if len(values) == 0 {
+		return name + "=0"
+	}
+	return fmt.Sprintf("%s=%d(%s)", name, len(values), strings.Join(values, ","))
+}
+
+func mcpServerNames(servers map[string]*migrateMCPServerJSON) []string {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	return names
+}
+
+func marketplaceNames(marketplaces map[string]*migrateMarketplaceJSON) []string {
+	names := make([]string, 0, len(marketplaces))
+	for name := range marketplaces {
+		names = append(names, name)
+	}
+	return names
+}
+
+func printVerboseSettings(settings migrateSettingsJSON) {
+	for name, server := range settings.MCPServers {
+		fmt.Printf("       MCP: %s (type=%s", name, server.Type)
+		if server.URL != "" {
+			fmt.Printf(", url=%s", server.URL)
+		}
+		if server.Command != "" {
+			fmt.Printf(", cmd=%s", server.Command)
+		}
+		fmt.Println(")")
+	}
+	if len(settings.EnvVars) > 0 {
+		fmt.Printf("       EnvVars: %s\n", strings.Join(mapKeys(settings.EnvVars), ", "))
+	}
+}
+
+func mapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func printCleanupSkipped() {
+	fmt.Println("\nPhase 2 (cleanup) skipped.")
+	fmt.Println("Run with --cleanup to delete derived Secrets.")
+	fmt.Println("Run with --cleanup --dry-run to preview what would be deleted.")
+}
+
+func cleanupDerivedSecrets(ctx context.Context, client kubernetes.Interface) error {
 	fmt.Println("\n=== Phase 2: Cleanup derived Secrets ===")
 	if migrateDryRun {
 		fmt.Println("[DRY-RUN] The following Secrets would be deleted:")
 	}
-
-	// Label selectors for each type of derived Secret
 	derivedLabelSelectors := []struct {
 		typeLabel   string
 		description string
@@ -232,50 +235,49 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		{"agentapi.proxy/marketplaces=true", "Marketplace secrets (marketplaces-*)"},
 		{"agentapi.proxy/env=true", "Environment variable secrets (agent-env-*)"},
 	}
-
-	totalDeleted := 0
-	totalWouldDelete := 0
-
+	total := 0
 	for _, derived := range derivedLabelSelectors {
-		// Must be managed by settings to be safe to delete
-		labelSelector := "agentapi.proxy/managed-by=settings," + derived.typeLabel
-
-		secrets, err := client.CoreV1().Secrets(migrateNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: labelSelector,
-		})
+		count, err := cleanupDerivedSecretType(ctx, client, derived.typeLabel, derived.description)
 		if err != nil {
-			return fmt.Errorf("failed to list %s: %w", derived.description, err)
+			return err
 		}
-
-		if len(secrets.Items) == 0 {
-			if migrateVerbose {
-				fmt.Printf("  No %s found\n", derived.description)
-			}
-			continue
-		}
-
-		fmt.Printf("  %s: %d secret(s) found\n", derived.description, len(secrets.Items))
-		for _, secret := range secrets.Items {
-			if migrateDryRun {
-				fmt.Printf("    [DRY-RUN] Would delete: %s\n", secret.Name)
-				totalWouldDelete++
-			} else {
-				if err := client.CoreV1().Secrets(migrateNamespace).Delete(ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
-					fmt.Printf("    [ERROR] Failed to delete %s: %v\n", secret.Name, err)
-				} else {
-					fmt.Printf("    [DELETED] %s\n", secret.Name)
-					totalDeleted++
-				}
-			}
-		}
+		total += count
 	}
-
 	if migrateDryRun {
-		fmt.Printf("\nDry-run complete: %d secret(s) would be deleted.\n", totalWouldDelete)
+		fmt.Printf("\nDry-run complete: %d secret(s) would be deleted.\n", total)
 		fmt.Println("Run without --dry-run to actually delete them.")
 	} else {
-		fmt.Printf("\nCleanup complete: %d secret(s) deleted.\n", totalDeleted)
+		fmt.Printf("\nCleanup complete: %d secret(s) deleted.\n", total)
 	}
-
 	return nil
+}
+
+func cleanupDerivedSecretType(ctx context.Context, client kubernetes.Interface, typeLabel, description string) (int, error) {
+	selector := "agentapi.proxy/managed-by=settings," + typeLabel
+	secrets, err := client.CoreV1().Secrets(migrateNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list %s: %w", description, err)
+	}
+	if len(secrets.Items) == 0 {
+		if migrateVerbose {
+			fmt.Printf("  No %s found\n", description)
+		}
+		return 0, nil
+	}
+	fmt.Printf("  %s: %d secret(s) found\n", description, len(secrets.Items))
+	count := 0
+	for _, secret := range secrets.Items {
+		if migrateDryRun {
+			fmt.Printf("    [DRY-RUN] Would delete: %s\n", secret.Name)
+			count++
+			continue
+		}
+		if err := client.CoreV1().Secrets(migrateNamespace).Delete(ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
+			fmt.Printf("    [ERROR] Failed to delete %s: %v\n", secret.Name, err)
+			continue
+		}
+		fmt.Printf("    [DELETED] %s\n", secret.Name)
+		count++
+	}
+	return count, nil
 }

@@ -136,7 +136,8 @@ func TestRunHelmMigrateVerifyChecksShadowAndSharedLeaderLease(t *testing.T) {
 		return nil
 	}
 	var out bytes.Buffer
-	if err := runHelmMigrateVerify(context.Background(), &out, client, o, probe); err != nil {
+	verification := migrationVerificationContext{out: &out, client: client, options: o, probe: probe}
+	if err := runHelmMigrateVerify(context.Background(), verification); err != nil {
 		t.Fatalf("runHelmMigrateVerify() error = %v\n%s", err, out.String())
 	}
 	if probes != 1 {
@@ -161,7 +162,9 @@ func TestRunHelmMigrateVerifyDetectsCutoverAndProbeFailure(t *testing.T) {
 	)
 	o := &helmMigratePlanOptions{namespace: namespace, backendRelease: "agentapi-proxy", targetRelease: "ccplant", output: "text"}
 	var out bytes.Buffer
-	err := runHelmMigrateVerify(context.Background(), &out, client, o, func(context.Context, string, string) error { return errors.New("HTTP 503") })
+	probe := func(context.Context, string, string) error { return errors.New("HTTP 503") }
+	verification := migrationVerificationContext{out: &out, client: client, options: o, probe: probe}
+	err := runHelmMigrateVerify(context.Background(), verification)
 	if err == nil {
 		t.Fatal("runHelmMigrateVerify() error = nil, want probe failure")
 	}
