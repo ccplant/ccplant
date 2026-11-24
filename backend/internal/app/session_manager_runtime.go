@@ -1,10 +1,7 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,40 +9,17 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
-	"github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
-	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
-	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
-	infraallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionmanagerapi"
-	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
-	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	allocationworker "github.com/takutakahashi/agentapi-proxy/internal/modules/sessionallocation"
-	externalmanager "github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
-	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
-	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
-	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
-	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilversion "k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	"k8s.io/client-go/util/retry"
 )
 
 // SessionManagerRuntime is the execution-plane composition root. It does not
@@ -62,298 +36,47 @@ type SessionManagerRuntime struct {
 }
 
 func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbose bool) (*SessionManagerRuntime, error) {
-	if cfg == nil {
-		return nil, errors.New("session-manager config is required")
-	}
-	remoteMode := cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != ""
-	if !remoteMode && strings.TrimSpace(cfg.Redis.Addr) == "" {
-		return nil, errors.New("session-manager Redis is required")
-	}
-	if cfg.SessionManager.InternalAPIToken == "" {
-		return nil, errors.New("session-manager internal API token is required")
-	}
-	if cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != "" && (cfg.SessionManager.ID == "" || cfg.SessionManager.RunnerPool == "") {
-		return nil, errors.New("session-manager ID and runner pool are required")
-	}
-	manager, err := services.NewKubernetesSessionManager(cfg, verbose, logger.NewLogger())
-	if err != nil {
-		return nil, fmt.Errorf("initialize Kubernetes session manager: %w", err)
-	}
-	if cfg.SessionManager.RunnerPool != "" {
-		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
-	}
-	if remoteMode {
-		profileCtx, profileCancel := context.WithTimeout(parent, 15*time.Second)
-		profile, profileErr := fetchParentRuntimeProfile(profileCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken)
-		profileCancel()
-		if profileErr != nil {
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, fmt.Errorf("load parent runtime profile: %w", profileErr)
-		}
-		if profileErr = manager.ApplyRuntimeProfile(parent, profile); profileErr != nil {
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, fmt.Errorf("apply parent runtime profile: %w", profileErr)
-		}
-	}
-	// Stock workloads belong to the session-manager revision that created them.
-	// Purge the complete inventory at the process boundary instead of relying
-	// only on template-hash reconciliation: a manager replacement can otherwise
-	// leave apparently compatible stock backed by the previous revision.
-	purgeCtx, purgeCancel := context.WithTimeout(parent, 30*time.Second)
-	if err := purgeSessionManagerStock(purgeCtx, manager); err != nil {
-		purgeCancel()
-		_ = manager.Shutdown(5 * time.Second)
-		return nil, fmt.Errorf("purge stock sessions on session-manager startup: %w", err)
-	}
-	purgeCancel()
-
-	persistence := manager.GetClient()
-	var applicationStore kvstore.Store
-	if !remoteMode {
-		var wrapped bool
-		applicationStore, wrapped, err = buildApplicationKVStore(cfg.KVStore, persistence)
-		if err != nil {
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, fmt.Errorf("initialize session-manager KV store: %w", err)
-		}
-		if wrapped {
-			persistence = kvstore.NewKubernetesAdapter(persistence, applicationStore)
-		}
-	}
-
-	applicationNamespace := cfg.KVStore.Namespace
-	if applicationNamespace == "" {
-		applicationNamespace = "default"
-	}
-	runtimeProvider := runtimeconfig.New(cfg, applicationStore, applicationNamespace)
-	if err := runtimeProvider.Reload(parent); err != nil {
-		log.Printf("[SESSION_MANAGER] Runtime settings reload failed; using startup configuration: %v", err)
-	} else if runtimeProvider.Version() > 0 {
-		cfg = runtimeProvider.Current()
-	}
-	manager.SetConfigProvider(runtimeProvider)
-	runtimeCtx, runtimeCancel := context.WithCancel(parent)
-	runtimeProvider.Start(runtimeCtx, 30*time.Second, func(err error) {
-		log.Printf("[SESSION_MANAGER] Runtime settings reload failed: %v", err)
-	})
-
-	var credentialsRepo *repositories.KubernetesCredentialsRepository
-	var settingsRepo portrepos.SettingsRepository
-	var sessionRouteRepo portrepos.SessionRouteRepository
-	if !remoteMode {
-		registry, registryErr := newSessionManagerEncryptionRegistry()
-		if registryErr != nil {
-			runtimeCancel()
-			if applicationStore != nil {
-				_ = applicationStore.Close()
-			}
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, registryErr
-		}
-		settingsRepo = repositories.NewKubernetesSettingsRepository(persistence, applicationNamespace, registry)
-		credentialsRepo = repositories.NewKubernetesCredentialsRepository(persistence, applicationNamespace)
-		manager.SetSettingsRepository(settingsRepo)
-		manager.SetCredentialsRepository(credentialsRepo)
-		manager.SetUserFileRepository(repositories.NewKubernetesUserFileRepository(persistence, applicationNamespace))
-		manager.SetTeamConfigRepository(repositories.NewKubernetesTeamConfigRepository(persistence, applicationNamespace))
-		manager.SetPersonalAPIKeyRepository(repositories.NewKubernetesPersonalAPIKeyRepository(persistence, applicationNamespace))
-		manager.SetSandboxPolicyRepository(repositories.NewKubernetesSandboxPolicyRepository(persistence, applicationNamespace))
-		manager.SetSessionProfileRepository(repositories.NewKubernetesSessionProfileRepository(persistence, applicationNamespace, registry))
-		sessionRouteRepo = repositories.NewKubernetesSessionRouteRepository(persistence, applicationNamespace)
-		manager.AddSessionDeletedHandler(func(ctx context.Context, session entities.Session) {
-			cleanupLocalSessionRoutes(ctx, sessionRouteRepo, session.ID())
-		})
-	}
-	statusRepo := buildSessionManagerStatusEventRepository(cfg, remoteMode)
-	manager.SetStatusEventRepository(statusRepo)
-	if cache, ok := statusRepo.(portrepos.SessionListCacheRepository); ok {
-		manager.SetSessionListCacheRepository(cache)
-	}
-
-	stateStore, err := services.NewSessionStateStore(parent, cfg.SessionPersistence)
-	if err != nil {
-		runtimeCancel()
-		if applicationStore != nil {
-			_ = applicationStore.Close()
-		}
-		_ = manager.Shutdown(5 * time.Second)
-		return nil, fmt.Errorf("initialize session state store: %w", err)
-	}
-	controlStore := buildSessionManagerControlStore(cfg, remoteMode)
-	if controlStore != nil {
-		manager.SetSessionControlStore(controlStore)
-	}
-
-	// A manager registered with a parent is an execution plane only: the parent
-	// owns allocations and their claim leases. Remote replicas coordinate their
-	// single upstream poller with a Kubernetes Lease below.
-	var redisClient *redis.Client
-	if !remoteMode {
-		redisClient, err = newSessionManagerRedis(cfg)
-		if err != nil {
-			runtimeCancel()
-			if applicationStore != nil {
-				_ = applicationStore.Close()
-			}
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, err
-		}
-	}
-	if !remoteMode {
-		manager.SetSessionAllocationNotifier(infraallocation.NewRedisNotifier(redisClient))
-		manager.SetSessionAllocatorEnabled(true)
-	}
-
-	e := echo.New()
-	e.HideBanner = true
-	e.Use(otelecho.Middleware("agentapi-session-manager", otelecho.WithSkipper(func(c echo.Context) bool {
-		return c.Path() == "/livez" || c.Path() == "/healthz" || c.Path() == "/readyz"
-	})))
-	e.Use(middleware.Recover())
-	e.GET("/livez", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
-	e.GET("/healthz", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
-	e.GET("/readyz", func(c echo.Context) error {
-		ctx, cancel := context.WithTimeout(c.Request().Context(), 3*time.Second)
-		defer cancel()
-		if redisClient != nil {
-			if err := redisClient.Ping(ctx).Err(); err != nil {
-				return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "redis unavailable"})
-			}
-		}
-		if _, err := manager.GetClient().Discovery().ServerVersion(); err != nil {
-			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "kubernetes unavailable"})
-		}
-		return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
-	})
-	privateHandler, err := sessionmanagerapi.NewHandler(manager, cfg.SessionManager.InternalAPIToken, sessionmanagerapi.WithSessionStateStore(stateStore))
-	if err != nil {
-		runtimeCancel()
-		if redisClient != nil {
-			_ = redisClient.Close()
-		}
-		if applicationStore != nil {
-			_ = applicationStore.Close()
-		}
-		_ = manager.Shutdown(5 * time.Second)
+	if err := validateSessionManagerRuntimeConfig(cfg); err != nil {
 		return nil, err
 	}
-	privateHandler.RegisterRoutes(e)
-
-	// Session Pods authenticate with the narrower provisioner/session token.
-	provisioner := controllers.NewProvisionerController(manager, manager, settingsRepo, nil, stateStore)
-	e.POST("/internal/session-provisioners/connect", provisioner.Connect)
-	e.POST("/internal/session-provisioners/:sessionId/claim-pool-stock", provisioner.ClaimPoolStock)
-	e.GET("/internal/session-provisioners/:sessionId/provision-requests", provisioner.GetProvisionRequest)
-	e.POST("/internal/session-provisioners/:sessionId/provision-requests/:requestId/status", provisioner.UpdateProvisionRequestStatus)
-	if stateStore != nil {
-		e.PUT("/internal/session-state/:sessionId", provisioner.SaveSessionState)
-		e.POST("/internal/session-state/:sessionId/suspend", provisioner.ScheduleSessionSuspend)
-		e.POST("/internal/session-state/:sessionId/terminate", provisioner.SuspendSessionOnTermination)
-		e.GET("/internal/session-state/:sessionId", provisioner.LoadSessionState)
-		e.POST("/internal/session-state/:sessionId/uploads", provisioner.BeginSessionStateUpload)
-		e.GET("/internal/session-state/:sessionId/uploads/:uploadId/parts/:partNumber", provisioner.PresignSessionStatePart)
-		e.POST("/internal/session-state/:sessionId/uploads/:uploadId/complete", provisioner.CompleteSessionStateUpload)
-		e.DELETE("/internal/session-state/:sessionId/uploads/:uploadId", provisioner.AbortSessionStateUpload)
-		e.GET("/internal/session-state/:sessionId/download-url", provisioner.PresignSessionStateDownload)
+	manager, err := prepareSessionManagerRuntime(parent, cfg, verbose)
+	if err != nil {
+		return nil, err
 	}
-	if controlStore != nil {
-		control := controllers.NewSessionControlController(controlStore, manager)
-		e.GET("/internal/session-control/:sessionId/commands", control.WaitCommands)
-		e.POST("/internal/session-control/:sessionId/events", control.AppendEvents)
-	}
-	managedFiles := controllers.NewManagedFilesController(manager, credentialsRepo)
-	if remoteMode {
-		managedFiles.WithProxy(newUpstreamManagedFilesProxy(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken))
-	}
-	e.PUT("/internal/session-control/:sessionId/managed-files", managedFiles.Save)
-	// Register the top-level runtime forwarding routes after private and
-	// provisioner routes. The forwarding pattern is intentionally limited to
-	// one endpoint segment so it cannot overlap /internal/* callbacks.
-	if remoteMode {
-		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret, externalmanager.WithSessionStateStore(stateStore)).RegisterRoutes(e); err != nil {
-			runtimeCancel()
-			if redisClient != nil {
-				_ = redisClient.Close()
-			}
-			if applicationStore != nil {
-				_ = applicationStore.Close()
-			}
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, fmt.Errorf("register remote session-manager routes: %w", err)
+	startup := &sessionManagerStartup{config: cfg, manager: manager,
+		remote: cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != ""}
+	ready := false
+	defer func() {
+		if !ready {
+			cleanupSessionManagerStartup(manager, startup.store, startup.redis, startup.cancel)
 		}
+	}()
+	if err := startup.initializePersistence(); err != nil {
+		return nil, err
 	}
-	var allocator *allocationworker.Worker
-	lease := durationOr(cfg.SessionManager.Allocation.LeaseDuration, 15*time.Second)
-	renew := durationOr(cfg.SessionManager.Allocation.RenewDeadline, 10*time.Second)
-	retry := durationOr(cfg.SessionManager.Allocation.RetryPeriod, 2*time.Second)
-	leaseName := cfg.SessionManager.Allocation.LeaseName
-	if leaseName == "" {
-		leaseName = schedule.SessionAllocatorLeaseName
+	startup.startConfiguration(parent)
+	if err := startup.initializeRepositories(); err != nil {
+		return nil, err
 	}
-	if !remoteMode {
-		localClient := newLocalAllocationClient(manager, sessionRouteRepo)
-		allocator = allocationworker.NewWorker(manager, localClient)
-		if cfg.SessionManager.UpgradeVersionURL != "" {
-			go runSessionManagerVersionPoller(runtimeCtx, cfg, manager.GetClient(), manager.GetNamespace())
-		}
-		elector := schedule.NewRedisLeaderElector(redisClient, schedule.LeaderElectionConfig{
-			LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry,
-			LeaseName: leaseName, Namespace: manager.GetNamespace(),
-		})
-		go elector.Run(runtimeCtx, func(leaderCtx context.Context) {
-			log.Printf("[SESSION_MANAGER] Became local allocation leader")
-			if err := allocator.Start(leaderCtx); err != nil {
-				log.Printf("[SESSION_MANAGER] Allocation loop failed: %v", err)
-			}
-		}, allocator.Stop)
-	} else {
-		// Runtime configuration is owned by this manager's command-line arguments
-		// and environment. The parent controls allocation, but must not replace the
-		// manager's image, sidecars, resources, or other workload settings.
-		instanceID, _ := os.Hostname()
-		if instanceID == "" {
-			instanceID = uuid.NewString()
-		}
-		lock, lockErr := resourcelock.New(
-			resourcelock.LeasesResourceLock,
-			manager.GetNamespace(),
-			leaseName,
-			manager.GetClient().CoreV1(),
-			manager.GetClient().CoordinationV1(),
-			resourcelock.ResourceLockConfig{Identity: instanceID},
-		)
-		if lockErr != nil {
-			runtimeCancel()
-			if applicationStore != nil {
-				_ = applicationStore.Close()
-			}
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, fmt.Errorf("create Kubernetes session-manager lease: %w", lockErr)
-		}
-		leaderElectionConfig := leaderelection.LeaderElectionConfig{
-			Lock: lock, LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry, ReleaseOnCancel: true,
-			Callbacks: leaderelection.LeaderCallbacks{
-				OnStartedLeading: func(leaderCtx context.Context) {
-					log.Printf("[SESSION_MANAGER] Became remote execution leader")
-					// Session traffic for runner-pool workloads uses the per-session direct
-					// runtime channel, but manager-level lifecycle operations (notably
-					// deletion) still use outbound control during the migration to typed
-					// manager operations. Keep this reconnecting worker alive for every
-					// remote manager so a proxy rollout cannot permanently strand sessions.
-					control := externalmanager.NewControlWorker(externalmanager.ControlWorkerConfig{UpstreamURL: cfg.SessionManager.UpstreamURL, ConnectionToken: cfg.SessionManager.ConnectionToken, LocalURL: cfg.SessionManager.APIURL, InstanceID: instanceID, LocalHMACSecret: cfg.SessionManager.HMACSecret})
-					go control.Start(leaderCtx)
-					runSessionRunnerManagerHeartbeat(leaderCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg, manager)
-				},
-				OnStoppedLeading: func() { log.Printf("[SESSION_MANAGER] Lost remote execution leadership") },
-				OnNewLeader:      func(identity string) { log.Printf("[SESSION_MANAGER] Remote execution leader is %s", identity) },
-			},
-		}
-		go runRecoveringLeaderElection(runtimeCtx, retry, func() (leaderElectionRunner, error) {
-			return leaderelection.NewLeaderElector(leaderElectionConfig)
-		})
+	if err := startup.initializeState(parent); err != nil {
+		return nil, err
 	}
-
-	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+	if err := startup.initializeRedis(); err != nil {
+		return nil, err
+	}
+	e, err := startup.router()
+	if err != nil {
+		return nil, err
+	}
+	allocator, err := startSessionManagerAllocation(startup.context, sessionManagerAllocationDependencies{
+		config: startup.config, manager: manager, redis: startup.redis, routes: startup.routes, remote: startup.remote,
+	})
+	if err != nil {
+		return nil, err
+	}
+	ready = true
+	return &SessionManagerRuntime{config: startup.config, echo: e, manager: manager, kvStore: startup.store,
+		redis: startup.redis, allocator: allocator, runtimeCancel: startup.cancel}, nil
 }
 
 func fetchParentRuntimeProfile(ctx context.Context, upstream, managerID, token string) (*sessionsettings.RuntimeProfile, error) {
@@ -367,9 +90,16 @@ func fetchParentRuntimeProfile(ctx context.Context, upstream, managerID, token s
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("[SESSION_MANAGER] Close runtime profile response: %v", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if err != nil {
+			return nil, fmt.Errorf("runtime profile returned HTTP %d (read response: %w)", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("runtime profile returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var snapshot coreallocation.RuntimeProfileSnapshot
@@ -412,493 +142,4 @@ func runRecoveringLeaderElection(ctx context.Context, retryPeriod time.Duration,
 		case <-timer.C:
 		}
 	}
-}
-
-type sessionManagerStockPurger interface {
-	PurgeStockSessions(context.Context) error
-}
-
-func purgeSessionManagerStock(ctx context.Context, purger sessionManagerStockPurger) error {
-	return purger.PurgeStockSessions(ctx)
-}
-
-func buildSessionManagerStatusEventRepository(cfg *config.Config, remoteMode bool) portrepos.StatusEventRepository {
-	if remoteMode {
-		return repositories.NewNoopStatusRepository()
-	}
-	return buildStatusEventRepository(cfg)
-}
-
-func buildSessionManagerControlStore(cfg *config.Config, remoteMode bool) sessioncontrol.Store {
-	if remoteMode {
-		return nil
-	}
-	return buildSessionControlStore(cfg)
-}
-
-func runSessionManagerVersionPoller(ctx context.Context, cfg *config.Config, client kubernetes.Interface, namespace string) {
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		desired, err := fetchSessionManagerDesiredVersion(ctx, httpClient, cfg.SessionManager.UpgradeVersionURL, cfg.SessionManager.ConnectionToken)
-		if err != nil {
-			log.Printf("[SESSION_MANAGER] Version check failed: %v", err)
-		} else if err := reconcileSessionManagerVersion(ctx, cfg, client, namespace, desired); err != nil {
-			log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-func fetchSessionManagerDesiredVersion(ctx context.Context, client *http.Client, endpoint, token string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("version endpoint returned HTTP %d", resp.StatusCode)
-	}
-	var result struct {
-		Version string `json:"version"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode version response: %w", err)
-	}
-	result.Version = strings.TrimSpace(result.Version)
-	if result.Version == "" {
-		return "", errors.New("version endpoint returned an empty version")
-	}
-	return result.Version, nil
-}
-
-func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, token string, cfg *config.Config, manager *services.KubernetesSessionManager) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		localRunnerIDs, inventoryErr := manager.ListRunnerSessionIDs(ctx)
-		if inventoryErr != nil {
-			log.Printf("[SESSION_MANAGER] List local runner inventory: %v", inventoryErr)
-		}
-		var heartbeatBody io.Reader
-		if inventoryErr == nil {
-			sessionStatuses := make(map[string]string)
-			for _, runnerID := range localRunnerIDs {
-				if err := manager.RefreshRunnerSessionStatus(ctx, runnerID); err != nil {
-					log.Printf("[SESSION_MANAGER] Refresh runner %s status: %v", runnerID, err)
-				}
-				if session := manager.GetSession(runnerID); session != nil {
-					sessionStatuses[session.ID()] = session.Status()
-				}
-			}
-			payload, marshalErr := json.Marshal(map[string]any{
-				"local_runner_ids": localRunnerIDs,
-				"session_statuses": sessionStatuses,
-			})
-			if marshalErr != nil {
-				log.Printf("[SESSION_MANAGER] Encode runner pool heartbeat: %v", marshalErr)
-			} else {
-				heartbeatBody = bytes.NewReader(payload)
-			}
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", heartbeatBody)
-		if err == nil {
-			req.Header.Set("Authorization", "Bearer "+token)
-			if heartbeatBody != nil {
-				req.Header.Set("Content-Type", "application/json")
-			}
-			if resp, doErr := client.Do(req); doErr != nil {
-				log.Printf("[SESSION_MANAGER] Runner pool heartbeat failed: %v", doErr)
-			} else {
-				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-					log.Printf("[SESSION_MANAGER] Runner pool heartbeat returned HTTP %d", resp.StatusCode)
-					_ = resp.Body.Close()
-				} else {
-					var result struct {
-						ManagerID               string                                 `json:"manager_id"`
-						Pools                   []*sessionrunnercore.PoolSupplier      `json:"pools"`
-						RegisteredRunnerIDs     *[]string                              `json:"registered_runner_ids"`
-						UpstreamVersion         string                                 `json:"upstream_version"`
-						AllocatedRunnerPolicies map[string]sessionsettings.SessionMeta `json:"allocated_runner_policies"`
-					}
-					if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
-						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
-					}
-					_ = resp.Body.Close()
-					if result.ManagerID != "" && result.ManagerID != managerID {
-						log.Printf("[SESSION_MANAGER] Resolved registered manager ID %s (configured as %s)", result.ManagerID, managerID)
-						managerID = result.ManagerID
-						manager.ConfigureSessionRunnerPool(upstream, managerID, token, cfg.SessionManager.RunnerPool)
-					}
-					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
-					for runnerID, metadata := range result.AllocatedRunnerPolicies {
-						if err := manager.ApplyRunnerAllocationMetadata(ctx, runnerID, metadata); err != nil {
-							log.Printf("[SESSION_MANAGER] Apply runner %s allocation metadata: %v", runnerID, err)
-						}
-					}
-					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
-						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
-					}
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-func reconcileSessionRunnerHeartbeat(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier, registeredRunnerIDs *[]string) {
-	telemetry.OperationVoid(ctx, "app.SessionManagerRuntime.reconcileHeartbeat", func(ctx context.Context) {
-		// The parent inventory was captured before this heartbeat response. Remove
-		// orphaned local runners before replenishing stock so a runner registered by
-		// this reconciliation is not immediately deleted as absent from that stale
-		// snapshot.
-		if registeredRunnerIDs != nil {
-			reconcileOrphanedSessionRunners(ctx, manager, *registeredRunnerIDs)
-		}
-		reconcileSessionRunnerPools(ctx, manager, pools)
-	})
-}
-
-type orphanedSessionRunnerCleaner interface {
-	DeleteRunnerSessionsNotRegistered(context.Context, map[string]struct{}) error
-}
-
-func reconcileOrphanedSessionRunners(ctx context.Context, manager sessionRunnerInfrastructure, registeredIDs []string) {
-	telemetry.OperationVoid(ctx, "app.SessionManagerRuntime.reconcileOrphanedRunners", func(ctx context.Context) {
-		cleaner, ok := manager.(orphanedSessionRunnerCleaner)
-		if !ok {
-			return
-		}
-		registered := make(map[string]struct{}, len(registeredIDs))
-		for _, id := range registeredIDs {
-			if id != "" {
-				registered[id] = struct{}{}
-			}
-		}
-		if err := cleaner.DeleteRunnerSessionsNotRegistered(ctx, registered); err != nil {
-			log.Printf("[SESSION_MANAGER] Delete orphaned runner sessions: %v", err)
-		}
-	})
-}
-
-func reconcileSessionManagerVersion(ctx context.Context, cfg *config.Config, client kubernetes.Interface, namespace, desired string) error {
-	if !cfg.SessionManager.AutoUpgrade || desired == "" || cfg.SessionManager.CurrentVersion == "" {
-		return nil
-	}
-	upgrade, err := sessionManagerUpgradeRequired(cfg.SessionManager.CurrentVersion, desired)
-	if err != nil {
-		return err
-	}
-	if !upgrade {
-		return nil
-	}
-	if cfg.SessionManager.DeploymentName == "" || cfg.SessionManager.ImageRepository == "" {
-		return errors.New("deployment name and image repository are required for auto-upgrade")
-	}
-	image := strings.TrimSuffix(cfg.SessionManager.ImageRepository, ":") + ":" + desired
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		deployment, getErr := client.AppsV1().Deployments(namespace).Get(ctx, cfg.SessionManager.DeploymentName, metav1.GetOptions{})
-		if getErr != nil {
-			return getErr
-		}
-		found := false
-		for i := range deployment.Spec.Template.Spec.Containers {
-			container := &deployment.Spec.Template.Spec.Containers[i]
-			if container.Name != "session-manager" {
-				continue
-			}
-			found = true
-			previousImage := container.Image
-			container.Image = image
-			injectedCLI := false
-			for _, env := range container.Env {
-				if env.Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" && env.Value != "" {
-					injectedCLI = true
-				}
-			}
-			for j := range container.Env {
-				if (container.Env[j].Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" ||
-					(!injectedCLI && container.Env[j].Name == "AGENTAPI_K8S_SESSION_IMAGE")) &&
-					container.Env[j].Value == previousImage {
-					container.Env[j].Value = image
-				}
-				if container.Env[j].Name == "AGENTAPI_SESSION_MANAGER_CURRENT_VERSION" {
-					container.Env[j].Value = desired
-				}
-			}
-		}
-		if !found {
-			return errors.New("session-manager container not found in deployment")
-		}
-		_, updateErr := client.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
-		return updateErr
-	})
-}
-
-func sessionManagerUpgradeRequired(current, desired string) (bool, error) {
-	// Development charts use immutable commit-addressed tags. Git commit order
-	// is not encoded in the tag, so the authenticated parent is authoritative.
-	if strings.HasPrefix(desired, "dev.ccplant.") {
-		sha := strings.TrimPrefix(desired, "dev.ccplant.")
-		if len(sha) != 40 {
-			return false, fmt.Errorf("invalid upstream development version %q", desired)
-		}
-		if _, err := hex.DecodeString(sha); err != nil {
-			return false, fmt.Errorf("invalid upstream development version %q", desired)
-		}
-		return current != desired, nil
-	}
-	desiredVersion, err := utilversion.ParseSemantic(desired)
-	if err != nil {
-		return false, fmt.Errorf("invalid upstream version %q: %w", desired, err)
-	}
-	currentVersion, err := utilversion.ParseSemantic(current)
-	if err != nil {
-		if strings.HasPrefix(current, "dev.ccplant.") {
-			return true, nil
-		}
-		return false, fmt.Errorf("invalid current version %q: %w", current, err)
-	}
-	return currentVersion.LessThan(desiredVersion), nil
-}
-
-type sessionRunnerInfrastructure interface {
-	CountStockSessionsForPool(context.Context, string, bool) (int, error)
-	CountRunnerSessionsForPool(context.Context, string) (int, error)
-	CreateStockSessionForPool(context.Context, string, bool) error
-	PurgeStockSessionsForPool(context.Context, string) error
-}
-
-func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier) {
-	telemetry.OperationVoid(ctx, "app.SessionManagerRuntime.reconcilePools", func(ctx context.Context) {
-		for _, pool := range pools {
-			if pool == nil {
-				continue
-			}
-			if !pool.Enabled || pool.Draining {
-				if err := manager.PurgeStockSessionsForPool(ctx, pool.Pool); err != nil {
-					log.Printf("[SESSION_MANAGER] Purge disabled or draining pool %s stock: %v", pool.Pool, err)
-				}
-				continue
-			}
-			if pool.MinIdle <= 0 {
-				continue
-			}
-			localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
-			if err != nil {
-				log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)
-				continue
-			}
-			// The local Service inventory is authoritative for capability-specific
-			// idle counts. The parent only reports aggregate pool counts, which cannot
-			// distinguish DinD from non-DinD runners.
-			total := max(localTotal, pool.TotalRunners)
-			for _, dind := range []bool{false, true} {
-				localIdle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, dind)
-				if err != nil {
-					log.Printf("[SESSION_MANAGER] Count pool %s idle runners (dind=%t): %v", pool.Pool, dind, err)
-					continue
-				}
-				for localIdle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
-					if err := manager.CreateStockSessionForPool(ctx, pool.Pool, dind); err != nil {
-						log.Printf("[SESSION_MANAGER] Create pool %s runner (dind=%t): %v", pool.Pool, dind, err)
-						break
-					}
-					localIdle++
-					total++
-				}
-			}
-		}
-	})
-}
-
-func newSessionManagerEncryptionRegistry() (*services.EncryptionServiceRegistry, error) {
-	factory := services.NewEncryptionServiceFactory("AGENTAPI_ENCRYPTION")
-	primary, err := factory.Create()
-	if err != nil {
-		return nil, fmt.Errorf("create session-manager encryption service: %w", err)
-	}
-	registry := services.NewEncryptionServiceRegistry(primary)
-	registry.Register(services.NewNoopEncryptionService())
-	decryptFactory := services.NewEncryptionServiceFactory("AGENTAPI_DECRYPTION")
-	if decrypt, err := decryptFactory.Create(); err == nil && (decrypt.Algorithm() != primary.Algorithm() || decrypt.KeyID() != primary.KeyID()) {
-		registry.Register(decrypt)
-	}
-	return registry, nil
-}
-
-type upstreamManagedFilesProxy struct {
-	baseURL   string
-	managerID string
-	token     string
-	client    *http.Client
-}
-
-func newUpstreamManagedFilesProxy(baseURL, managerID, token string) *upstreamManagedFilesProxy {
-	return &upstreamManagedFilesProxy{
-		baseURL: strings.TrimRight(baseURL, "/"), managerID: managerID, token: token,
-		client: &http.Client{Timeout: 15 * time.Second},
-	}
-}
-
-func (p *upstreamManagedFilesProxy) SaveManagedFiles(ctx context.Context, sessionID, owner, syncID string, files []sessionsettings.ManagedFile, expected map[string]string) error {
-	body, err := json.Marshal(struct {
-		Owner    string                        `json:"owner"`
-		SyncID   string                        `json:"sync_id,omitempty"`
-		Files    []sessionsettings.ManagedFile `json:"files"`
-		Expected map[string]string             `json:"expected,omitempty"`
-	}{Owner: owner, SyncID: syncID, Files: files, Expected: expected})
-	if err != nil {
-		return err
-	}
-	endpoint := p.baseURL + "/internal/session-managers/" + url.PathEscape(p.managerID) + "/sessions/" + url.PathEscape(sessionID) + "/managed-files"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusConflict {
-		return controllers.ErrManagedFileConflict
-	}
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("parent managed-file persistence returned HTTP %d", resp.StatusCode)
-	}
-	return nil
-}
-
-func newSessionManagerRedis(cfg *config.Config) (*redis.Client, error) {
-	if cfg.Redis.Addr == "" {
-		return nil, errors.New("session-manager Redis is required for allocation leader election")
-	}
-	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB}
-	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
-		opts.DialTimeout = d
-	}
-	if d, err := time.ParseDuration(cfg.Redis.ReadTimeout); err == nil && d > 0 {
-		opts.ReadTimeout = d
-	}
-	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
-		opts.WriteTimeout = d
-	}
-	if cfg.Redis.TLSEnabled {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-	client := redis.NewClient(opts)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("connect session-manager Redis: %w", err)
-	}
-	return client, nil
-}
-
-func durationOr(raw string, fallback time.Duration) time.Duration {
-	parsed, err := time.ParseDuration(raw)
-	if err != nil || parsed <= 0 {
-		return fallback
-	}
-	return parsed
-}
-
-type localAllocationClient struct {
-	queue  coreallocation.Queue
-	routes portrepos.SessionRouteRepository
-}
-
-func newLocalAllocationClient(queue coreallocation.Queue, routes portrepos.SessionRouteRepository) *localAllocationClient {
-	return &localAllocationClient{queue: queue, routes: routes}
-}
-
-func (c *localAllocationClient) Next(ctx context.Context, wait time.Duration) (*coreallocation.AllocationRequest, bool, error) {
-	return c.queue.NextSessionAllocation(ctx, wait)
-}
-
-func (c *localAllocationClient) Complete(ctx context.Context, sessionID string, result coreallocation.AllocationResult) error {
-	// Persist the public-to-runtime stock alias before acknowledging the queue.
-	// Queue completion deletes the allocation, so doing this in the opposite
-	// order can permanently lose the only mapping after a crash or KV failure.
-	if result.Status == coreallocation.StatusAssigned && result.AllocatedSessionID != "" && result.AllocatedSessionID != sessionID {
-		if c.routes == nil {
-			return fmt.Errorf("save session route for allocation %s: route repository is not configured", sessionID)
-		}
-		reader, ok := c.queue.(coreallocation.AllocationReader)
-		if !ok {
-			return fmt.Errorf("load allocation %s before saving session route: queue does not support durable allocation reads", sessionID)
-		}
-		allocation, err := reader.GetSessionAllocation(ctx, sessionID)
-		if err != nil {
-			return fmt.Errorf("load allocation %s before saving session route: %w", sessionID, err)
-		}
-		if allocation == nil {
-			return fmt.Errorf("load allocation %s before saving session route: allocation not found", sessionID)
-		}
-		if allocation.SessionID != sessionID {
-			return fmt.Errorf("load allocation %s before saving session route: durable allocation has session ID %s", sessionID, allocation.SessionID)
-		}
-		route := &portrepos.SessionRoute{SessionID: allocation.SessionID, RemoteSessionID: result.AllocatedSessionID, StartedAt: time.Now(), Status: "starting"}
-		if allocation.Request != nil {
-			route.UserID = allocation.Request.UserID
-			route.Scope = string(allocation.Request.Scope)
-			route.TeamID = allocation.Request.TeamID
-			route.Tags = allocation.Request.Tags
-			route.InitialMessage = allocation.Request.InitialMessage
-		}
-		if err := c.routes.Save(ctx, route); err != nil {
-			return err
-		}
-	}
-	if _, err := c.queue.CompleteSessionAllocation(ctx, sessionID, result); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (r *SessionManagerRuntime) Echo() *echo.Echo { return r.echo }
-
-func (r *SessionManagerRuntime) Manager() *services.KubernetesSessionManager { return r.manager }
-
-func (r *SessionManagerRuntime) Config() *config.Config { return r.config }
-
-func (r *SessionManagerRuntime) Shutdown(timeout time.Duration) error {
-	if r.runtimeCancel != nil {
-		r.runtimeCancel()
-	}
-	if r.allocator != nil {
-		r.allocator.Stop()
-	}
-	var managerErr, kvErr, redisErr error
-	if r.manager != nil {
-		managerErr = r.manager.Shutdown(timeout)
-	}
-	if r.kvStore != nil {
-		kvErr = r.kvStore.Close()
-	}
-	if r.redis != nil {
-		redisErr = r.redis.Close()
-	}
-	return errors.Join(managerErr, kvErr, redisErr)
 }

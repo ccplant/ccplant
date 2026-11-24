@@ -12,6 +12,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // SandboxDomainCollector runs as a background goroutine, periodically querying
@@ -138,7 +139,7 @@ func (c *SandboxDomainCollector) fetchDomains(ks *services.KubernetesSession) (*
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer closeutils.SafeCloseResponseBody(resp.Body) //nolint:errcheck
 
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		return &sandboxDomainsResponse{}, nil
