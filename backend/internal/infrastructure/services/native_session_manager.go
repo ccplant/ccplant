@@ -269,9 +269,9 @@ func (m *NativeSessionManager) UpdateProvisionRequestStatus(_ context.Context, s
 		}
 		s.updatedAt = time.Now().UTC()
 		s.mu.Unlock()
-		if err := m.persistSession(s); err != nil {
-			return err
-		}
+		// Keep provision status updates independent from the optional native
+		// session-state snapshot, matching the pre-extraction behavior.
+		_ = m.persistSession(s)
 	}
 	return nil
 }
