@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -16,8 +17,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
 	proxyconfig "github.com/takutakahashi/agentapi-proxy/pkg/config"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -185,24 +184,15 @@ func (c *AdminSettingsController) Put(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode admin settings").SetInternal(err)
 	}
-	if _, err = c.store.Create(ctx.Request().Context(), kvstore.Record{Kind: kvstore.KindSecret, Namespace: c.namespace, Key: versionKey(doc.Version), Value: versionValue}); err != nil {
+	versionRecord := kvstore.Record{Kind: kvstore.KindSecret, Namespace: c.namespace, Key: versionKey(doc.Version), Value: versionValue}
+	if err = c.createRecord(ctx.Request().Context(), versionRecord); err != nil {
 		if errors.Is(err, kvstore.ErrConflict) {
 			return echo.NewHTTPError(http.StatusConflict, "admin settings version is stale")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save admin settings version").SetInternal(err)
 	}
 
-	head := adminSettingsHead{CurrentVersion: doc.Version, UpdatedAt: now}
-	headValue, err := marshalSecret(adminSettingsHeadKey, "admin-system-settings-head", adminSettingsHeadDataKey, head)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode admin settings head").SetInternal(err)
-	}
-	if headRecord.Key == "" {
-		_, err = c.store.Create(ctx.Request().Context(), kvstore.Record{Kind: kvstore.KindSecret, Namespace: c.namespace, Key: adminSettingsHeadKey, Value: headValue})
-	} else {
-		headRecord.Value = headValue
-		_, err = c.store.Update(ctx.Request().Context(), headRecord)
-	}
+	err = c.saveAdminSettingsHead(ctx.Request().Context(), headRecord, doc)
 	if errors.Is(err, kvstore.ErrConflict) {
 		return echo.NewHTTPError(http.StatusConflict, "admin settings were updated by another request")
 	}
@@ -215,6 +205,19 @@ func (c *AdminSettingsController) Put(ctx echo.Context) error {
 		}
 	}
 	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc, c.runtimeApplied()))
+}
+
+func (c *AdminSettingsController) saveAdminSettingsHead(ctx context.Context, record kvstore.Record, doc adminSettingsDocument) error {
+	head := adminSettingsHead{CurrentVersion: doc.Version, UpdatedAt: doc.UpdatedAt}
+	value, err := marshalSecret(adminSettingsHeadKey, "admin-system-settings-head", adminSettingsHeadDataKey, head)
+	if err != nil {
+		return err
+	}
+	if record.Key == "" {
+		return c.createRecord(ctx, kvstore.Record{Kind: kvstore.KindSecret, Namespace: c.namespace, Key: adminSettingsHeadKey, Value: value})
+	}
+	record.Value = value
+	return c.updateRecord(ctx, record)
 }
 
 func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
@@ -292,9 +295,16 @@ func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
 }
 
 func cloneSections(source map[string]interface{}) map[string]interface{} {
-	data, _ := json.Marshal(source)
+	data, err := json.Marshal(source)
+	if err != nil {
+		log.Printf("[ADMIN_SETTINGS] failed to clone settings: %v", err)
+		return map[string]interface{}{}
+	}
 	cloned := map[string]interface{}{}
-	_ = json.Unmarshal(data, &cloned)
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		log.Printf("[ADMIN_SETTINGS] failed to decode cloned settings: %v", err)
+		return map[string]interface{}{}
+	}
 	return cloned
 }
 
@@ -337,8 +347,38 @@ func (c *AdminSettingsController) loadCurrent(ctx context.Context) (adminSetting
 	if err := decodeSecretData(headRecord, adminSettingsHeadDataKey, &head); err != nil {
 		return adminSettingsDocument{}, headRecord, err
 	}
-	doc, _, err := c.loadVersion(ctx, head.CurrentVersion)
+	doc, err := c.loadVersionDocument(ctx, head.CurrentVersion)
 	return doc, headRecord, err
+}
+
+func (c *AdminSettingsController) loadVersionDocument(ctx context.Context, version int64) (adminSettingsDocument, error) {
+	record, err := c.store.Get(ctx, kvstore.KindSecret, c.namespace, versionKey(version))
+	if err != nil {
+		return adminSettingsDocument{}, err
+	}
+	return decodeDocument(record)
+}
+
+func (c *AdminSettingsController) createRecord(ctx context.Context, input kvstore.Record) error {
+	created, err := c.store.Create(ctx, input)
+	if err != nil {
+		return err
+	}
+	if created.Key != "" && created.Key != input.Key {
+		return fmt.Errorf("created unexpected admin settings record %q", created.Key)
+	}
+	return nil
+}
+
+func (c *AdminSettingsController) updateRecord(ctx context.Context, input kvstore.Record) error {
+	updated, err := c.store.Update(ctx, input)
+	if err != nil {
+		return err
+	}
+	if updated.Key != "" && updated.Key != input.Key {
+		return fmt.Errorf("updated unexpected admin settings record %q", updated.Key)
+	}
+	return nil
 }
 
 func (c *AdminSettingsController) loadVersion(ctx context.Context, version int64) (adminSettingsDocument, kvstore.Record, error) {
@@ -359,108 +399,4 @@ func decodeDocument(record kvstore.Record) (adminSettingsDocument, error) {
 		doc.Sections = map[string]interface{}{}
 	}
 	return doc, nil
-}
-
-func decodeSecretData(record kvstore.Record, key string, target interface{}) error {
-	var secret corev1.Secret
-	if err := json.Unmarshal(record.Value, &secret); err != nil {
-		return fmt.Errorf("decode KV secret: %w", err)
-	}
-	if err := json.Unmarshal(secret.Data[key], target); err != nil {
-		return fmt.Errorf("decode KV document: %w", err)
-	}
-	return nil
-}
-
-func marshalSecret(name, recordType, dataKey string, value interface{}) ([]byte, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	secret := corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"agentapi.proxy/type": recordType}}, Type: corev1.SecretTypeOpaque, Data: map[string][]byte{dataKey: data}}
-	return json.Marshal(secret)
-}
-
-func versionKey(version int64) string {
-	return fmt.Sprintf("%s%010d", adminSettingsVersionPrefix, version)
-}
-
-func sanitizeAdminSettings(doc adminSettingsDocument, runtimeApplied bool) adminSettingsResponse {
-	copyBytes, _ := json.Marshal(doc.Sections)
-	sections := map[string]interface{}{}
-	_ = json.Unmarshal(copyBytes, &sections)
-	configured := map[string]bool{}
-	for _, path := range adminSecretPaths {
-		if value, ok := getNestedString(sections, path); ok && value != "" {
-			configured[path] = true
-			deleteNested(sections, path)
-		}
-	}
-	return adminSettingsResponse{SchemaVersion: doc.SchemaVersion, Version: doc.Version, Sections: sections, SecretConfigured: configured, UpdatedAt: doc.UpdatedAt, RuntimeApplied: runtimeApplied}
-}
-
-// runtimeApplied reports whether saved settings take effect in the running
-// process. The runtime config provider does not apply admin-managed settings
-// today (secret-wiping defect, see runtimeconfig.Provider), so this is false
-// and the admin UI must surface it (ccplant-deploy#66 F4).
-func (c *AdminSettingsController) runtimeApplied() bool {
-	if c.provider == nil {
-		return false
-	}
-	return c.provider.RuntimeApplicationEnabled()
-}
-
-func preserveOmittedSecrets(existing, requested map[string]interface{}) {
-	for _, path := range adminSecretPaths {
-		if _, present := getNestedString(requested, path); present {
-			continue
-		}
-		if value, ok := getNestedString(existing, path); ok {
-			setNested(requested, path, value)
-		}
-	}
-}
-
-func getNestedString(root map[string]interface{}, path string) (string, bool) {
-	parts := strings.Split(path, ".")
-	var current interface{} = root
-	for _, part := range parts {
-		object, ok := current.(map[string]interface{})
-		if !ok {
-			return "", false
-		}
-		current, ok = object[part]
-		if !ok {
-			return "", false
-		}
-	}
-	value, ok := current.(string)
-	return value, ok
-}
-
-func setNested(root map[string]interface{}, path, value string) {
-	parts := strings.Split(path, ".")
-	current := root
-	for _, part := range parts[:len(parts)-1] {
-		next, ok := current[part].(map[string]interface{})
-		if !ok {
-			next = map[string]interface{}{}
-			current[part] = next
-		}
-		current = next
-	}
-	current[parts[len(parts)-1]] = value
-}
-
-func deleteNested(root map[string]interface{}, path string) {
-	parts := strings.Split(path, ".")
-	current := root
-	for _, part := range parts[:len(parts)-1] {
-		next, ok := current[part].(map[string]interface{})
-		if !ok {
-			return
-		}
-		current = next
-	}
-	delete(current, parts[len(parts)-1])
 }

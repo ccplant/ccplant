@@ -15,6 +15,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // ShareController handles session sharing endpoints
@@ -243,7 +244,7 @@ func (c *ShareController) RouteToSharedSession(ctx echo.Context) error {
 			if tunnelErr != nil {
 				return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
 			}
-			defer func() { _ = resp.Body.Close() }()
+			defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 			copyResponseHeaders(ctx.Response().Header(), resp.Header)
 			c.setCORSHeaders(ctx)
 			return streamTunnelResponse(ctx, resp)

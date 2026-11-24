@@ -7,18 +7,20 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
-	runnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
+	runnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
+
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	infraesmcontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // SessionRuntimeController exposes a per-session reverse-RPC channel used by a
@@ -60,7 +62,7 @@ func (c *SessionRuntimeController) Checkpoint(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 	}
-	defer resp.Body.Close()
+	defer closeutils.SafeCloseResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return echo.NewHTTPError(resp.StatusCode, string(body))

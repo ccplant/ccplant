@@ -2,10 +2,11 @@ package controllers
 
 import (
 	"encoding/json"
+	"net/http"
+
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/notification"
-	"net/http"
 )
 
 // NotificationController handles HTTP requests for notification operations

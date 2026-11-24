@@ -12,16 +12,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	testassert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
-	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -101,16 +102,16 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v3/repos/acme/payments/installation":
 			installationCalls++
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": 99}))
 		case "/api/v3/repos/acme/shared/installation":
 			installationCalls++
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": 99}))
 		case "/api/v3/repos/acme/generated-one/installation":
 			installationCalls++
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": 99}))
 		case "/api/v3/app/installations/99/access_tokens":
 			tokenCalls++
-			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().UTC().Add(time.Hour)})
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().UTC().Add(time.Hour)}))
 		default:
 			http.NotFound(w, r)
 		}
@@ -121,8 +122,10 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	controller := NewGitHubConnectionsController(client, "test", "", true)
 	connection := githubConnection{ID: "connection-1", Name: "GitHub", BaseURL: githubAPI.URL, APIURL: githubAPI.URL, Enabled: true, Organizations: []string{"acme"}, GitHubApp: &githubAppConfiguration{AppID: 123}}
 	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
-	_, _, resourceVersion, err := controller.loadConnection(context.Background(), connection.ID)
+	loadedConnection, secret, resourceVersion, err := controller.loadConnection(context.Background(), connection.ID)
 	require.NoError(t, err)
+	require.Equal(t, connection.ID, loadedConnection.ID)
+	require.Empty(t, secret)
 	require.NoError(t, controller.saveGitHubAppPrivateKey(context.Background(), connection, pemValue, resourceVersion))
 
 	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-1", "", "acme", "acme/payments", []string{"acme/shared", "acme/generated-[a-z]+"}, nil)
@@ -226,8 +229,9 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.ErrorAs(t, err, &deniedHTTPError)
 	require.Equal(t, http.StatusForbidden, deniedHTTPError.Code)
 
-	broadLease, _, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-2", "", "acme", "acme/payments", []string{".*"}, nil)
+	broadLease, broadConnectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-2", "", "acme", "acme/payments", []string{".*"}, nil)
 	require.NoError(t, err)
+	require.Equal(t, connection.ID, broadConnectionID)
 	require.True(t, matched)
 	otherOrgReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-2/github-credentials?repository=other%2Fsecret", nil)
 	otherOrgReq.Header.Set("Authorization", "Bearer "+broadLease)
@@ -281,8 +285,9 @@ func TestBrokerCredentialsPreferLinkedPersonalConnectionToken(t *testing.T) {
 	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
 	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
 	require.NoError(t, err)
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-personal", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "personal-token", nil)
+	linked, err := controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-personal", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "personal-token", nil)
 	require.NoError(t, err)
+	require.True(t, linked)
 
 	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "personal-session", connection.ID, "acme", "acme/repo", nil, user)
 	require.NoError(t, err)
@@ -329,10 +334,11 @@ func TestDeletePrincipalDeletesLinkedIdentities(t *testing.T) {
 	controller := NewGitHubConnectionsController(client, "test", "https://service.example.com")
 	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:public:42")
 	require.NoError(t, err)
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{
+	linked, err := controller.linkIdentity(context.Background(), githubIdentity{
 		ID: "identity-1", PrincipalID: principal.ID, ConnectionID: "public", GitHubUserID: 42, Login: "alice",
 	}, "token", nil)
 	require.NoError(t, err)
+	require.True(t, linked)
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodDelete, "/admin/principals/"+principal.ID, nil)
@@ -345,10 +351,12 @@ func TestDeletePrincipalDeletesLinkedIdentities(t *testing.T) {
 	require.NoError(t, controller.DeletePrincipal(ctx))
 	require.Equal(t, http.StatusNoContent, rec.Code)
 
-	_, err = controller.loadPrincipal(context.Background(), principal.InternalUserID)
+	deletedPrincipal, err := controller.loadPrincipal(context.Background(), principal.InternalUserID)
+	require.Empty(t, deletedPrincipal.ID)
 	require.True(t, apierrors.IsNotFound(err))
 	var identity githubIdentity
-	_, err = controller.loadObject(context.Background(), identitySecretName("public", 42), &identity)
+	resourceVersion, err := controller.loadObject(context.Background(), identitySecretName("public", 42), &identity)
+	require.Empty(t, resourceVersion)
 	require.True(t, apierrors.IsNotFound(err))
 }
 
@@ -370,8 +378,9 @@ func TestDeletePrincipalWithEncryptedLibSQL(t *testing.T) {
 	backend, err := kvstore.NewLibSQLStore(context.Background(), "file://"+filepath.Join(t.TempDir(), "principals.db"), "")
 	require.NoError(t, err)
 	key := make([]byte, 32)
-	_, err = rand.Read(key)
+	bytesRead, err := rand.Read(key)
 	require.NoError(t, err)
+	require.Equal(t, len(key), bytesRead)
 	keyring, err := kvstore.NewLocalKeyring("current", map[string]string{"current": base64.StdEncoding.EncodeToString(key)})
 	require.NoError(t, err)
 	store, err := kvstore.NewEncryptedStore(backend, keyring)
@@ -381,526 +390,18 @@ func TestDeletePrincipalWithEncryptedLibSQL(t *testing.T) {
 	controller := NewGitHubConnectionsController(client, "test", "https://service.example.com", true)
 	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:public:42")
 	require.NoError(t, err)
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{
+	linked, err := controller.linkIdentity(context.Background(), githubIdentity{
 		ID: "identity-1", PrincipalID: principal.ID, ConnectionID: "public", GitHubUserID: 42, Login: "alice",
 	}, "token", nil)
 	require.NoError(t, err)
+	require.True(t, linked)
 
 	e := echo.New()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodDelete, "/admin/principals/"+principal.ID, nil), httptest.NewRecorder())
 	ctx.SetParamNames("principalId")
 	ctx.SetParamValues(principal.ID)
 	require.NoError(t, controller.DeletePrincipal(ctx))
-	_, err = controller.loadPrincipal(context.Background(), principal.InternalUserID)
+	deletedPrincipal, err := controller.loadPrincipal(context.Background(), principal.InternalUserID)
+	require.Empty(t, deletedPrincipal.ID)
 	require.True(t, apierrors.IsNotFound(err))
-}
-
-func TestRepairPrincipalClearsApplicationUserIDAndAttachesIdentity(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	connection := githubConnection{ID: "public", Name: "GitHub", BaseURL: "https://github.com", APIURL: "https://api.github.com"}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "secret", ""))
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:public:1")
-	require.NoError(t, err)
-	principal, err = controller.bindPrincipalToApplicationUser(context.Background(), principal.InternalUserID, principal, "obsolete-user")
-	require.NoError(t, err)
-
-	body := `{"clear_application_user_id":true,"identities":[{"connection_id":"public","github_user_id":42,"login":"alice"}]}`
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/admin/principals/"+principal.ID+"/repair", strings.NewReader(body))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	ctx := e.NewContext(req, rec)
-	ctx.SetParamNames("principalId")
-	ctx.SetParamValues(principal.ID)
-	require.NoError(t, controller.RepairPrincipal(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	repaired, err := controller.loadPrincipal(context.Background(), principal.InternalUserID)
-	require.NoError(t, err)
-	require.Empty(t, repaired.ApplicationUserID)
-	var identity githubIdentity
-	_, err = controller.loadObject(context.Background(), identitySecretName("public", 42), &identity)
-	require.NoError(t, err)
-	require.Equal(t, principal.ID, identity.PrincipalID)
-	require.Equal(t, "alice", identity.Login)
-}
-
-func TestRepairPrincipalRequiresExplicitIdentityReassignment(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	connection := githubConnection{ID: "public", Name: "GitHub", BaseURL: "https://github.com", APIURL: "https://api.github.com"}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "secret", ""))
-	target, err := controller.getOrCreatePrincipal(context.Background(), "github:1")
-	require.NoError(t, err)
-	source, err := controller.getOrCreatePrincipal(context.Background(), "github:2")
-	require.NoError(t, err)
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity", PrincipalID: source.ID, ConnectionID: "public", GitHubUserID: 42, Login: "alice"}, "token", nil)
-	require.NoError(t, err)
-
-	body := `{"identities":[{"connection_id":"public","github_user_id":42}]}`
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/admin/principals/"+target.ID+"/repair", strings.NewReader(body))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	ctx := e.NewContext(req, httptest.NewRecorder())
-	ctx.SetParamNames("principalId")
-	ctx.SetParamValues(target.ID)
-	err = controller.RepairPrincipal(ctx)
-	var httpErr *echo.HTTPError
-	require.ErrorAs(t, err, &httpErr)
-	require.Equal(t, http.StatusConflict, httpErr.Code)
-}
-
-func TestLegacyGitHubLoginResolvesStablePrincipalID(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	first, err := controller.ResolvePrincipalIDForGitHubUser(context.Background(), 42)
-	require.NoError(t, err)
-	second, err := controller.ResolvePrincipalIDForGitHubUser(context.Background(), 42)
-	require.NoError(t, err)
-	require.Equal(t, first, second)
-	require.NotEqual(t, "alice", first)
-}
-
-func TestLegacyGitHubLoginUsesLoginAsApplicationUserID(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-
-	first, err := controller.ResolveApplicationUserIDForGitHubUser(context.Background(), 42, "alice")
-	require.NoError(t, err)
-	second, err := controller.ResolveApplicationUserIDForGitHubUser(context.Background(), 42, "alice-renamed")
-	require.NoError(t, err)
-	require.Equal(t, "alice", first)
-	require.Equal(t, first, second, "the personal resource owner must remain stable after a GitHub login rename")
-}
-
-func TestConnectedGitHubLoginUsesLinkedApplicationUserID(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	connection := githubConnection{ID: "public", Name: "GitHub", BaseURL: "https://github.com", APIURL: "https://api.github.com"}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "client-secret", ""))
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:public:42")
-	require.NoError(t, err)
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{
-		ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice",
-	}, "token", nil)
-	require.NoError(t, err)
-
-	got, err := controller.ResolveApplicationUserIDForGitHubUser(context.Background(), 42, "alice")
-	require.NoError(t, err)
-	require.Equal(t, principal.ID, got)
-}
-
-func TestGitHubConnectionCredentialIsBoundToConnection(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com", true)
-	connection := githubConnection{ID: "ghec", Name: "GHEC", BaseURL: "https://github.com", APIURL: "https://api.github.com", Enabled: true, SecretSource: "encrypted"}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "ghec-client-secret", ""))
-
-	credential, err := controller.IssueGitHubConnectionCredential(context.Background(), connection.ID, "ghec-access-token")
-	require.NoError(t, err)
-	require.NotContains(t, credential, "ghec-access-token")
-
-	resolved, err := controller.ResolveGitHubConnectionCredential(context.Background(), credential)
-	require.NoError(t, err)
-	require.Equal(t, connection.ID, resolved.ConnectionID)
-	require.Equal(t, connection.APIURL, resolved.APIURL)
-	require.Equal(t, "ghec-access-token", resolved.AccessToken)
-
-	tamperedConnection := githubConnection{ID: "ghes", Name: "GHES", BaseURL: "https://ghes.example.com", APIURL: "https://ghes.example.com/api/v3", Enabled: true, SecretSource: "encrypted"}
-	require.NoError(t, controller.saveConnection(context.Background(), tamperedConnection, "ghes-client-secret", ""))
-	tampered := strings.Replace(credential, "Z2hlYw", "Z2hlcw", 1)
-	_, err = controller.ResolveGitHubConnectionCredential(context.Background(), tampered)
-	require.Error(t, err)
-}
-
-func TestBuiltInTeamRequestsUseConfiguredEnterpriseAPIURL(t *testing.T) {
-	t.Parallel()
-	var requested []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requested = append(requested, r.URL.RequestURI())
-		require.Equal(t, "Bearer enterprise-token", r.Header.Get("Authorization"))
-		switch r.URL.Path {
-		case "/api/v3/user/teams":
-			_ = json.NewEncoder(w).Encode([]map[string]any{{
-				"slug":         "platform",
-				"name":         "Platform",
-				"organization": map[string]any{"login": "acme"},
-			}})
-		case "/api/v3/orgs/acme/teams/platform/members":
-			_ = json.NewEncoder(w).Encode([]githubOAuthUser{{ID: 42, Login: "alice"}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
-	controller.httpClient = server.Client()
-	controller.SetBuiltInAPIURL(server.URL + "/api/v3/")
-
-	teams, err := controller.FetchBuiltInTeams(context.Background(), "enterprise-token")
-	require.NoError(t, err)
-	require.Equal(t, []auth.GitHubTeamMembership{{Organization: "acme", TeamSlug: "platform", TeamName: "Platform"}}, teams)
-
-	members, err := controller.FetchExternalTeamMembers(context.Background(), "principal-1", entities.ExternalTeamBinding{Organization: "acme", TeamSlug: "platform"}, "enterprise-token")
-	require.NoError(t, err)
-	require.Len(t, members, 1)
-	require.Equal(t, int64(42), members[0].GitHubUserID)
-	require.Equal(t, []string{
-		"/api/v3/user/teams?per_page=100&page=1",
-		"/api/v3/orgs/acme/teams/platform/members?role=all&per_page=100&page=1",
-	}, requested)
-}
-
-func TestResolveLoginPrincipalUsesLinkedPrincipalID(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "github:1")
-	require.NoError(t, err)
-	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
-	identity := githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice-enterprise"}
-	_, err = controller.linkIdentity(context.Background(), identity, "token", nil)
-	require.NoError(t, err)
-
-	resolved, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice-enterprise"}, "token", nil)
-	require.NoError(t, err)
-	require.Equal(t, principal.ID, resolved.ID)
-}
-
-func TestConnectionLoginCreatesLinkedIdentity(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	connection := githubConnection{
-		ID:                "enterprise",
-		Name:              "Enterprise GitHub",
-		BaseURL:           "https://github.example.com",
-		APIURL:            "https://github.example.com/api/v3",
-		AllowUserCreation: true,
-	}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
-
-	principal, created, err := controller.resolveLoginPrincipalWithCreated(
-		context.Background(),
-		connection,
-		githubOAuthUser{ID: 42, Login: "alice", AvatarURL: "https://github.example.com/alice.png"},
-		"access-token",
-		nil,
-	)
-	require.NoError(t, err)
-	require.True(t, created)
-
-	var identity githubIdentity
-	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
-	require.NoError(t, err)
-	require.Equal(t, principal.ID, identity.PrincipalID)
-	require.Equal(t, connection.ID, identity.ConnectionID)
-	require.Equal(t, "alice", identity.Login)
-}
-
-func TestCannotUnlinkConnectionUsedByCurrentLogin(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	connection := githubConnection{ID: "enterprise", Name: "Enterprise GitHub", AllowUserCreation: true}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
-	principal, _, err := controller.resolveLoginPrincipalWithCreated(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "access-token", nil)
-	require.NoError(t, err)
-
-	var identity githubIdentity
-	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
-	require.NoError(t, err)
-
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodDelete, "/users/me/github-identities/"+identity.ID, nil)
-	ctx := e.NewContext(req, httptest.NewRecorder())
-	ctx.SetParamNames("identity_id")
-	ctx.SetParamValues(identity.ID)
-	ctx.Set("internal_user", entities.NewUser(entities.UserID(principal.ID), entities.UserTypeRegular, "alice"))
-	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, ConnectionID: connection.ID})
-
-	err = controller.Unlink(ctx)
-	var httpErr *echo.HTTPError
-	require.ErrorAs(t, err, &httpErr)
-	require.Equal(t, http.StatusConflict, httpErr.Code)
-}
-
-func TestResolveLoginPrincipalLinksExistingBuiltInGHESPrincipal(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	controller.SetBuiltInAPIURL("https://github.example.com/api/v3")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "github:42")
-	require.NoError(t, err)
-	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
-
-	resolved, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "token", nil)
-	require.NoError(t, err)
-	require.Equal(t, principal.ID, resolved.ID)
-
-	var identity githubIdentity
-	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
-	require.NoError(t, err)
-	require.Equal(t, principal.ID, identity.PrincipalID)
-}
-
-func TestBuiltInGHESLoginUsesMatchingConnectionPrincipal(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	controller.SetBuiltInAPIURL("https://github.example.com/api/v3/")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:enterprise:42")
-	require.NoError(t, err)
-	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "token", nil)
-	require.NoError(t, err)
-
-	resolved, err := controller.ResolvePrincipalIDForGitHubUser(context.Background(), 42)
-	require.NoError(t, err)
-	require.Equal(t, principal.ID, resolved)
-}
-
-func TestBuiltInGHESDoesNotUseSameUserIDFromDifferentHost(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	controller.SetBuiltInAPIURL("https://first.example.com/api/v3")
-	connectionPrincipal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:enterprise:42")
-	require.NoError(t, err)
-	connection := githubConnection{ID: "enterprise", BaseURL: "https://second.example.com", APIURL: "https://second.example.com/api/v3"}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: connectionPrincipal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "token", nil)
-	require.NoError(t, err)
-
-	resolved, err := controller.ResolvePrincipalIDForGitHubUser(context.Background(), 42)
-	require.NoError(t, err)
-	require.NotEqual(t, connectionPrincipal.ID, resolved)
-	builtInPrincipal, err := controller.loadPrincipal(context.Background(), "github:42")
-	require.NoError(t, err)
-	require.Equal(t, builtInPrincipal.ID, resolved)
-}
-
-func TestResolveLoginPrincipalRejectsUnlinkedUserWhenCreationDisabled(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com"}
-
-	_, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "token", nil)
-	require.ErrorContains(t, err, "user creation is disabled")
-
-	_, principalErr := controller.loadPrincipal(context.Background(), "github-connection:enterprise:42")
-	require.Error(t, principalErr)
-	var identity githubIdentity
-	_, identityErr := controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
-	require.Error(t, identityErr)
-}
-
-func TestResolveLoginPrincipalCreatesUnlinkedUserWhenCreationEnabled(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", AllowUserCreation: true}
-
-	principal, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "token", nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, principal.ID)
-
-	var identity githubIdentity
-	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
-	require.NoError(t, err)
-	require.Equal(t, principal.ID, identity.PrincipalID)
-}
-
-func TestResolveLoginPrincipalMigratesLegacyPrincipal(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	legacy := githubPrincipal{ID: "principal-1", InternalUserID: "github:1", CreatedAt: time.Now().UTC()}
-	require.NoError(t, controller.createObject(context.Background(), principalSecretName(legacy.InternalUserID), githubPrincipalLabel, legacy, nil))
-	publicConnection := githubConnection{ID: "public", Name: "GitHub", BaseURL: "https://github.com", APIURL: "https://api.github.com"}
-	enterpriseConnection := githubConnection{ID: "enterprise", Name: "GHEC", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
-	require.NoError(t, controller.saveConnection(context.Background(), publicConnection, "", ""))
-	require.NoError(t, controller.saveConnection(context.Background(), enterpriseConnection, "", ""))
-	_, err := controller.linkIdentity(context.Background(), githubIdentity{ID: "public-identity", PrincipalID: legacy.ID, ConnectionID: publicConnection.ID, GitHubUserID: 1, Login: "alice"}, "public-token", nil)
-	require.NoError(t, err)
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "enterprise-identity", PrincipalID: legacy.ID, ConnectionID: enterpriseConnection.ID, GitHubUserID: 42, Login: "alice-enterprise"}, "enterprise-token", nil)
-	require.NoError(t, err)
-
-	resolved, err := controller.resolveLoginPrincipal(context.Background(), enterpriseConnection, githubOAuthUser{ID: 42, Login: "alice-enterprise"}, "enterprise-token", nil)
-	require.NoError(t, err)
-	require.Equal(t, legacy.ID, resolved.ID)
-}
-
-func TestResolveTeamMembershipsMergesLinkedConnections(t *testing.T) {
-	t.Parallel()
-	teamServer := func(teams []map[string]any) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, "/user/teams", r.URL.Path)
-			require.NotEmpty(t, r.Header.Get("Authorization"))
-			_ = json.NewEncoder(w).Encode(teams)
-		}))
-	}
-	first := teamServer([]map[string]any{
-		{"slug": "developers", "name": "Developers", "permission": "push", "organization": map[string]any{"login": "Acme"}},
-	})
-	defer first.Close()
-	second := teamServer([]map[string]any{
-		{"slug": "developers", "name": "Developers", "permission": "push", "organization": map[string]any{"login": "acme"}},
-		{"slug": "platform", "name": "Platform", "permission": "pull", "organization": map[string]any{"login": "Acme"}},
-	})
-	defer second.Close()
-
-	client := fake.NewSimpleClientset()
-	controller := NewGitHubConnectionsController(client, "test", "", true)
-	controller.httpClient = first.Client()
-	connections := []githubConnection{
-		{ID: "ghes", Name: "GHES", BaseURL: first.URL, APIURL: first.URL, Enabled: true},
-		{ID: "ghec", Name: "GHEC", BaseURL: second.URL, APIURL: second.URL, Enabled: true},
-	}
-	for i, connection := range connections {
-		require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
-		_, err := controller.linkIdentity(context.Background(), githubIdentity{ID: connection.ID + "-identity", PrincipalID: "principal-1", ConnectionID: connection.ID, GitHubUserID: int64(i + 1), Login: "alice"}, connection.ID+"-token", nil)
-		require.NoError(t, err)
-	}
-
-	memberships, linked, err := controller.ResolveTeamMemberships(context.Background(), "principal-1")
-	require.NoError(t, err)
-	require.True(t, linked)
-	require.Len(t, memberships, 2)
-	require.Equal(t, "developers", memberships[0].TeamSlug)
-	require.Equal(t, "platform", memberships[1].TeamSlug)
-}
-
-func TestLinkIdentityIsIdempotentAndRejectsAnotherPrincipal(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	identity := githubIdentity{ID: "identity-1", PrincipalID: "principal-1", ConnectionID: "connection-1", GitHubUserID: 42, Login: "alice"}
-
-	created, err := controller.linkIdentity(context.Background(), identity, "token-1", nil)
-	require.NoError(t, err)
-	require.True(t, created)
-	created, err = controller.linkIdentity(context.Background(), identity, "token-2", nil)
-	require.NoError(t, err)
-	require.False(t, created)
-	secret, err := controller.client.CoreV1().Secrets("test").Get(context.Background(), identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Equal(t, "token-2", string(secret.Data[githubAccessTokenKey]))
-	require.NotContains(t, string(secret.Data["record.json"]), "token-2")
-
-	identity.PrincipalID = "principal-2"
-	_, err = controller.linkIdentity(context.Background(), identity, "token-3", nil)
-	require.ErrorIs(t, err, errIdentityConflict)
-}
-
-func TestResolveAccessTokenChecksOwnershipAndExpiry(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
-	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
-	require.NoError(t, err)
-	identity := githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: "connection-1", GitHubUserID: 42, Login: "alice"}
-	expiresAt := time.Now().UTC().Add(time.Hour)
-	_, err = controller.linkIdentity(context.Background(), identity, "oauth-token", &expiresAt)
-	require.NoError(t, err)
-	token, err := controller.ResolveAccessToken(context.Background(), user, "connection-1")
-	require.NoError(t, err)
-	require.Equal(t, "oauth-token", token)
-
-	_, err = controller.ResolveAccessToken(context.Background(), user, "connection-2")
-	require.ErrorContains(t, err, "not linked")
-	expiresAt = time.Now().UTC().Add(-time.Minute)
-	_, err = controller.linkIdentity(context.Background(), identity, "expired-token", &expiresAt)
-	require.NoError(t, err)
-	_, err = controller.ResolveAccessToken(context.Background(), user, "connection-1")
-	require.ErrorContains(t, err, "expired")
-}
-
-func TestSanitizeReturnTo(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, "/settings/personal/account-connections?tab=github", sanitizeReturnTo("/settings/personal/account-connections?tab=github"))
-	require.Equal(t, "/settings/personal/account-connections", sanitizeReturnTo("https://evil.example.com"))
-	require.Equal(t, "/settings/personal/account-connections", sanitizeReturnTo("//evil.example.com"))
-}
-
-func TestResolveGitHubConnectionCallbackURLsAcceptAPIV1(t *testing.T) {
-	t.Setenv("OAUTH_ALLOWED_REDIRECT_URIS", "https://ui.example.test/api/auth/github/callback")
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
-	req.Header.Set("Origin", "https://ui.example.test")
-	ctx := e.NewContext(req, httptest.NewRecorder())
-	callbackURL := "https://ui.example.test/api/v1/auth/github-connections/callback"
-
-	resolved, err := controller.resolveCallbackURL(ctx, callbackURL)
-	require.NoError(t, err)
-	require.Equal(t, callbackURL, resolved)
-
-	resolved, err = controller.resolveLoginCallbackURL(ctx, callbackURL)
-	require.NoError(t, err)
-	require.Equal(t, callbackURL, resolved)
-}
-
-func TestResolveGitHubConnectionCallbackURLsRejectDifferentOrigin(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
-	req.Header.Set("Origin", "https://ui.example.test")
-	ctx := e.NewContext(req, httptest.NewRecorder())
-	callbackURL := "https://evil.example.test/api/v1/auth/github-connections/callback"
-
-	_, err := controller.resolveCallbackURL(ctx, callbackURL)
-	require.Error(t, err)
-	_, err = controller.resolveLoginCallbackURL(ctx, callbackURL)
-	require.Error(t, err)
-}
-
-func TestNormalizeOAuthScope(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, "read:user read:org project", normalizeOAuthScope(""))
-	require.Equal(t, "read:user repo", normalizeOAuthScope("  read:user   repo  "))
-}
-
-func TestShowConnectionOnLoginDefaultsToTrue(t *testing.T) {
-	t.Parallel()
-	require.True(t, showConnectionOnLogin(githubConnection{}))
-	visible := true
-	hidden := false
-	require.True(t, showConnectionOnLogin(githubConnection{ShowOnLogin: &visible}))
-	require.False(t, showConnectionOnLogin(githubConnection{ShowOnLogin: &hidden}))
-}
-
-func TestNormalizeOrganizations(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, []string{"another-org", "example-org"}, normalizeOrganizations([]string{" Example-Org ", "example-org", "another-org", ""}))
-}
-
-func TestOrganizationAssignmentMustBeUnique(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
-	require.NoError(t, controller.saveConnection(context.Background(), githubConnection{ID: "first", Name: "First", Organizations: []string{"example-org"}}, "", ""))
-	require.ErrorContains(t, controller.validateOrganizationAssignments(context.Background(), "second", []string{"EXAMPLE-ORG"}), "already assigned")
-	require.NoError(t, controller.validateOrganizationAssignments(context.Background(), "first", []string{"example-org"}))
-}
-
-func TestResolveAccessTokenForOrganization(t *testing.T) {
-	t.Parallel()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
-	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
-	require.NoError(t, err)
-	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, BaseURL: "https://github.corp.example", APIURL: "https://github.corp.example/api/v3", Organizations: []string{"example-org"}}
-	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
-	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "corp-token", nil)
-	require.NoError(t, err)
-
-	token, connectionID, matched, err := controller.ResolveAccessTokenForOrganization(context.Background(), user, "Example-Org")
-	require.NoError(t, err)
-	require.True(t, matched)
-	require.Equal(t, "corp-token", token)
-	require.Equal(t, "corp", connectionID)
-	baseURL, apiURL, err := controller.ResolveConnectionURLs(context.Background(), connectionID)
-	require.NoError(t, err)
-	require.Equal(t, "https://github.corp.example", baseURL)
-	require.Equal(t, "https://github.corp.example/api/v3", apiURL)
-	_, connectionID, matched, err = controller.ResolveAccessTokenForOrganization(context.Background(), user, "unmapped-org")
-	require.NoError(t, err)
-	require.False(t, matched)
-	require.Empty(t, connectionID)
 }

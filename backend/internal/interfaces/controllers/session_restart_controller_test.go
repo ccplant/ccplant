@@ -4,12 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/labstack/echo/v4"
-	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
-	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +11,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/labstack/echo/v4"
+	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type restartStoreStub struct {

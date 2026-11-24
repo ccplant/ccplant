@@ -2,14 +2,11 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -17,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 type templateizeSessionRequest struct {
@@ -29,116 +27,40 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 	if c.contextTemplateRepo == nil {
 		return echo.NewHTTPError(http.StatusNotImplemented, "session context templates are unavailable")
 	}
-	sessionID := ctx.Param("sessionId")
-	session := c.getSessionManager().GetSession(sessionID)
-	var remoteRoute *repositories.SessionRoute
-	if c.sessionRouteRepo != nil {
-		remoteRoute, _ = c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
-	}
-	if session == nil && remoteRoute == nil {
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
-	}
-	ownerUserID, scope, teamID, status := "", entities.ScopeUser, "", ""
-	if session != nil {
-		ownerUserID, scope, teamID, status = session.UserID(), session.Scope(), session.TeamID(), session.Status()
-	} else {
-		ownerUserID, scope, teamID, status = remoteRoute.UserID, entities.ResourceScope(remoteRoute.Scope), remoteRoute.TeamID, remoteRoute.Status
+	source, err := c.loadTemplateSource(ctx.Request().Context(), ctx.Param("sessionId"))
+	if err != nil {
+		return err
 	}
 	authz := auth.GetAuthorizationContext(ctx)
-	if authz == nil || !authz.CanModifyResource(ownerUserID, string(scope), teamID) {
+	if authz == nil || !authz.CanModifyResource(source.ownerUserID, string(source.scope), source.teamID) {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to templateize this session")
 	}
-	var input templateizeSessionRequest
-	if err := ctx.Bind(&input); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	input, err := bindTemplateizeRequest(ctx)
+	if err != nil {
+		return err
 	}
-	input.Name = strings.TrimSpace(input.Name)
-	if input.Name == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
-	}
-	if status == "running" {
-		if !input.WaitForIdle {
-			return echo.NewHTTPError(http.StatusConflict, "session is busy")
-		}
-		deadline := time.Now().Add(30 * time.Second)
-		for status == "running" && time.Now().Before(deadline) {
-			select {
-			case <-ctx.Request().Context().Done():
-				return ctx.Request().Context().Err()
-			case <-time.After(250 * time.Millisecond):
-				if session != nil {
-					status = session.Status()
-				} else if refreshed, _ := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID); refreshed != nil {
-					status = refreshed.Status
-				}
-			}
-		}
-		if status == "running" {
-			return echo.NewHTTPError(http.StatusConflict, "session is busy")
-		}
-	}
-	snapshotManager, remoteSnapshot := c.getSessionManager().(repositories.SessionContextSnapshotManager)
-	tunneledSnapshot := remoteRoute != nil && remoteRoute.ManagerID != "" && remoteRoute.RemoteSessionID != "" && c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), remoteRoute.ManagerID)
-	checkpointer, localSnapshot := c.getSessionManager().(repositories.SessionCheckpointer)
-	if !tunneledSnapshot && !remoteSnapshot && (!localSnapshot || c.sessionStateStore == nil) {
-		return echo.NewHTTPError(http.StatusUnprocessableEntity, "template_unsupported")
+	if err := c.waitForTemplateSource(ctx.Request().Context(), source, input.WaitForIdle); err != nil {
+		return err
 	}
 	templateID := "tpl_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	agentType, sessionProfileID, tags := c.templateLaunchContext(ctx.Request().Context(), sessionID, session, remoteRoute)
-	template := &entities.SessionContextTemplate{ID: templateID, SourceSessionID: sessionID, SnapshotID: templateID, Name: input.Name, Description: strings.TrimSpace(input.Description), OwnerUserID: ownerUserID, Scope: scope, TeamID: teamID, AgentType: agentType, SessionProfileID: sessionProfileID, Tags: tags, Status: entities.SessionContextTemplatePreparing, CreatedAt: time.Now().UTC()}
+	template := c.newContextTemplate(ctx.Request().Context(), source, input, templateID)
 	if err := c.contextTemplateRepo.Create(ctx.Request().Context(), template); err != nil {
 		return echo.NewHTTPError(http.StatusConflict, "failed to reserve context template")
 	}
 	rollback := true
 	defer func() {
 		if rollback {
-			_ = c.contextTemplateRepo.Delete(context.Background(), templateID)
-		}
-	}()
-	if tunneledSnapshot {
-		if err := c.checkpointTunneledRuntimeSnapshot(ctx.Request().Context(), remoteRoute, templateID); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to checkpoint session").SetInternal(err)
-		}
-		if err := c.manageTunneledContextSnapshot(ctx.Request().Context(), remoteRoute, templateID, http.MethodPost); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
-		}
-	} else if remoteSnapshot {
-		if err := snapshotManager.CreateSessionContextSnapshot(ctx.Request().Context(), sessionID, templateID); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
-		}
-	} else {
-		if err := checkpointer.CheckpointSessionState(ctx.Request().Context(), sessionID); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to checkpoint session").SetInternal(err)
-		}
-		snapshot, err := c.sessionStateStore.Load(ctx.Request().Context(), sessionID)
-		if errors.Is(err, os.ErrNotExist) {
-			return echo.NewHTTPError(http.StatusConflict, "snapshot_unavailable")
-		}
-		if err != nil {
-			return echo.NewHTTPError(http.StatusUnprocessableEntity, "template_not_portable").SetInternal(err)
-		}
-		defer func() { _ = snapshot.Close() }()
-		if err := c.sessionStateStore.Save(ctx.Request().Context(), templateID, snapshot); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
-		}
-	}
-	if tunneledSnapshot {
-		if err := c.retireTunneledContextSource(ctx.Request().Context(), remoteRoute); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to retire source session").SetInternal(err)
-		}
-	} else if err := c.sessionCreator.DeleteSessionByID(sessionID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to retire source session").SetInternal(err)
-	}
-	if c.sessionRouteRepo != nil {
-		if route, routeErr := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID); routeErr == nil && route != nil {
-			route.Status, route.ContextTemplateID, route.StatusUpdatedAt = "templated", templateID, time.Now().UTC()
-			if routeErr = c.sessionRouteRepo.Save(ctx.Request().Context(), route); routeErr != nil {
-				log.Printf("failed to preserve templated session tombstone for %s: %v", sessionID, routeErr)
+			if err := c.contextTemplateRepo.Delete(context.Background(), templateID); err != nil {
+				log.Printf("failed to roll back context template %s: %v", templateID, err)
 			}
 		}
+	}()
+	if err := c.preserveTemplateSnapshot(ctx.Request().Context(), source, templateID); err != nil {
+		return err
 	}
-	c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
-	c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+	if err := c.retireTemplateSource(ctx.Request().Context(), source, templateID); err != nil {
+		return err
+	}
 	template.Status = entities.SessionContextTemplateReady
 	if err := c.contextTemplateRepo.Update(ctx.Request().Context(), template); err != nil {
 		rollback = false
@@ -164,8 +86,14 @@ func (c *SessionController) retireTunneledContextSource(ctx context.Context, rou
 	if err != nil {
 		return err
 	}
-	_, err = enqueuer.Enqueue(ctx, route.ManagerID, route.SessionID, route.RemoteSessionID, req)
-	return err
+	requestID, err := enqueuer.Enqueue(ctx, route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return err
+	}
+	if requestID == "" {
+		return errors.New("external session manager returned no lifecycle request id")
+	}
+	return nil
 }
 
 func (c *SessionController) checkpointTunneledRuntimeSnapshot(ctx context.Context, route *repositories.SessionRoute, snapshotID string) error {
@@ -178,7 +106,7 @@ func (c *SessionController) checkpointTunneledRuntimeSnapshot(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer closeutils.SafeCloseResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return errors.New(resp.Status)
 	}
@@ -333,7 +261,7 @@ func (c *SessionController) manageTunneledContextSnapshot(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer closeutils.SafeCloseResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return errors.New(resp.Status)
 	}
@@ -341,12 +269,9 @@ func (c *SessionController) manageTunneledContextSnapshot(ctx context.Context, r
 }
 
 func (c *SessionController) resolveContextTemplate(ctx echo.Context, req *entities.StartRequest) (*entities.SessionContextTemplate, error) {
-	workspaceID := req.WorkspaceID
-	if workspaceID == "" {
-		workspaceID = req.ContextTemplateID
-	}
-	if req.WorkspaceID != "" && req.ContextTemplateID != "" && req.WorkspaceID != req.ContextTemplateID {
-		return nil, echo.NewHTTPError(http.StatusBadRequest, "workspace_id and context_template_id must match when both are provided")
+	workspaceID, err := requestedWorkspaceID(req)
+	if err != nil {
+		return nil, err
 	}
 	if workspaceID == "" {
 		return nil, nil
@@ -358,100 +283,55 @@ func (c *SessionController) resolveContextTemplate(ctx echo.Context, req *entiti
 	if err != nil {
 		return nil, err
 	}
-	if template == nil || template.Status != entities.SessionContextTemplateReady {
-		return nil, echo.NewHTTPError(http.StatusNotFound, "context template not found")
+	if err := validateContextTemplateRequest(ctx, req, template); err != nil {
+		return nil, err
 	}
-	authz := auth.GetAuthorizationContext(ctx)
-	if authz == nil || !authz.CanAccessResource(template.OwnerUserID, string(template.Scope), template.TeamID) {
-		return nil, echo.NewHTTPError(http.StatusForbidden, "context template access denied")
-	}
-	if req.Scope != template.Scope || req.TeamID != template.TeamID {
-		return nil, echo.NewHTTPError(http.StatusBadRequest, "session scope must match context template scope")
-	}
-	if req.Params == nil {
-		req.Params = &entities.SessionParams{}
-	}
-	if req.Params.ResumeFrom != "" {
-		return nil, echo.NewHTTPError(http.StatusBadRequest, "workspace_id and resume_from are mutually exclusive")
-	}
-	if len(template.Tags) == 0 && c.sessionRouteRepo != nil {
-		if route, routeErr := c.sessionRouteRepo.Get(ctx.Request().Context(), template.SourceSessionID); routeErr == nil && route != nil {
-			template.AgentType, template.SessionProfileID, template.Tags = c.templateLaunchContext(ctx.Request().Context(), template.SourceSessionID, nil, route)
-			if updateErr := c.contextTemplateRepo.Update(ctx.Request().Context(), template); updateErr != nil {
-				log.Printf("failed to backfill context template launch metadata for %s: %v", template.ID, updateErr)
-			}
-		}
-	}
+	c.backfillContextTemplate(ctx.Request().Context(), template)
 	applyContextTemplateLaunch(req, template)
 	req.Params.ResumeFrom = template.SnapshotID
 	return template, nil
 }
 
-func (c *SessionController) templateLaunchContext(ctx context.Context, sessionID string, session entities.Session, route *repositories.SessionRoute) (string, string, map[string]string) {
-	tags := map[string]string{}
-	if session != nil {
-		for key, value := range session.Tags() {
-			tags[key] = value
-		}
-	} else if route != nil {
-		for key, value := range route.Tags {
-			tags[key] = value
-		}
+func requestedWorkspaceID(req *entities.StartRequest) (string, error) {
+	if req.WorkspaceID != "" && req.ContextTemplateID != "" && req.WorkspaceID != req.ContextTemplateID {
+		return "", echo.NewHTTPError(http.StatusBadRequest, "workspace_id and context_template_id must match when both are provided")
 	}
-	agentType := strings.TrimSpace(tags["agent_type"])
-	profileID := strings.TrimSpace(tags["session_profile_id"])
-	if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
-		if cfg, err := store.GetConfiguration(ctx, sessionID); err == nil && cfg != nil {
-			var source entities.StartRequest
-			if json.Unmarshal(cfg.Input, &source) == nil {
-				for key, value := range source.Tags {
-					if _, exists := tags[key]; !exists {
-						tags[key] = value
-					}
-				}
-				if agentType == "" && source.Params != nil {
-					agentType = strings.TrimSpace(source.Params.AgentType)
-				}
-				if profileID == "" {
-					profileID = strings.TrimSpace(source.SessionProfileID)
-				}
-			}
-		}
+	if req.WorkspaceID != "" {
+		return req.WorkspaceID, nil
 	}
-	return agentType, profileID, tags
+	return req.ContextTemplateID, nil
 }
 
-func applyContextTemplateLaunch(req *entities.StartRequest, template *entities.SessionContextTemplate) {
-	if req == nil || template == nil {
-		return
+func validateContextTemplateRequest(ctx echo.Context, req *entities.StartRequest, template *entities.SessionContextTemplate) error {
+	if template == nil || template.Status != entities.SessionContextTemplateReady {
+		return echo.NewHTTPError(http.StatusNotFound, "context template not found")
 	}
-	if req.Tags == nil {
-		req.Tags = map[string]string{}
+	authz := auth.GetAuthorizationContext(ctx)
+	if authz == nil || !authz.CanAccessResource(template.OwnerUserID, string(template.Scope), template.TeamID) {
+		return echo.NewHTTPError(http.StatusForbidden, "context template access denied")
 	}
-	// Source launch tags win because repository, branch and selector changes can
-	// make the restored workspace or conversation incompatible with its snapshot.
-	for key, value := range template.Tags {
-		req.Tags[key] = value
-	}
-	if req.SessionProfileID == "" {
-		req.SessionProfileID = template.SessionProfileID
+	if req.Scope != template.Scope || req.TeamID != template.TeamID {
+		return echo.NewHTTPError(http.StatusBadRequest, "session scope must match context template scope")
 	}
 	if req.Params == nil {
 		req.Params = &entities.SessionParams{}
 	}
-	if req.Params.AgentType == "" {
-		req.Params.AgentType = template.AgentType
+	if req.Params.ResumeFrom != "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "workspace_id and resume_from are mutually exclusive")
 	}
+	return nil
 }
 
-func (c *SessionController) recordContextTemplateUse(ctx context.Context, template *entities.SessionContextTemplate) {
-	if template == nil {
+func (c *SessionController) backfillContextTemplate(ctx context.Context, template *entities.SessionContextTemplate) {
+	if len(template.Tags) != 0 || c.sessionRouteRepo == nil {
 		return
 	}
-	now := time.Now().UTC()
-	template.LastUsedAt = &now
-	template.UseCount++
+	route, err := c.sessionRouteRepo.Get(ctx, template.SourceSessionID)
+	if err != nil || route == nil {
+		return
+	}
+	template.AgentType, template.SessionProfileID, template.Tags = c.templateLaunchContext(ctx, template.SourceSessionID, nil, route)
 	if err := c.contextTemplateRepo.Update(ctx, template); err != nil {
-		log.Printf("failed to update context template usage for %s: %v", template.ID, err)
+		log.Printf("failed to backfill context template launch metadata for %s: %v", template.ID, err)
 	}
 }

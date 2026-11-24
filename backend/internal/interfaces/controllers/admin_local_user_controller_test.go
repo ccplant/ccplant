@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	fixtureassert "github.com/stretchr/testify/assert"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	infra "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
@@ -37,7 +38,7 @@ func TestAdminLocalUserCreateIssueTokenAndAuthenticate(t *testing.T) {
 	authSvc.SetLocalUserRepository(users)
 	controller := NewAdminLocalUserController(users, tokens, authSvc)
 	admin := entities.NewUser("admin", entities.UserTypeAPIKey, "admin")
-	_ = admin.SetRoles([]entities.Role{entities.RoleAdmin})
+	fixtureassert.NoError(t, admin.SetRoles([]entities.Role{entities.RoleAdmin}))
 	ctx, rec := localUserContext(t, http.MethodPost, "/admin/users", map[string]any{"username": "alice", "display_name": "Alice"}, admin, nil, nil)
 	if err := controller.Create(ctx); err != nil {
 		t.Fatal(err)

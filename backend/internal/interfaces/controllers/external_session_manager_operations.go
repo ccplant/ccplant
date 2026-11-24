@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/labstack/echo/v4"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 func (c *SettingsController) GetExternalSessionManagerOperationalStatus(ctx echo.Context) error {
@@ -52,7 +53,7 @@ func (c *SettingsController) proxyExternalSessionManagerOperation(ctx echo.Conte
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadGateway, "session manager operation failed").SetInternal(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	for key, values := range resp.Header {
 		for _, value := range values {
 			ctx.Response().Header().Add(key, value)
