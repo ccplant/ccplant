@@ -111,7 +111,8 @@ func (c *SessionPoolController) AckRunnerAllocation(ctx echo.Context) error {
 		return err
 	}
 	var input struct {
-		LeaseID string `json:"lease_id"`
+		LeaseID         string `json:"lease_id"`
+		RemoteSessionID string `json:"remote_session_id,omitempty"`
 	}
 	if err := ctx.Bind(&input); err != nil || input.LeaseID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "lease_id is required")
@@ -119,6 +120,22 @@ func (c *SessionPoolController) AckRunnerAllocation(ctx echo.Context) error {
 	allocation, err := c.store.Acknowledge(ctx.Request().Context(), ctx.Param("sessionId"), runner.ID, input.LeaseID)
 	if err != nil {
 		return sessionRunnerStoreError(err)
+	}
+	if input.RemoteSessionID != "" && c.routes != nil {
+		route, routeErr := c.routes.Get(ctx.Request().Context(), allocation.SessionID)
+		if routeErr != nil {
+			return sessionRunnerStoreError(routeErr)
+		}
+		if route != nil {
+			if route.Generation != allocation.Generation || route.ManagerID != runner.ManagerID ||
+				(route.RemoteSessionID != runner.ID && route.RemoteSessionID != input.RemoteSessionID) {
+				return sessionRunnerStoreError(core.ErrConflict)
+			}
+			route.RemoteSessionID = input.RemoteSessionID
+			if err := c.routes.Save(ctx.Request().Context(), route); err != nil {
+				return sessionRunnerStoreError(err)
+			}
+		}
 	}
 	return ctx.JSON(http.StatusOK, allocation)
 }
