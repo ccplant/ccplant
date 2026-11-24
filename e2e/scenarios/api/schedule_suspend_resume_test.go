@@ -21,10 +21,11 @@ type triggerResult struct {
 }
 
 type searchSession struct {
-	SessionID    string `json:"session_id"`
-	Status       string `json:"status"`
-	ErrorCode    string `json:"error_code"`
-	ErrorMessage string `json:"error_message"`
+	SessionID          string `json:"session_id"`
+	AllocatedSessionID string `json:"allocated_session_id"`
+	Status             string `json:"status"`
+	ErrorCode          string `json:"error_code"`
+	ErrorMessage       string `json:"error_message"`
 }
 
 func TestScheduleSuspendResume(t *testing.T) {
@@ -67,8 +68,9 @@ func TestScheduleSuspendResume(t *testing.T) {
 	}
 	sessionID = first.SessionID
 	waitForSessionStatus(t, c, name, sessionID, 4*time.Minute, "active", "running", "stable")
+	t.Logf("public session route before suspend: %s", sessionRouteInventory(t, c, name, sessionID))
 	t.Logf("session-pool inventory before suspend: %s", managerInventory(t, c))
-	suspendSession(t, c, sessionID, 2*time.Minute)
+	suspendSession(t, c, name, sessionID, 2*time.Minute)
 	waitForSessionStatus(t, c, name, sessionID, 2*time.Minute, "suspended")
 
 	second := triggerSchedule(t, c, schedulePath)
@@ -95,6 +97,7 @@ func managerInventory(t *testing.T, c *apitest.Client) string {
 			} `json:"manager"`
 			Status struct {
 				RunningRunnerIDs []string `json:"running_runner_ids"`
+				UsedRunnerIDs    []string `json:"used_runner_ids"`
 			} `json:"status"`
 		} `json:"session_managers"`
 	}
@@ -107,7 +110,27 @@ func managerInventory(t *testing.T, c *apitest.Client) string {
 	return string(raw)
 }
 
-func suspendSession(t *testing.T, c *apitest.Client, sessionID string, timeout time.Duration) {
+func sessionRouteInventory(t *testing.T, c *apitest.Client, tag, sessionID string) string {
+	t.Helper()
+	var out struct {
+		Sessions []searchSession `json:"sessions"`
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	path := "/search?scope=user&tag.e2e_run=" + url.QueryEscape(tag)
+	if err := c.Do(ctx, http.MethodGet, path, nil, &out, http.StatusOK); err != nil {
+		return "unavailable: " + err.Error()
+	}
+	for _, session := range out.Sessions {
+		if session.SessionID == sessionID {
+			raw, _ := json.Marshal(session)
+			return string(raw)
+		}
+	}
+	return "not found"
+}
+
+func suspendSession(t *testing.T, c *apitest.Client, tag, sessionID string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	path := "/sessions/" + url.PathEscape(sessionID) + "/suspend"
@@ -125,7 +148,7 @@ func suspendSession(t *testing.T, c *apitest.Client, sessionID string, timeout t
 			return
 		}
 		if !strings.Contains(strings.ToLower(response.Message), "session is busy") {
-			t.Fatalf("suspend session %s failed: %s; manager inventory: %s", sessionID, response.Message, managerInventory(t, c))
+			t.Fatalf("suspend session %s failed: %s; public session route: %s; manager inventory: %s", sessionID, response.Message, sessionRouteInventory(t, c, tag, sessionID), managerInventory(t, c))
 		}
 		if time.Now().Add(2 * time.Second).After(deadline) {
 			t.Fatal("session remained busy while waiting to suspend")
