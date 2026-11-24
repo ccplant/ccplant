@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
