@@ -20,14 +20,18 @@ type orphanDeleteRecorder struct {
 	fail    string
 }
 
-type directCreateRecorder struct{ createdID string }
+type directCreateRecorder struct{ createdID, sessionID string }
 
 func (r *directCreateRecorder) CreateSession(context.Context, string, *entities.RunServerRequest, []byte) (entities.Session, error) {
 	return nil, errors.New("unexpected CreateSession call")
 }
 func (r *directCreateRecorder) CreateSessionDirect(_ context.Context, id string, _ *entities.RunServerRequest, _ []byte) (entities.Session, error) {
 	r.createdID = id
-	return runnerWorkerSession{id: id, status: "running"}, nil
+	createdID := r.sessionID
+	if createdID == "" {
+		createdID = id
+	}
+	return runnerWorkerSession{id: createdID, status: "running"}, nil
 }
 func (r *directCreateRecorder) GetSession(string) entities.Session                     { return nil }
 func (r *directCreateRecorder) ListSessions(entities.SessionFilter) []entities.Session { return nil }
@@ -41,6 +45,7 @@ func (r *directCreateRecorder) Shutdown(time.Duration) error { return nil }
 
 func TestRunnerWorkerCreatesWorkloadWithAllocatedRunnerID(t *testing.T) {
 	var registeredRunnerID string
+	var ackRemoteSessionID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch {
 		case req.Method == http.MethodPost && req.URL.Path == "/internal/session-runners/register":
@@ -54,6 +59,9 @@ func TestRunnerWorkerCreatesWorkloadWithAllocatedRunnerID(t *testing.T) {
 				"lease_id":   "lease", "runtime_token": "runtime-token", "settings": &sessionsettings.SessionSettings{},
 			})
 		case req.Method == http.MethodPost && req.URL.Path == "/internal/session-runners/allocations/public-session/ack":
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
+			ackRemoteSessionID = body["remote_session_id"]
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
@@ -61,10 +69,11 @@ func TestRunnerWorkerCreatesWorkloadWithAllocatedRunnerID(t *testing.T) {
 	}))
 	defer server.Close()
 
-	manager := &directCreateRecorder{}
+	manager := &directCreateRecorder{sessionID: "adopted-stock-session"}
 	NewRunnerWorker(manager, server.URL, "manager", "manager-token").runSlotOnce(context.Background(), "native")
 	require.NotEmpty(t, registeredRunnerID)
 	require.Equal(t, registeredRunnerID, manager.createdID)
+	require.Equal(t, "adopted-stock-session", ackRemoteSessionID)
 	require.NotEqual(t, "public-session", manager.createdID)
 }
 

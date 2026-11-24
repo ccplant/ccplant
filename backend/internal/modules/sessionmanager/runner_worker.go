@@ -208,12 +208,18 @@ func (w *RunnerWorker) runSlotOnce(ctx context.Context, pool string) {
 		// The parent route addresses the allocated workload by runner ID. Keep the
 		// manager's local session key aligned with that route so lifecycle commands
 		// (especially DELETE) target the process that was actually created.
-		if _, err = creator.CreateSessionDirect(ctx, runnerID, req, nil); err != nil {
-			log.Printf("[SESSION_RUNNER] create %s for session %s: %v", runnerID, claim.Allocation.SessionID, err)
+		createdSession, createErr := creator.CreateSessionDirect(ctx, runnerID, req, nil)
+		if createErr != nil {
+			log.Printf("[SESSION_RUNNER] create %s for session %s: %v", runnerID, claim.Allocation.SessionID, createErr)
 			_ = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail")
 			continue
 		}
-		if err = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "ack"); err != nil {
+		if createdSession == nil || createdSession.ID() == "" {
+			log.Printf("[SESSION_RUNNER] create %s for session %s returned no session ID", runnerID, claim.Allocation.SessionID)
+			_ = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail")
+			continue
+		}
+		if err = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "ack", createdSession.ID()); err != nil {
 			log.Printf("[SESSION_RUNNER] ack %s: %v", claim.Allocation.SessionID, err)
 		}
 		return
@@ -247,8 +253,12 @@ func (w *RunnerWorker) claim(ctx context.Context, id, token, pool string) (*nati
 	err = json.NewDecoder(resp.Body).Decode(&out)
 	return &out, true, err
 }
-func (w *RunnerWorker) complete(ctx context.Context, id, token, sessionID, leaseID, action string) error {
-	raw, _ := json.Marshal(map[string]string{"lease_id": leaseID})
+func (w *RunnerWorker) complete(ctx context.Context, id, token, sessionID, leaseID, action string, remoteSessionID ...string) error {
+	body := map[string]string{"lease_id": leaseID}
+	if action == "ack" && len(remoteSessionID) > 0 && remoteSessionID[0] != "" {
+		body["remote_session_id"] = remoteSessionID[0]
+	}
+	raw, _ := json.Marshal(body)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-runners/allocations/"+url.PathEscape(sessionID)+"/"+action, bytes.NewReader(raw))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Session-Runner-ID", id)
