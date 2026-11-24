@@ -168,3 +168,10 @@ scenarios:
     tag: "@smoke-home"
     timeout: 1m
     capabilities: [chromium]
+  - id: frontend.pages.settings-integrations
+    category: settings
+    description: ユーザー設定とIntegrationsの主要ページを表示できる
+    kind: playwright
+    tag: "@frontend-pages"
+    timeout: 2m
+    capabilities: [chromium, authenticated-user]
