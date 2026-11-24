@@ -23,6 +23,8 @@ type triggerResult struct {
 type searchSession struct {
 	SessionID          string `json:"session_id"`
 	AllocatedSessionID string `json:"allocated_session_id"`
+	ManagerID          string `json:"manager_id"`
+	RemoteSessionID    string `json:"remote_session_id"`
 	Status             string `json:"status"`
 	ErrorCode          string `json:"error_code"`
 	ErrorMessage       string `json:"error_message"`
@@ -68,6 +70,8 @@ func TestScheduleSuspendResume(t *testing.T) {
 	}
 	sessionID = first.SessionID
 	waitForSessionStatus(t, c, name, sessionID, 4*time.Minute, "active", "running", "stable")
+	waitForRunnerAssignment(t, c, name, sessionID, 2*time.Minute)
+	waitForSessionMessagesEndpoint(t, c, sessionID, 2*time.Minute)
 	t.Logf("public session route before suspend: %s", sessionRouteInventory(t, c, name, sessionID))
 	t.Logf("session-pool inventory before suspend: %s", managerInventory(t, c))
 	suspendSession(t, c, name, sessionID, 2*time.Minute)
@@ -108,6 +112,82 @@ func managerInventory(t *testing.T, c *apitest.Client) string {
 	}
 	raw, _ := json.Marshal(out.SessionManagers)
 	return string(raw)
+}
+
+func waitForRunnerAssignment(t *testing.T, c *apitest.Client, tag, sessionID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	last := "public route or manager inventory unavailable"
+	for time.Now().Before(deadline) {
+		var search struct {
+			Sessions []searchSession `json:"sessions"`
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err := c.Do(ctx, http.MethodGet, "/search?scope=user&tag.e2e_run="+url.QueryEscape(tag), nil, &search, http.StatusOK)
+		cancel()
+		if err == nil {
+			for _, route := range search.Sessions {
+				if route.SessionID != sessionID {
+					continue
+				}
+				var inventory struct {
+					SessionManagers []struct {
+						Manager struct {
+							ID string `json:"id"`
+						} `json:"manager"`
+						Status struct {
+							RunningRunnerIDs []string `json:"running_runner_ids"`
+							UsedRunnerIDs    []string `json:"used_runner_ids"`
+						} `json:"status"`
+					} `json:"session_managers"`
+				}
+				ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
+				err = c.Do(ctx, http.MethodGet, "/session-pools/status", nil, &inventory, http.StatusOK)
+				cancel()
+				if err != nil {
+					last = "manager inventory unavailable: " + err.Error()
+					break
+				}
+				last = "runner " + route.RemoteSessionID + " is not yet allocated to manager " + route.ManagerID
+				for _, manager := range inventory.SessionManagers {
+					if manager.Manager.ID != route.ManagerID {
+						continue
+					}
+					used := false
+					running := false
+					for _, id := range manager.Status.UsedRunnerIDs {
+						used = used || id == route.RemoteSessionID
+					}
+					for _, id := range manager.Status.RunningRunnerIDs {
+						running = running || id == route.RemoteSessionID
+					}
+					if used && running {
+						return
+					}
+				}
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("session %s runner was not assigned before suspend: %s", sessionID, last)
+}
+
+func waitForSessionMessagesEndpoint(t *testing.T, c *apitest.Client, sessionID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	path := "/" + url.PathEscape(sessionID) + "/messages"
+	var lastErr error
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		var body json.RawMessage
+		lastErr = c.Do(ctx, http.MethodGet, path, nil, &body, http.StatusOK)
+		cancel()
+		if lastErr == nil {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("session %s messages endpoint did not become ready: %v", sessionID, lastErr)
 }
 
 func sessionRouteInventory(t *testing.T, c *apitest.Client, tag, sessionID string) string {
