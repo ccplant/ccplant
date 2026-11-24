@@ -9,8 +9,17 @@ categories:
     description: 設定
   - id: integration
     description: 外部連携
+  - id: cli
+    description: CLI
 
 scenarios:
+  - id: cli.commands.help
+    category: cli
+    description: CLIのrootおよびclientコマンド階層を表示できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestCommandHelp
+    timeout: 3m
   - id: api.session.dry-run
     category: session
     description: セッション作成を実行せずにプレビューできる
