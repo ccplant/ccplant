@@ -138,6 +138,8 @@ func waitForRunnerAssignment(t *testing.T, c *apitest.Client, tag, sessionID str
 							ID string `json:"id"`
 						} `json:"manager"`
 						Status struct {
+							Namespace        string   `json:"namespace"`
+							ServingInstance  string   `json:"serving_instance"`
 							RunningRunnerIDs []string `json:"running_runner_ids"`
 							UsedRunnerIDs    []string `json:"used_runner_ids"`
 						} `json:"status"`
@@ -167,6 +169,9 @@ func waitForRunnerAssignment(t *testing.T, c *apitest.Client, tag, sessionID str
 						return
 					}
 				}
+				routeJSON, _ := json.Marshal(route)
+				inventoryJSON, _ := json.Marshal(inventory.SessionManagers)
+				last += "; route=" + string(routeJSON) + "; manager inventory=" + string(inventoryJSON)
 			}
 		}
 		time.Sleep(2 * time.Second)
