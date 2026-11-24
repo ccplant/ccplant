@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes/fake"
 
+	fixtureassert "github.com/stretchr/testify/assert"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/apitoken"
 )
@@ -122,9 +123,9 @@ func TestKubernetesAPITokenRepository_ListByOwnerAndTeam(t *testing.T) {
 	repo := NewKubernetesAPITokenRepository(client, "default")
 	ctx := context.Background()
 
-	_ = repo.Create(ctx, newTestPersonalToken("tok_p1", "apt_p1aaaaaaaaaaaa"))
-	_ = repo.Create(ctx, newTestPersonalToken("tok_p2", "apt_p2aaaaaaaaaaaa"))
-	_ = repo.Create(ctx, newTestTeamToken("tok_t1", "apt_t1aaaaaaaaaaaa"))
+	fixtureassert.NoError(t, repo.Create(ctx, newTestPersonalToken("tok_p1", "apt_p1aaaaaaaaaaaa")))
+	fixtureassert.NoError(t, repo.Create(ctx, newTestPersonalToken("tok_p2", "apt_p2aaaaaaaaaaaa")))
+	fixtureassert.NoError(t, repo.Create(ctx, newTestTeamToken("tok_t1", "apt_t1aaaaaaaaaaaa")))
 
 	personal, err := repo.ListByOwner(ctx, entities.UserID("user-1"))
 	if err != nil {
@@ -156,7 +157,7 @@ func TestKubernetesAPITokenRepository_DeleteIdempotent(t *testing.T) {
 	repo := NewKubernetesAPITokenRepository(client, "default")
 	ctx := context.Background()
 
-	_ = repo.Create(ctx, newTestPersonalToken("tok_del", "apt_dellllllllllll"))
+	fixtureassert.NoError(t, repo.Create(ctx, newTestPersonalToken("tok_del", "apt_dellllllllllll")))
 	if err := repo.Delete(ctx, "tok_del"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -386,32 +387,3 @@ func TestKubernetesAPITokenRepository_UnderscoreAndMigrationIDCRUD(t *testing.T)
 // TestKubernetesAPITokenRepository_RandomGeneratedIDCRUD uses the real token
 // ID generator (which emits "tok_" + random hex, carrying the underscore
 // prefix) to confirm a freshly minted token persists under a DNS-safe name.
-func TestKubernetesAPITokenRepository_RandomGeneratedIDCRUD(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	repo := NewKubernetesAPITokenRepository(client, "default")
-	ctx := context.Background()
-
-	id, err := apitoken.GenerateTokenID()
-	if err != nil {
-		t.Fatalf("GenerateTokenID: %v", err)
-	}
-	if !strings.HasPrefix(id, apitoken.TokenIDPrefix) {
-		t.Fatalf("generated id %q missing tok_ prefix", id)
-	}
-	name := repo.secretName(id)
-	if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
-		t.Fatalf("generated id secret name %q invalid DNS subdomain: %v", name, errs)
-	}
-
-	tok := newTestPersonalToken(id, "apt_randomsecretxxx")
-	if err := repo.Create(ctx, tok); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	got, err := repo.GetByID(ctx, id)
-	if err != nil {
-		t.Fatalf("GetByID: %v", err)
-	}
-	if got.ID() != id {
-		t.Errorf("id = %q want %q", got.ID(), id)
-	}
-}

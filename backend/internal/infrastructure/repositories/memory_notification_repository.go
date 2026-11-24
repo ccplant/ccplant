@@ -3,9 +3,10 @@ package repositories
 import (
 	"context"
 	"errors"
+	"sync"
+
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"sync"
 )
 
 // MemoryNotificationRepository implements NotificationRepository using in-memory storage

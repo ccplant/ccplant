@@ -41,56 +41,13 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	if req.ProvisionSettings != nil || req.ModelConnectionsResolved {
 		return nil
 	}
-	if err := modelprovider.ValidateAuthModes(req.CodexAuthMode, req.ClaudeAuthMode); err != nil {
+	if err := validateRequestedModels(req); err != nil {
 		return err
 	}
-	if strings.TrimSpace(req.Model) != "" {
-		if err := modelprovider.ValidateModel(req.Model); err != nil {
-			return err
-		}
-		req.Model = strings.TrimSpace(req.Model)
+	profileConfig, err := m.resolveConnectionProfile(ctx, req)
+	if err != nil {
+		return err
 	}
-	var profileConfig entities.SessionProfileConfig
-	req.SettingsTeamID = ""
-	if req.ResolvedSessionProfileID != "" {
-		if m.sessionProfileRepo == nil {
-			return fmt.Errorf("session profile repository unavailable")
-		}
-		profile, err := m.sessionProfileRepo.Get(ctx, req.ResolvedSessionProfileID)
-		if err != nil {
-			return fmt.Errorf("failed to load session profile connection")
-		}
-		profileConfig = profile.Config()
-		team := profileConfig.SettingsTeamID()
-		if team == "" && profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam {
-			team = profile.TeamID()
-		}
-		if team != "" {
-			allowed := false
-			if req.Scope == entities.ScopeTeam {
-				allowed = req.TeamID == team
-			} else {
-				for _, memberTeam := range req.Teams {
-					if memberTeam == team {
-						allowed = true
-						break
-					}
-				}
-			}
-			if !allowed {
-				return fmt.Errorf("team membership is required to inherit profile settings")
-			}
-			if m.settingsRepo == nil {
-				return fmt.Errorf("team settings unavailable")
-			}
-			exists, err := m.settingsRepo.Exists(ctx, team)
-			if err != nil || !exists {
-				return fmt.Errorf("selected team settings are not configured")
-			}
-			req.SettingsTeamID = team
-		}
-	}
-	var codexConnection, claudeConnection *modelprovider.Connection
 	piConnection := profileConfig.PiConnection()
 	owners := credentialOwnersForRequest(req)
 	// Team-scoped API connections default to the team's settings. Legacy auth
@@ -98,77 +55,17 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	if req.SettingsTeamID == "" && req.CredentialSource == "" && req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		owners = []string{req.TeamID}
 	}
-	for _, owner := range owners {
-		if owner == "" || m.settingsRepo == nil {
-			continue
-		}
-		exists, err := m.settingsRepo.Exists(ctx, owner)
-		if err != nil {
-			return fmt.Errorf("failed to read connection settings")
-		}
-		if exists {
-			settings, err := m.settingsRepo.FindByName(ctx, owner)
-			if err != nil {
-				return fmt.Errorf("failed to read connection settings")
-			}
-			if codexConnection == nil {
-				codexConnection = settings.CodexConnection()
-			}
-			if claudeConnection == nil {
-				claudeConnection = settings.ClaudeConnection()
-			}
-		}
-		files, _ := m.loadCredentialFiles(ctx, owner)
-		if len(files) > 0 {
-			break
-		}
-		if codexConnection != nil && claudeConnection != nil {
-			break
-		}
-	}
-	codexConnection = selectProfileConnection(codexConnection, profileConfig.CodexConnection(), req.CodexAuthMode)
-	claudeConnection = selectProfileConnection(claudeConnection, profileConfig.ClaudeConnection(), req.ClaudeAuthMode)
-	var err error
-	codexConnection, err = modelprovider.SelectAuthMode(codexConnection, req.CodexAuthMode)
+	codexConnection, claudeConnection, err := m.loadConnectionSettings(ctx, owners)
 	if err != nil {
 		return err
 	}
-	claudeConnection, err = modelprovider.SelectAuthMode(claudeConnection, req.ClaudeAuthMode)
+	codexConnection, err = resolveProviderConnection("codex", codexConnection, profileConfig.CodexConnection(), req.CodexAuthMode, profileConfig, req)
 	if err != nil {
 		return err
 	}
-	for agent, c := range map[string]*modelprovider.Connection{"codex": codexConnection, "claude": claudeConnection} {
-		if c == nil {
-			continue
-		}
-		// The profile-wide model is a fallback for every authentication mode.
-		// A mode-specific profile value takes priority over that fallback, while
-		// an explicit model on the session request remains the highest layer.
-		fallback := modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment)
-		if params := profileConfig.Params(); params != nil {
-			models := params.ClaudeDefaultModels
-			if agent == "codex" {
-				models = params.CodexDefaultModels
-			}
-			if model := strings.TrimSpace(models[c.Mode]); model != "" {
-				fallback = model
-			}
-		}
-		c.Model = modelprovider.ModelForLayers(agent, fallback, req.Environment)
-		if err := c.Validate(agent); err != nil {
-			return fmt.Errorf("invalid %s connection: %w", agent, err)
-		}
-		// Built-in authentication modes may coexist with legacy environment
-		// credentials. Only compatible API connections own these variables.
-		if c.Compatible() {
-			for _, layer := range []map[string]string{req.ProfileEnvironment, req.Environment} {
-				for _, key := range modelprovider.ConnectionEnvKeys(agent) {
-					if _, ok := layer[key]; ok {
-						return fmt.Errorf("%s conflicts with managed %s connection; only model overrides are allowed", key, agent)
-					}
-				}
-			}
-		}
+	claudeConnection, err = resolveProviderConnection("claude", claudeConnection, profileConfig.ClaudeConnection(), req.ClaudeAuthMode, profileConfig, req)
+	if err != nil {
+		return err
 	}
 	if piConnection != nil {
 		if req.AgentType == "pi" && req.Model != "" {
@@ -181,6 +78,142 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	req.CodexConnection, req.ClaudeConnection, req.PiConnection = codexConnection, claudeConnection, piConnection
 	req.ModelConnectionsResolved = true
 	return nil
+}
+
+func validateRequestedModels(req *entities.RunServerRequest) error {
+	if err := modelprovider.ValidateAuthModes(req.CodexAuthMode, req.ClaudeAuthMode); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.Model) == "" {
+		return nil
+	}
+	if err := modelprovider.ValidateModel(req.Model); err != nil {
+		return err
+	}
+	req.Model = strings.TrimSpace(req.Model)
+	return nil
+}
+
+func requestHasTeam(req *entities.RunServerRequest, team string) bool {
+	if req.Scope == entities.ScopeTeam {
+		return req.TeamID == team
+	}
+	for _, memberTeam := range req.Teams {
+		if memberTeam == team {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *KubernetesSessionManager) resolveConnectionProfile(ctx context.Context, req *entities.RunServerRequest) (entities.SessionProfileConfig, error) {
+	var profileConfig entities.SessionProfileConfig
+	req.SettingsTeamID = ""
+	if req.ResolvedSessionProfileID == "" {
+		return profileConfig, nil
+	}
+	if m.sessionProfileRepo == nil {
+		return profileConfig, fmt.Errorf("session profile repository unavailable")
+	}
+	profile, err := m.sessionProfileRepo.Get(ctx, req.ResolvedSessionProfileID)
+	if err != nil {
+		return profileConfig, fmt.Errorf("failed to load session profile connection")
+	}
+	profileConfig = profile.Config()
+	team := profileConfig.SettingsTeamID()
+	if team == "" && profile.Scope() == entities.ScopeTeam && req.Scope != entities.ScopeTeam {
+		team = profile.TeamID()
+	}
+	if team == "" {
+		return profileConfig, nil
+	}
+	if !requestHasTeam(req, team) {
+		return profileConfig, fmt.Errorf("team membership is required to inherit profile settings")
+	}
+	if m.settingsRepo == nil {
+		return profileConfig, fmt.Errorf("team settings unavailable")
+	}
+	exists, err := m.settingsRepo.Exists(ctx, team)
+	if err != nil || !exists {
+		return profileConfig, fmt.Errorf("selected team settings are not configured")
+	}
+	req.SettingsTeamID = team
+	return profileConfig, nil
+}
+
+func (m *KubernetesSessionManager) loadConnectionSettings(ctx context.Context, owners []string) (*modelprovider.Connection, *modelprovider.Connection, error) {
+	var codex, claude *modelprovider.Connection
+	for _, owner := range owners {
+		if owner == "" || m.settingsRepo == nil {
+			continue
+		}
+		exists, err := m.settingsRepo.Exists(ctx, owner)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read connection settings")
+		}
+		if exists {
+			settings, findErr := m.settingsRepo.FindByName(ctx, owner)
+			if findErr != nil {
+				return nil, nil, fmt.Errorf("failed to read connection settings")
+			}
+			if codex == nil {
+				codex = settings.CodexConnection()
+			}
+			if claude == nil {
+				claude = settings.ClaudeConnection()
+			}
+		}
+		files, credentialSource := m.loadCredentialFiles(ctx, owner)
+		_ = credentialSource
+		if len(files) > 0 || (codex != nil && claude != nil) {
+			break
+		}
+	}
+	return codex, claude, nil
+}
+
+func profileDefaultModel(agent string, connection *modelprovider.Connection, profileConfig entities.SessionProfileConfig) string {
+	if connection == nil || profileConfig.Params() == nil {
+		return ""
+	}
+	models := profileConfig.Params().ClaudeDefaultModels
+	if agent == "codex" {
+		models = profileConfig.Params().CodexDefaultModels
+	}
+	return strings.TrimSpace(models[connection.Mode])
+}
+
+func validateConnectionEnvironment(agent string, connection *modelprovider.Connection, req *entities.RunServerRequest) error {
+	if connection == nil || !connection.Compatible() {
+		return nil
+	}
+	for _, layer := range []map[string]string{req.ProfileEnvironment, req.Environment} {
+		for _, key := range modelprovider.ConnectionEnvKeys(agent) {
+			if _, ok := layer[key]; ok {
+				return fmt.Errorf("%s conflicts with managed %s connection; only model overrides are allowed", key, agent)
+			}
+		}
+	}
+	return nil
+}
+
+func resolveProviderConnection(agent string, base, override *modelprovider.Connection, mode string, profileConfig entities.SessionProfileConfig, req *entities.RunServerRequest) (*modelprovider.Connection, error) {
+	connection, err := modelprovider.SelectAuthMode(selectProfileConnection(base, override, mode), mode)
+	if err != nil || connection == nil {
+		return connection, err
+	}
+	fallback := modelprovider.ModelForLayers(agent, connection.Model, req.ProfileEnvironment)
+	if model := profileDefaultModel(agent, connection, profileConfig); model != "" {
+		fallback = model
+	}
+	connection.Model = modelprovider.ModelForLayers(agent, fallback, req.Environment)
+	if err := connection.Validate(agent); err != nil {
+		return nil, fmt.Errorf("invalid %s connection: %w", agent, err)
+	}
+	if err := validateConnectionEnvironment(agent, connection, req); err != nil {
+		return nil, err
+	}
+	return connection, nil
 }
 
 // applySelectedAgentDefaultModel resolves the provider-specific default only

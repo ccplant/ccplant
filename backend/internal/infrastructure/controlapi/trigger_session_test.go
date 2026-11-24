@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	testassert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
@@ -40,7 +41,7 @@ func TestTriggerStartPreservesConfigurationAndIdentity(t *testing.T) {
 				if r.Header.Get("Idempotency-Key") != "execution" {
 					t.Error("missing execution id")
 				}
-				_ = json.NewEncoder(w).Encode(map[string]string{"session_id": "execution"})
+				testassert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"session_id": "execution"}))
 			}))
 			defer api.Close()
 			control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,10 +114,10 @@ func TestDryRunTriggerSessionUsesStartDryRunAPI(t *testing.T) {
 		_, err := executiontoken.VerifyExecutionToken([]byte("secret"), strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), time.Now())
 		require.NoError(t, err)
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		testassert.NoError(t, json.NewEncoder(w).Encode(map[string]interface{}{
 			"dry_run": true, "session_id": "execution", "decision": "create",
 			"placement": map[string]interface{}{"transport": "direct_runtime", "pool": "dev"},
-		})
+		}))
 	}))
 	defer api.Close()
 

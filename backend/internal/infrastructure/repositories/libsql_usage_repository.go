@@ -3,7 +3,9 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -32,8 +34,7 @@ func NewLibSQLUsageRepository(ctx context.Context, databaseURL, authToken string
 	db.SetMaxOpenConns(8)
 	r := &LibSQLUsageRepository{db: db}
 	if err := r.initialize(ctx); err != nil {
-		_ = db.Close()
-		return nil, err
+		return nil, errors.Join(err, db.Close())
 	}
 	return r, nil
 }
@@ -53,8 +54,12 @@ reasoning_tokens INTEGER NOT NULL DEFAULT 0, occurred_at TEXT NOT NULL, received
 		`CREATE INDEX IF NOT EXISTS agentapi_usage_events_model_time ON agentapi_usage_events(model, occurred_at)`,
 	}
 	for _, statement := range statements {
-		if _, err := r.db.ExecContext(ctx, statement); err != nil {
+		result, err := r.db.ExecContext(ctx, statement)
+		if err != nil {
 			return fmt.Errorf("initialize usage schema: %w", err)
+		}
+		if result == nil {
+			return errors.New("initialize usage schema returned no result")
 		}
 	}
 	for _, column := range []string{
@@ -81,8 +86,7 @@ func (r *LibSQLUsageRepository) ensureUsageColumn(ctx context.Context, definitio
 		var notNull, pk int
 		var defaultValue interface{}
 		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan usage schema: %w", err)
+			return errors.Join(fmt.Errorf("scan usage schema: %w", err), rows.Close())
 		}
 		found = found || columnName == name
 	}
@@ -92,12 +96,16 @@ func (r *LibSQLUsageRepository) ensureUsageColumn(ctx context.Context, definitio
 	if found {
 		return nil
 	}
-	if _, err := r.db.ExecContext(ctx, `ALTER TABLE agentapi_usage_events ADD COLUMN `+definition); err != nil {
+	result, err := r.db.ExecContext(ctx, `ALTER TABLE agentapi_usage_events ADD COLUMN `+definition)
+	if err != nil {
 		// Multiple proxy replicas can initialize the shared database concurrently.
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return nil
 		}
 		return fmt.Errorf("add usage column %s: %w", name, err)
+	}
+	if result == nil {
+		return fmt.Errorf("add usage column %s returned no result", name)
 	}
 	return nil
 }
@@ -107,7 +115,11 @@ func (r *LibSQLUsageRepository) InsertEvents(ctx context.Context, events []entit
 	if err != nil {
 		return entities.UsageInsertResult{}, fmt.Errorf("begin usage transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			log.Printf("rollback usage transaction: %v", err)
+		}
+	}()
 	result := entities.UsageInsertResult{}
 	receivedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, event := range events {
@@ -176,7 +188,7 @@ FROM agentapi_usage_events WHERE ` + where + ` ORDER BY occurred_at ASC`
 	if err != nil {
 		return nil, fmt.Errorf("list usage events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer closeUsageRows(rows)
 	result := []entities.UsageEvent{}
 	for rows.Next() {
 		var event entities.UsageEvent
@@ -227,7 +239,7 @@ FROM agentapi_usage_events WHERE ` + where + ` GROUP BY ` + column + ` ORDER BY 
 	if err != nil {
 		return nil, fmt.Errorf("aggregate usage by %s: %w", column, err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer closeUsageRows(rows)
 	result := []entities.UsageBreakdown{}
 	for rows.Next() {
 		var item entities.UsageBreakdown
@@ -237,4 +249,10 @@ FROM agentapi_usage_events WHERE ` + where + ` GROUP BY ` + column + ` ORDER BY 
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+func closeUsageRows(rows *sql.Rows) {
+	if err := rows.Close(); err != nil {
+		log.Printf("close usage rows: %v", err)
+	}
 }

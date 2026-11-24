@@ -5,18 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"io"
+	"log"
 	"net/http"
 	"reflect"
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 const restartHoldAnnotation = "agentapi.proxy/restart-hold"
@@ -111,7 +113,10 @@ func (m *KubernetesSessionManager) setRestartPhase(ctx context.Context, ks *Kube
 	svc.Annotations[restartHoldAnnotation] = "true"
 	svc.Annotations[restartRequestAnnotation] = id
 	svc.Annotations[restartPhaseAnnotation] = phase
-	_, err = m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
+	updated, err := m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
+	if err == nil && updated == nil {
+		return fmt.Errorf("update restart phase returned no service")
+	}
 	return err
 }
 
@@ -148,11 +153,11 @@ func (m *KubernetesSessionManager) RestartSession(ctx context.Context, id, reque
 			return err
 		}
 		if err := m.provisionerLifecycle(ctx, ks, "restart", next); err != nil {
-			_ = m.setRestartPhase(context.WithoutCancel(ctx), ks, requestID, "failed")
+			m.markRestartFailed(ctx, ks, requestID)
 			return err
 		}
 		if err := m.waitRestartReady(ctx, ks, requestID); err != nil {
-			_ = m.setRestartPhase(context.WithoutCancel(ctx), ks, requestID, "failed")
+			m.markRestartFailed(ctx, ks, requestID)
 			return err
 		}
 		return m.finishRestart(ctx, ks)
@@ -163,7 +168,7 @@ func (m *KubernetesSessionManager) RestartSession(ctx context.Context, id, reque
 	success := false
 	defer func() {
 		if !success {
-			_ = m.setRestartPhase(context.WithoutCancel(ctx), ks, requestID, "failed")
+			m.markRestartFailed(ctx, ks, requestID)
 		}
 	}()
 	if phase == "process_paused" {
@@ -220,6 +225,12 @@ func (m *KubernetesSessionManager) RestartSession(ctx context.Context, id, reque
 	}
 	success = true
 	return nil
+}
+
+func (m *KubernetesSessionManager) markRestartFailed(ctx context.Context, session *KubernetesSession, requestID string) {
+	if err := m.setRestartPhase(context.WithoutCancel(ctx), session, requestID, "failed"); err != nil {
+		log.Printf("[K8S_SESSION] failed to persist restart failure for %s: %v", session.ID(), err)
+	}
 }
 func (m *KubernetesSessionManager) waitRestartWorkloadStopped(ctx context.Context, ks *KubernetesSession) error {
 	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
@@ -364,73 +375,13 @@ func (m *KubernetesSessionManager) provisionerLifecycle(ctx context.Context, ks 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	defer closeutils.SafeCloseResponseBody(resp.Body)
+	drained, drainErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if drainErr != nil {
+		return fmt.Errorf("read provisioner %s response after %d bytes: %w", action, drained, drainErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("provisioner %s failed: HTTP %d", action, resp.StatusCode)
 	}
 	return nil
-}
-func (m *KubernetesSessionManager) waitRestartReady(ctx context.Context, ks *KubernetesSession, id string) error {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s:%d/status", ks.ServiceDNS(), ProvisionerPort), nil)
-		if err != nil {
-			return err
-		}
-		resp, err := m.restartClient().Do(req)
-		if err == nil {
-			var status struct {
-				Status    string
-				RestartID string `json:"restart_id"`
-			}
-			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&status)
-			resp.Body.Close()
-			if decodeErr == nil && status.RestartID == id {
-				if status.Status == "ready" {
-					return nil
-				}
-				if status.Status == "error" {
-					return fmt.Errorf("agent could not restore the conversation")
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-func (m *KubernetesSessionManager) finishRestart(ctx context.Context, ks *KubernetesSession) error {
-	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":"ready"}}}`, restartHoldAnnotation, restartPhaseAnnotation))
-	_, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, ks.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
-	return err
-}
-
-func (m *KubernetesSessionManager) restartClient() *http.Client {
-	if m.restartHTTPClient != nil {
-		return m.restartHTTPClient
-	}
-	return http.DefaultClient
-}
-
-// Validate the parent's running snapshot without mutating or stopping a pooled
-// runner. PauseSession's handler persists this snapshot only after validation.
-func (m *KubernetesSessionManager) ValidateSessionRestartWithCurrent(ctx context.Context, id string, current, next *sessionsettings.SessionSettings) error {
-	if current == nil || next == nil || current.Session.ID == "" || current.Session.ID != next.Session.ID {
-		return fmt.Errorf("session identity mismatch")
-	}
-	ks, ok := m.GetSession(id).(*KubernetesSession)
-	if !ok || ks == nil {
-		return fmt.Errorf("session settings unavailable")
-	}
-	if m.config.SessionPersistence.Backend == "" {
-		return fmt.Errorf("conversation checkpoint storage is required for restart")
-	}
-	if saved := ks.ProvisionSettings(); saved != nil && saved.Session.UserID != "" && saved.Session.ID != current.Session.ID {
-		return fmt.Errorf("session identity mismatch")
-	}
-	return sessionsettings.ValidateRestart(current, next)
 }

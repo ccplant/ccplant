@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureassert "github.com/stretchr/testify/assert"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/apitoken"
 )
@@ -154,8 +155,8 @@ func TestMigrateAPITokens_PersonalKeys(t *testing.T) {
 	tokenRepo := newMemTokenRepo()
 	personalRepo := newFakePersonalRepo()
 
-	_ = personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1"))
-	_ = personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u2"), "ap_legacy_2"))
+	fixtureassert.NoError(t, personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1")))
+	fixtureassert.NoError(t, personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u2"), "ap_legacy_2")))
 
 	ann := &noopAnnotator{}
 	if err := MigrateAPITokens(context.Background(), auth, tokenRepo, personalRepo, nil, ann); err != nil {
@@ -196,7 +197,7 @@ func TestMigrateAPITokens_Idempotent(t *testing.T) {
 	auth := NewSimpleAuthService()
 	tokenRepo := newMemTokenRepo()
 	personalRepo := newFakePersonalRepo()
-	_ = personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1"))
+	fixtureassert.NoError(t, personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1")))
 
 	ann := &noopAnnotator{}
 	if err := MigrateAPITokens(context.Background(), auth, tokenRepo, personalRepo, nil, ann); err != nil {
@@ -221,7 +222,7 @@ func TestMigrateAPITokens_TeamServiceAccounts(t *testing.T) {
 	sa := entities.NewServiceAccount("org/team", entities.UserID("sa-org-team"), "ap_team_legacy",
 		[]entities.Permission{entities.PermissionSessionCreate})
 	tc := entities.NewTeamConfig("org/team", sa, nil)
-	_ = teamRepo.Save(context.Background(), tc)
+	fixtureassert.NoError(t, teamRepo.Save(context.Background(), tc))
 
 	if err := MigrateAPITokens(context.Background(), auth, tokenRepo, nil, teamRepo, &noopAnnotator{}); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -249,7 +250,7 @@ func TestMigrateAPITokens_ConflictingSecretFailsFast(t *testing.T) {
 	auth := NewSimpleAuthService()
 	tokenRepo := newMemTokenRepo()
 	personalRepo := newFakePersonalRepo()
-	_ = personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1"))
+	fixtureassert.NoError(t, personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1")))
 
 	// Pre-create a token with the SAME deterministic id but a DIFFERENT secret.
 	conflictID := apitoken.MigrationTokenID("personal-u1")
@@ -291,7 +292,7 @@ func TestMigrateAPITokens_AnnotationErrorPropagates(t *testing.T) {
 	auth := NewSimpleAuthService()
 	tokenRepo := newMemTokenRepo()
 	personalRepo := newFakePersonalRepo()
-	_ = personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1"))
+	fixtureassert.NoError(t, personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1")))
 
 	err := MigrateAPITokens(context.Background(), auth, tokenRepo, personalRepo, nil, failingAnnotator{})
 	if err == nil {
@@ -321,7 +322,7 @@ func TestMigrateAPITokens_RepositoryErrorPropagates(t *testing.T) {
 	auth := NewSimpleAuthService()
 	repo := &failingTokenRepo{memTokenRepo: newMemTokenRepo(), failNext: true}
 	personalRepo := newFakePersonalRepo()
-	_ = personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1"))
+	fixtureassert.NoError(t, personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1")))
 
 	err := MigrateAPITokens(context.Background(), auth, repo, personalRepo, nil, &noopAnnotator{})
 	if err == nil {

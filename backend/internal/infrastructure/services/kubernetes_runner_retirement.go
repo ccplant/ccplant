@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 	"net/http"
 	"net/url"
 )
@@ -23,7 +24,7 @@ func (m *KubernetesSessionManager) retireStockRunner(ctx context.Context, id str
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode == http.StatusConflict {
 		return false, nil
 	}

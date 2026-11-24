@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	testassert "github.com/stretchr/testify/assert"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
@@ -15,10 +16,10 @@ func TestSessionManagerForwardsListFilterToControlAPI(t *testing.T) {
 	var requestURI string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestURI = r.URL.RequestURI()
-		_ = json.NewEncoder(w).Encode([]sessionInfo{{
+		testassert.NoError(t, json.NewEncoder(w).Encode([]sessionInfo{{
 			ID: "matching", UserID: "owner", Scope: entities.ScopeUser,
 			Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "1.2"}, Status: "running",
-		}})
+		}}))
 	}))
 	defer server.Close()
 
@@ -45,7 +46,7 @@ func TestSessionManagerDelegatesCreateAndStockToControlAPI(t *testing.T) {
 		switch r.URL.Path {
 		case "/internal/worker/sessions/session-1":
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(sessionInfo{ID: "session-1", UserID: "user", Scope: entities.ScopeUser, Status: "running"})
+			testassert.NoError(t, json.NewEncoder(w).Encode(sessionInfo{ID: "session-1", UserID: "user", Scope: entities.ScopeUser, Status: "running"}))
 		case "/internal/worker/stock":
 			w.WriteHeader(http.StatusCreated)
 		default:
@@ -81,7 +82,7 @@ func TestSessionManagerDelegatesLeaseToControlAPI(t *testing.T) {
 		if request.Action != "acquire" || request.Identity != "worker-1" || request.DurationMS != 15000 {
 			t.Fatalf("request = %#v", request)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]bool{"acquired": true})
+		testassert.NoError(t, json.NewEncoder(w).Encode(map[string]bool{"acquired": true}))
 	}))
 	defer server.Close()
 
@@ -102,12 +103,12 @@ func TestScheduleClientClaimsStartsAndFinalizes(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer control" {
 				t.Fatal("missing control token")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []ScheduleJob{{ScheduleID: "s", ExecutionID: "e", SessionID: "session", ExecutionToken: "execution", StartRequest: entities.StartRequest{}}}})
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"jobs": []ScheduleJob{{ScheduleID: "s", ExecutionID: "e", SessionID: "session", ExecutionToken: "execution", StartRequest: entities.StartRequest{}}}}))
 		case "/start":
 			if r.Header.Get("Authorization") != "Bearer execution" || r.Header.Get("Idempotency-Key") != "e" {
 				t.Fatal("missing execution authentication")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "session", "session_reused": true})
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"session_id": "session", "session_reused": true}))
 		case "/internal/worker/schedules/s/finalize":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -165,7 +166,7 @@ func TestSlackStartPreservesSessionReused(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "existing", "session_reused": true})
+		testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"session_id": "existing", "session_reused": true}))
 	}))
 	defer server.Close()
 

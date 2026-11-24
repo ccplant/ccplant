@@ -16,6 +16,7 @@ import (
 
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 const (
@@ -171,7 +172,7 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 		}
 		status := resp.StatusCode
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		_ = resp.Body.Close()
+		closeutils.SafeCloseResponseBody(resp.Body)
 		switch status {
 		case http.StatusAccepted:
 			log.Printf("[CODEX_AUTH_ESM] Manager %s accepted attempt %s", manager.ID, request.AttemptID)
@@ -295,7 +296,7 @@ func (l *CodexDeviceAuthLauncher) deleteWorkload(ctx context.Context, managerID,
 	if err != nil {
 		return fmt.Errorf("manager %s: %w", managerID, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNoContent, http.StatusAccepted, http.StatusNotFound, http.StatusNotImplemented:

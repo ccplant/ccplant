@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,8 +126,15 @@ func (s *volumeSessionStateStore) Save(_ context.Context, id string, data io.Rea
 		return err
 	}
 	name := tmp.Name()
-	defer func() { _ = os.Remove(name) }()
-	if _, err = io.Copy(tmp, data); err == nil {
+	defer func() {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("remove temporary session state: %v", err)
+		}
+	}()
+	written, copyErr := io.Copy(tmp, data)
+	if copyErr != nil {
+		err = fmt.Errorf("copy session state after %d bytes: %w", written, copyErr)
+	} else {
 		err = tmp.Sync()
 	}
 	if closeErr := tmp.Close(); err == nil {
@@ -220,7 +228,10 @@ func (s *s3SessionStateStore) Save(ctx context.Context, id string, data io.Reade
 	if err != nil {
 		return err
 	}
-	_, err = s.uploader.Upload(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k), Body: data, ContentType: aws.String("application/zstd")})
+	result, err := s.uploader.Upload(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k), Body: data, ContentType: aws.String("application/zstd")})
+	if err == nil && result == nil {
+		return errors.New("session state upload returned no result")
+	}
 	return err
 }
 
@@ -259,7 +270,10 @@ func (s *s3SessionStateStore) CompleteMultipart(ctx context.Context, id, uploadI
 	for _, part := range parts {
 		completed = append(completed, types.CompletedPart{PartNumber: aws.Int32(part.Number), ETag: aws.String(part.ETag)})
 	}
-	_, err = s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(k), UploadId: aws.String(uploadID), MultipartUpload: &types.CompletedMultipartUpload{Parts: completed}})
+	result, err := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(k), UploadId: aws.String(uploadID), MultipartUpload: &types.CompletedMultipartUpload{Parts: completed}})
+	if err == nil && result == nil {
+		return errors.New("complete multipart upload returned no result")
+	}
 	return err
 }
 
@@ -268,7 +282,10 @@ func (s *s3SessionStateStore) AbortMultipart(ctx context.Context, id, uploadID s
 	if err != nil {
 		return err
 	}
-	_, err = s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(k), UploadId: aws.String(uploadID)})
+	result, err := s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(k), UploadId: aws.String(uploadID)})
+	if err == nil && result == nil {
+		return errors.New("abort multipart upload returned no result")
+	}
 	return err
 }
 
@@ -303,7 +320,10 @@ func (s *s3SessionStateStore) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k)})
+	result, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k)})
+	if err == nil && result == nil {
+		return errors.New("delete session state returned no result")
+	}
 	return err
 }
 

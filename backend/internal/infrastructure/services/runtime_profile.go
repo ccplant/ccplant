@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -131,12 +132,17 @@ func (m *KubernetesSessionManager) ensureRuntimeProfileServiceAccount(ctx contex
 		return nil
 	}
 	serviceAccounts := m.client.CoreV1().ServiceAccounts(m.namespace)
-	if _, err := serviceAccounts.Get(ctx, name, metav1.GetOptions{}); apierrors.IsNotFound(err) {
-		if _, err = serviceAccounts.Create(ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	serviceAccount, err := serviceAccounts.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		serviceAccount, err = serviceAccounts.Create(ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name}}, metav1.CreateOptions{})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("create inherited session service account: %w", err)
 		}
 	} else if err != nil {
 		return fmt.Errorf("get inherited session service account: %w", err)
+	}
+	if err == nil && serviceAccount == nil {
+		return errors.New("ensure inherited session service account returned no resource")
 	}
 
 	rules := []rbacv1.PolicyRule{
@@ -146,13 +152,16 @@ func (m *KubernetesSessionManager) ensureRuntimeProfileServiceAccount(ctx contex
 	roles := m.client.RbacV1().Roles(m.namespace)
 	role, err := roles.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = roles.Create(ctx, &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: name}, Rules: rules}, metav1.CreateOptions{})
+		role, err = roles.Create(ctx, &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: name}, Rules: rules}, metav1.CreateOptions{})
 	} else if err == nil {
 		role.Rules = rules
-		_, err = roles.Update(ctx, role, metav1.UpdateOptions{})
+		role, err = roles.Update(ctx, role, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("ensure inherited session role: %w", err)
+	}
+	if role == nil {
+		return errors.New("ensure inherited session role returned no resource")
 	}
 
 	bindings := m.client.RbacV1().RoleBindings(m.namespace)
@@ -160,14 +169,17 @@ func (m *KubernetesSessionManager) ensureRuntimeProfileServiceAccount(ctx contex
 	desiredSubjects := []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: m.namespace}}
 	desiredRoleRef := rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name}
 	if apierrors.IsNotFound(err) {
-		_, err = bindings.Create(ctx, &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name}, Subjects: desiredSubjects, RoleRef: desiredRoleRef}, metav1.CreateOptions{})
+		binding, err = bindings.Create(ctx, &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name}, Subjects: desiredSubjects, RoleRef: desiredRoleRef}, metav1.CreateOptions{})
 	} else if err == nil {
 		binding.Subjects = desiredSubjects
 		binding.RoleRef = desiredRoleRef
-		_, err = bindings.Update(ctx, binding, metav1.UpdateOptions{})
+		binding, err = bindings.Update(ctx, binding, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("ensure inherited session role binding: %w", err)
+	}
+	if binding == nil {
+		return errors.New("ensure inherited session role binding returned no resource")
 	}
 	return nil
 }

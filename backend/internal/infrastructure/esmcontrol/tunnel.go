@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -62,10 +63,15 @@ func (t *Tunnel) Do(ctx context.Context, managerID, sessionID, remoteSessionID s
 		Header: http.Header(first.Headers), Body: &cancelBody{ReadCloser: pipeReader, cancel: func() {
 			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_, _ = t.store.EnqueueCommand(cancelCtx, managerID, core.Command{
+			commandID, err := t.store.EnqueueCommand(cancelCtx, managerID, core.Command{
 				ID: uuid.NewString(), CancelRequestID: requestID, ManagerID: managerID,
 				Deadline: time.Now().Add(30 * time.Second), CreatedAt: time.Now().UTC(),
 			})
+			if err != nil {
+				log.Printf("[ESM_CONTROL] failed to enqueue request cancellation: %v", err)
+			} else if commandID == "" {
+				log.Printf("[ESM_CONTROL] cancellation enqueue returned no command id")
+			}
 		}}, ContentLength: -1, Request: req,
 	}, nil
 }
@@ -153,7 +159,11 @@ func (t *Tunnel) waitForFirstFrame(ctx context.Context, requestID string) ([]cor
 }
 
 func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initial []core.ResponseFrame, writer *io.PipeWriter) {
-	defer func() { _ = writer.Close() }()
+	defer func() {
+		if err := writer.Close(); err != nil {
+			log.Printf("[ESM_CONTROL] failed to close response stream: %v", err)
+		}
+	}()
 	frameCount := int64(len(initial))
 	byteCount := frameBytes(initial)
 	upstreamTTFBMS, upstreamReadMS := frameTimings(initial)
@@ -168,7 +178,7 @@ func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initi
 			return t.store.ReadFrames(operationCtx, requestID, cursor, 30*time.Second, 100)
 		}, telemetry.Bool("esm.store.blocking", true))
 		if err != nil {
-			_ = writer.CloseWithError(err)
+			closePipeWithError(writer, err)
 			return
 		}
 		if len(frames) > 0 {
@@ -183,7 +193,7 @@ func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initi
 			}
 		}
 		if err := ctx.Err(); err != nil {
-			_ = writer.CloseWithError(err)
+			closePipeWithError(writer, err)
 			return
 		}
 	}
@@ -209,13 +219,27 @@ func frameBytes(frames []core.ResponseFrame) int64 {
 func writeFrames(writer io.Writer, frames []core.ResponseFrame) bool {
 	for _, frame := range frames {
 		if len(frame.Body) > 0 {
-			_, _ = io.Copy(writer, bytes.NewReader(frame.Body))
+			written, err := io.Copy(writer, bytes.NewReader(frame.Body))
+			if err != nil {
+				log.Printf("[ESM_CONTROL] failed to stream response after %d bytes: %v", written, err)
+				return true
+			}
+			if written != int64(len(frame.Body)) {
+				log.Printf("[ESM_CONTROL] short response stream write: %d of %d bytes", written, len(frame.Body))
+				return true
+			}
 		}
 		if frame.Done {
 			return true
 		}
 	}
 	return false
+}
+
+func closePipeWithError(writer *io.PipeWriter, cause error) {
+	if err := writer.CloseWithError(cause); err != nil {
+		log.Printf("[ESM_CONTROL] failed to close response stream with error: %v", err)
+	}
 }
 
 func cloneHeaders(source http.Header) map[string][]string {
