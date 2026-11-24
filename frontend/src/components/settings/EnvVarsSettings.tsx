@@ -1,124 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEnvVarsSettings } from './useEnvVarsSettings'
 
 interface EnvVarsSettingsProps {
   envVarKeys?: string[]  // 環境変数のキーのみ（読み取り時）
   onChange: (envVars: Record<string, string>) => void
 }
 
-interface EnvVarEntry {
-  key: string
-  value: string
-  isNew: boolean
-}
-
 export function EnvVarsSettings({ envVarKeys, onChange }: EnvVarsSettingsProps) {
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [editingEntry, setEditingEntry] = useState<EnvVarEntry | null>(null)
-  const [editKey, setEditKey] = useState('')
-  const [editValue, setEditValue] = useState('')
-  const [keyError, setKeyError] = useState('')
-  // ローカル状態で環境変数のキーを管理（UIに即座に反映するため）
-  const [localKeys, setLocalKeys] = useState<string[]>(envVarKeys || [])
-
-  // envVarKeys が変更されたらローカル状態を更新
-  useEffect(() => {
-    setLocalKeys(envVarKeys || [])
-  }, [envVarKeys])
-
-  const existingKeys = localKeys
-
-  const handleAdd = () => {
-    setEditingEntry({
-      key: '',
-      value: '',
-      isNew: true,
-    })
-    setEditKey('')
-    setEditValue('')
-    setKeyError('')
-    setIsModalOpen(true)
-  }
-
-  const handleEdit = (key: string) => {
-    setEditingEntry({
-      key,
-      value: '',
-      isNew: false,
-    })
-    setEditKey(key)
-    setEditValue('')
-    setKeyError('')
-    setIsModalOpen(true)
-  }
-
-  const handleDelete = (key: string) => {
-    if (confirm(`環境変数 "${key}" を削除してもよろしいですか？`)) {
-      // ローカル状態から削除
-      setLocalKeys(prev => prev.filter(k => k !== key))
-      // 空文字列を送信して削除をマーク
-      const updates: Record<string, string> = {}
-      updates[key] = ''
-      onChange(updates)
-    }
-  }
-
-  const validateKey = (key: string): boolean => {
-    if (!key.trim()) {
-      setKeyError('環境変数名を入力してください')
-      return false
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      setKeyError('環境変数名は英字またはアンダースコアで始まり、英数字とアンダースコアのみを含む必要があります')
-      return false
-    }
-    if (editingEntry?.isNew && existingKeys.includes(key)) {
-      setKeyError('この環境変数名は既に存在します')
-      return false
-    }
-    if (!editingEntry?.isNew && editingEntry?.key !== key && existingKeys.includes(key)) {
-      setKeyError('この環境変数名は既に存在します')
-      return false
-    }
-    return true
-  }
-
-  const handleModalSave = () => {
-    if (!validateKey(editKey)) {
-      return
-    }
-
-    if (!editValue.trim()) {
-      alert('環境変数の値を入力してください')
-      return
-    }
-
-    const updates: Record<string, string> = {}
-
-    // 名前が変更された場合は古いキーを削除
-    if (editingEntry && !editingEntry.isNew && editingEntry.key !== editKey) {
-      // ローカル状態から古いキーを削除
-      setLocalKeys(prev => prev.filter(k => k !== editingEntry.key))
-      updates[editingEntry.key] = ''
-    }
-
-    // 新しいキーの場合はローカル状態に追加
-    if (editingEntry?.isNew) {
-      setLocalKeys(prev => [...prev, editKey].sort())
-    }
-
-    updates[editKey] = editValue
-    onChange(updates)
-    setIsModalOpen(false)
-    setEditingEntry(null)
-  }
-
-  const handleModalClose = () => {
-    setIsModalOpen(false)
-    setEditingEntry(null)
-    setKeyError('')
-  }
+  const {
+    closeEditor, editKey, editValue, editingEntry, existingKeys, handleDelete,
+    handleSave, isModalOpen, keyError, openEditor, setEditKey, setEditValue, setKeyError,
+  } = useEnvVarsSettings(envVarKeys, onChange)
 
   return (
     <div className="space-y-4">
@@ -133,7 +26,7 @@ export function EnvVarsSettings({ envVarKeys, onChange }: EnvVarsSettingsProps) 
           </p>
         </div>
         <button
-          onClick={handleAdd}
+          onClick={() => openEditor({ key: '', value: '', isNew: true })}
           className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
         >
           + 追加
@@ -166,7 +59,7 @@ export function EnvVarsSettings({ envVarKeys, onChange }: EnvVarsSettingsProps) 
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handleEdit(key)}
+                  onClick={() => openEditor({ key, value: '', isNew: false })}
                   className="px-3 py-1 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
                 >
                   編集
@@ -247,13 +140,13 @@ export function EnvVarsSettings({ envVarKeys, onChange }: EnvVarsSettingsProps) 
 
               <div className="flex justify-end gap-3 mt-6">
                 <button
-                  onClick={handleModalClose}
+                  onClick={closeEditor}
                   className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
                 >
                   キャンセル
                 </button>
                 <button
-                  onClick={handleModalSave}
+                  onClick={handleSave}
                   className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                 >
                   保存

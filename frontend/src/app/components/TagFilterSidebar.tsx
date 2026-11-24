@@ -1,14 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { agentAPI } from '../../lib/api'
 import NavigationTabs from './NavigationTabs'
-import { useTeamScope } from '../../contexts/TeamScopeContext'
-
-interface Tag {
-  key: string
-  values: string[]
-}
+import { useTagFilterSidebar } from './useTagFilterSidebar'
 
 interface TagFilter {
   [key: string]: string[]
@@ -27,123 +20,7 @@ export default function TagFilterSidebar({
   isVisible = true,
   onToggleVisibility
 }: TagFilterSidebarProps) {
-  const { selectedTeam, isLoading: isTeamScopeLoading } = useTeamScope()
-  const [tags, setTags] = useState<Tag[]>([])
-  const [loading, setLoading] = useState(true)
-  const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set())
-  const requestedScopeRef = useRef<string | null>(null)
-  requestedScopeRef.current = isTeamScopeLoading
-    ? null
-    : selectedTeam ? `team:${selectedTeam}` : 'user'
-
-  const fetchTags = useCallback(async () => {
-    if (isTeamScopeLoading) return
-    const requestedScope = selectedTeam ? `team:${selectedTeam}` : 'user'
-    try {
-      setLoading(true)
-
-      // Compute scope parameters directly from selectedTeam
-      const scopeParams: { scope: 'user' | 'team'; team_id?: string } = selectedTeam
-        ? { scope: 'team', team_id: selectedTeam }
-        : { scope: 'user' }
-
-      console.log('[TagFilterSidebar] Fetching tags with scope params:', scopeParams)
-
-      // search APIの代わりに、既存のセッションからメタデータを抽出してTagを作成
-      const response = await agentAPI.search!({ limit: 1000, ...scopeParams })
-      const sessions = response.sessions || []
-
-      const tagMap = new Map<string, Set<string>>()
-
-      sessions.forEach(session => {
-        // Process tags field first (prioritize tags over metadata)
-        if (session.tags) {
-          Object.entries(session.tags)
-            .filter(([key]) => key !== 'description')
-            .forEach(([key, value]) => {
-              if (value && value !== '') {
-                if (!tagMap.has(key)) {
-                  tagMap.set(key, new Set())
-                }
-                tagMap.get(key)!.add(value)
-              }
-            })
-        }
-
-        // Fallback to metadata for backward compatibility
-        if (session.metadata) {
-          Object.entries(session.metadata).forEach(([key, value]) => {
-            if (key !== 'description') { // description は除外
-              const valueStr = String(value)
-              if (!tagMap.has(key)) {
-                tagMap.set(key, new Set())
-              }
-              tagMap.get(key)!.add(valueStr)
-            }
-          })
-        }
-      })
-
-      const extractedTags: Tag[] = Array.from(tagMap.entries()).map(([key, values]) => ({
-        key,
-        values: Array.from(values).sort()
-      }))
-
-      if (requestedScopeRef.current !== requestedScope) return
-      setTags(extractedTags)
-    } catch (error) {
-      if (requestedScopeRef.current !== requestedScope) return
-      console.error('Failed to fetch tags:', error)
-      // モックデータを使用
-      setTags([
-        {
-          key: 'project_type',
-          values: ['frontend', 'backend', 'fullstack', 'database']
-        },
-        {
-          key: 'technology',
-          values: ['React', 'Node.js', 'PostgreSQL', 'Jest', 'Next.js']
-        },
-        {
-          key: 'priority',
-          values: ['high', 'medium', 'low']
-        }
-      ])
-    } finally {
-      if (requestedScopeRef.current === requestedScope) setLoading(false)
-    }
-  }, [isTeamScopeLoading, selectedTeam])
-
-  useEffect(() => {
-    fetchTags()
-  }, [fetchTags])
-
-  // ESCキーでサイドバーを閉じる
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isVisible && onToggleVisibility) {
-        onToggleVisibility()
-      }
-    }
-
-    if (isVisible) {
-      document.addEventListener('keydown', handleKeyDown)
-    }
-
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [isVisible, onToggleVisibility])
-
-  const toggleTag = (tagKey: string) => {
-    const newExpanded = new Set(expandedTags)
-    if (newExpanded.has(tagKey)) {
-      newExpanded.delete(tagKey)
-    } else {
-      newExpanded.add(tagKey)
-    }
-    setExpandedTags(newExpanded)
-  }
+  const { expandedTags, fetchTags, loading, tags, toggleTag } = useTagFilterSidebar(isVisible, onToggleVisibility)
 
   const handleValueChange = (tagKey: string, value: string, checked: boolean) => {
     const newFilters = { ...currentFilters }

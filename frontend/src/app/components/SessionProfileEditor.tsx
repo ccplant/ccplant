@@ -1,35 +1,28 @@
 'use client'
 
-import { ArrowLeft, PanelLeft, X, Settings, KeyRound, Bot, Server, Terminal, Tags, Shield, Container, Clock, Files, LockKeyhole, Sparkles } from 'lucide-react'
+import {
+  ArrowLeft,
+  PanelLeft,
+  X,
+  Settings,
+  KeyRound,
+  Bot,
+  Server,
+  Terminal,
+  Tags,
+  Shield,
+  Container,
+  Clock,
+  Files,
+  LockKeyhole,
+  Sparkles,
+} from 'lucide-react'
 import { SideNav } from '@/components/settings/ui/SideNav'
 import { SettingsPageHeader } from '@/components/settings/ui/SettingsPageHeader'
-import { usePathname, useSearchParams } from 'next/navigation'
 
-import { useState, useEffect, useRef } from 'react'
-import {
-  SessionProfile,
-  CreateSessionProfileRequest,
-  UpdateSessionProfileRequest,
-  SessionProfileParams,
-  ProfileFile,
-  ProfileRepository,
-  SessionStateConfig,
-} from '../../types/session_profile'
-import { SandboxPolicy } from '../../types/sandbox_policy'
-import { LogicalSessionPool } from '../../types/session_pool'
-import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
-import { useTeamScope } from '../../contexts/TeamScopeContext'
-import ProfileConnectionFields from './ProfileConnectionFields'
-import type { ModelConnection, SettingsSecret } from '../../types/settings'
-import type { APIMCPServerConfig } from '../../types/settings'
-import { MCPServerSettings } from '../../components/settings/MCPServerSettings'
-import { SkillSettings } from '../../components/settings/SkillSettings'
-import StorageAttachmentEditor, { validateStorageAttachments } from './StorageAttachmentEditor'
-import type { StorageAttachment } from '../../types/storage'
-import type { GitHubIdentity } from '../../types/github-connection'
-import SessionStateStorageEditor from './SessionStateStorageEditor'
+import type { SessionProfile } from '../../types/session_profile'
 
-interface SessionProfileEditorProps {
+export interface SessionProfileEditorProps {
   onClose: () => void
   onSuccess: (savedProfile?: SessionProfile) => void
   editingProfile?: SessionProfile | null
@@ -58,25 +51,25 @@ const profileSections = [
   { slug: 'lifecycle', label: '自動削除', icon: Clock, group: '実行基盤' },
 ]
 
-type KeyValuePair = { key: string; value: string }
-type DefaultModelTarget = 'codex:all' | 'codex:auth_json' | 'codex:openai_compatible' | 'claude:all' | 'claude:oauth' | 'claude:bedrock' | 'claude:anthropic_compatible'
-
-const DEFAULT_MODEL_TARGETS = [
-  { value: 'codex:all', label: 'Codex / 全認証方式' },
-  { value: 'codex:auth_json', label: 'Codex / auth.json' },
-  { value: 'codex:openai_compatible', label: 'Codex / OpenAI 互換 API' },
-  { value: 'claude:all', label: 'Claude / 全認証方式' },
-  { value: 'claude:oauth', label: 'Claude / OAuth' },
-  { value: 'claude:bedrock', label: 'Claude / Bedrock' },
-  { value: 'claude:anthropic_compatible', label: 'Claude / Anthropic 互換 API' },
-] as const satisfies ReadonlyArray<{ value: DefaultModelTarget; label: string }>
-
-const SUPPORTED_AGENT_TYPES = new Set(['auto', 'claude-legacy', 'claude-acp', 'codex-acp', 'pi', 'cursor', 'antigravity'])
-
-const normalizeAgentType = (value?: string): string => {
-  return value && SUPPORTED_AGENT_TYPES.has(value) ? value : ''
-}
-
+import { ProfileBasicSection } from './ProfileBasicSection'
+import { ProfileStoragesSection } from './ProfileStoragesSection'
+import { ProfileInheritanceSection } from './ProfileInheritanceSection'
+import { ProfileAuthenticationSection } from './ProfileAuthenticationSection'
+import { ProfileAgentSection } from './ProfileAgentSection'
+import { ProfileModelsSection } from './ProfileModelsSection'
+import { ProfileMcpSection } from './ProfileMcpSection'
+import { ProfileSkillsSection } from './ProfileSkillsSection'
+import { ProfileEnvironmentSection } from './ProfileEnvironmentSection'
+import { ProfileSystemPromptSection } from './ProfileSystemPromptSection'
+import { ProfileSecretsSection } from './ProfileSecretsSection'
+import { ProfileFilesSection } from './ProfileFilesSection'
+import { ProfileTagsSection } from './ProfileTagsSection'
+import { ProfilePoolSection } from './ProfilePoolSection'
+import { ProfileRuntimeSection } from './ProfileRuntimeSection'
+import { ProfileSandboxSection } from './ProfileSandboxSection'
+import { ProfileDockerSection } from './ProfileDockerSection'
+import { ProfileLifecycleSection } from './ProfileLifecycleSection'
+import { useSessionProfileEditor } from './useSessionProfileEditor'
 export default function SessionProfileEditor({
   onClose,
   onSuccess,
@@ -84,1354 +77,174 @@ export default function SessionProfileEditor({
   section = 'basic',
   createScope,
 }: SessionProfileEditorProps) {
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const { getScopeParams, availableTeams = [] } = useTeamScope()
+  const state = useSessionProfileEditor({ onClose, onSuccess, editingProfile, section, createScope })
+  const {
+    pathname,
+    searchParams,
+    name,
+    isEditing,
+    scope,
+    teamId,
+    dirty,
+    drawerOpen,
+    setDrawerOpen,
+    handleSubmit,
+    setDirty,
+    settingsTeamId,
+    error,
+    isSubmitting,
+    setResetKey,
+  } = state
 
-  // Basic fields
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [isDefault, setIsDefault] = useState(false)
-  const [repositorySelector, setRepositorySelector] = useState('')
-  const [otherSelectorTags, setOtherSelectorTags] = useState<Record<string, string>>({})
-
-  // Config fields
-  const [envPairs, setEnvPairs] = useState<KeyValuePair[]>([{ key: '', value: '' }])
-  const [tagPairs, setTagPairs] = useState<KeyValuePair[]>([{ key: '', value: '' }])
-  const [pool, setPool] = useState('')
-  const [availablePools, setAvailablePools] = useState<LogicalSessionPool[]>([])
-  const [agentType, setAgentType] = useState('')
-  const [codexModel, setCodexModel] = useState('')
-  const [claudeModel, setClaudeModel] = useState('')
-  const [codexDefaultModels, setCodexDefaultModels] = useState<NonNullable<SessionProfileParams['codex_default_models']>>({})
-  const [claudeDefaultModels, setClaudeDefaultModels] = useState<NonNullable<SessionProfileParams['claude_default_models']>>({})
-  const [defaultModelTarget, setDefaultModelTarget] = useState<DefaultModelTarget>('codex:all')
-  const [modelOptions, setModelOptions] = useState('')
-  const [profileFiles, setProfileFiles] = useState<ProfileFile[]>([])
-  const [profileRepositories, setProfileRepositories] = useState<ProfileRepository[]>([])
-  const [storages, setStorages] = useState<StorageAttachment[]>([])
-  const [sessionState, setSessionState] = useState<SessionStateConfig>({ enabled: false, components: ['agent_state'], agents: ['claude'] })
-  const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
-  const [sourceProfileId, setSourceProfileId] = useState('')
-  const [availableProfiles, setAvailableProfiles] = useState<SessionProfile[]>([])
-  const [availableSecrets, setAvailableSecrets] = useState<SettingsSecret[]>([])
-  const [selectedSecretIds, setSelectedSecretIds] = useState<string[]>([])
-  const [skills, setSkills] = useState<string[]>([])
-  const [piPackages, setPiPackages] = useState('')
-  const [commandWrapperTemplate, setCommandWrapperTemplate] = useState('')
-  const [systemPrompt, setSystemPrompt] = useState('')
-  const [systemPromptMode, setSystemPromptMode] = useState<'override' | 'append'>('override')
-  const [githubRepositories, setGitHubRepositories] = useState('')
-  const [linkedConnections, setLinkedConnections] = useState<GitHubIdentity[]>([])
-  const [connectionId, setConnectionId] = useState('')
-
-  // Docker / DinD fields
-  const [dockerEnabled, setDockerEnabled] = useState(false)
-  const [dockerRegistries, setDockerRegistries] = useState<Array<{ server: string; username: string; password: string; secretName: string; insecure: boolean }>>([])
-
-  // Network sandbox fields. Profiles always run with sandbox enabled; no selected
-  // policy means count mode so traffic is recorded but not blocked.
-  const [sandboxPolicyId, setSandboxPolicyId] = useState('')
-  const [sandboxPolicies, setSandboxPolicies] = useState<SandboxPolicy[]>([])
-
-  // Session TTL
-  const [sessionTTL, setSessionTTL] = useState('')
-  const [unsyncedFilePaths, setUnsyncedFilePaths] = useState('')
-  const [settingsTeamId, setSettingsTeamId] = useState('')
-  const [codexConnection, setCodexConnection] = useState<ModelConnection | null>(null)
-  const [claudeConnection, setClaudeConnection] = useState<ModelConnection | null>(null)
-  const [piConnection, setPiConnection] = useState<ModelConnection | null>(null)
-  const [codexAuthMode, setCodexAuthMode] = useState<SessionProfileParams['codex_auth_mode'] | ''>('')
-  const [claudeAuthMode, setClaudeAuthMode] = useState<SessionProfileParams['claude_auth_mode'] | ''>('')
-
-  const addDockerRegistry = () => setDockerRegistries(prev => [...prev, { server: '', username: '', password: '', secretName: '', insecure: false }])
-  const removeDockerRegistry = (index: number) => { setDirty(true); setDockerRegistries(prev => prev.filter((_, i) => i !== index)) }
-  const updateDockerRegistry = (index: number, field: string, value: string | boolean) =>
-    setDockerRegistries(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r))
-
-  // UI state
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [dirty, setDirty] = useState(false)
-  const [resetKey, setResetKey] = useState(0)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const dirtyRef = useRef(false)
-  dirtyRef.current = dirty
-
-  const isEditing = !!editingProfile
-  const scope = editingProfile?.scope ?? createScope?.scope
-  const teamId = editingProfile?.team_id ?? createScope?.team_id
-
-  useEffect(() => {
-    const fetchConfigOptions = async () => {
-      const client = createAgentAPIProxyClientFromStorage()
-      try {
-        const response = await client.getSandboxPolicies(scope ? { scope, ...(teamId ? { team_id: teamId } : {}) } : getScopeParams())
-        setSandboxPolicies(response.sandbox_policies || [])
-      } catch {
-        setSandboxPolicies([])
-      }
-      try {
-        setAvailablePools(await client.getAvailableSessionPools())
-      } catch {
-        setAvailablePools([])
-      }
-      try {
-        const response = await client.getSessionProfiles(
-          scope ? { scope, ...(teamId ? { team_id: teamId } : {}) } : getScopeParams(),
-        )
-        setAvailableProfiles(response.session_profiles || [])
-      } catch {
-        setAvailableProfiles([])
-      }
-    }
-    fetchConfigOptions()
-  }, [getScopeParams, scope, teamId])
-
-  useEffect(() => {
-    const loadSecrets = async () => {
-      try {
-        const client = createAgentAPIProxyClientFromStorage()
-        const owner = settingsTeamId || (scope === 'team' ? teamId : (await client.getUserInfo()).principal_id)
-        setAvailableSecrets(owner ? await client.listSettingsSecrets(owner) : [])
-      } catch { setAvailableSecrets([]) }
-    }
-    void loadSecrets()
-  }, [scope, teamId, settingsTeamId])
-
-  // Initialize form when editing
-  useEffect(() => {
-    if (editingProfile) {
-      setName(editingProfile.name)
-      setDescription(editingProfile.description ?? '')
-      setIsDefault(editingProfile.is_default ?? false)
-      const selectorEntries = Object.entries(editingProfile.selector_tags ?? {})
-      setRepositorySelector((editingProfile.selector_repositories?.length
-        ? editingProfile.selector_repositories
-        : [selectorEntries.find(([key]) => key === 'repository' || key === 'repo')?.[1]].filter(Boolean)
-      ).join('\n'))
-      setOtherSelectorTags(Object.fromEntries(selectorEntries.filter(([key]) => key !== 'repository' && key !== 'repo')))
-
-      const cfg = editingProfile.config
-      setPool(cfg?.pool || cfg?.params?.pool || '')
-      setAgentType(normalizeAgentType(cfg?.params?.agent_type))
-      setCodexModel(cfg?.environment?.CODEX_MODEL ?? '')
-      setClaudeModel(cfg?.environment?.ANTHROPIC_MODEL ?? '')
-      setCodexDefaultModels(cfg?.params?.codex_default_models ?? {})
-      setClaudeDefaultModels(cfg?.params?.claude_default_models ?? {})
-      const configuredTarget = DEFAULT_MODEL_TARGETS.find(({ value }) => {
-        const [agent, mode] = value.split(':')
-        if (mode === 'all') return agent === 'codex' ? Boolean(cfg?.environment?.CODEX_MODEL) : Boolean(cfg?.environment?.ANTHROPIC_MODEL)
-        return agent === 'codex'
-          ? Boolean(cfg?.params?.codex_default_models?.[mode as keyof NonNullable<SessionProfileParams['codex_default_models']>])
-          : Boolean(cfg?.params?.claude_default_models?.[mode as keyof NonNullable<SessionProfileParams['claude_default_models']>])
-      })
-      setDefaultModelTarget(configuredTarget?.value ?? 'codex:all')
-      setModelOptions((cfg?.params?.model_options ?? []).join('\n'))
-      setMcpServers(cfg?.mcp_servers ?? {})
-      setSourceProfileId(cfg?.source_session_profile_id ?? '')
-      setSelectedSecretIds(cfg?.secret_ids ?? [])
-      setSkills(cfg?.skills ?? [])
-      setPiPackages((cfg?.pi_packages ?? []).join('\n'))
-      setCommandWrapperTemplate(cfg?.command_wrapper_template ?? '')
-      setSystemPrompt(cfg?.system_prompt ?? '')
-      setSystemPromptMode(cfg?.system_prompt_mode ?? 'override')
-      setGitHubRepositories((cfg?.github_repositories ?? []).join('\n'))
-      setConnectionId(cfg?.params?.connection_id ?? '')
-
-      if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
-        const generalEnvironment = Object.entries(cfg.environment)
-          .filter(([key]) => key !== 'CODEX_MODEL' && key !== 'ANTHROPIC_MODEL')
-        setEnvPairs(generalEnvironment.length > 0
-          ? generalEnvironment.map(([key, value]) => ({ key, value }))
-          : [{ key: '', value: '' }])
-      } else {
-        setEnvPairs([{ key: '', value: '' }])
-      }
-
-      if (cfg?.tags && Object.keys(cfg.tags).length > 0) {
-        setTagPairs(Object.entries(cfg.tags).map(([key, value]) => ({ key, value })))
-      } else {
-        setTagPairs([{ key: '', value: '' }])
-      }
-
-
-      // Initialize docker from profile params
-      const docker = cfg?.params?.docker
-      if (docker) {
-        setDockerEnabled(docker.enabled)
-        setDockerRegistries((docker.registries ?? []).map(r => ({
-          server: r.server ?? '',
-          username: r.username ?? '',
-          password: r.password ?? '',
-          secretName: r.secret_name ?? '',
-          insecure: r.insecure ?? false,
-        })))
-      } else {
-        setDockerEnabled(false)
-        setDockerRegistries([])
-      }
-
-      // Initialize network sandbox from profile params and legacy top-level policy ID
-      const sandbox = cfg?.params?.sandbox
-      const policyId = sandbox?.policy_id ?? cfg?.sandbox_policy_id ?? ''
-      setSandboxPolicyId(policyId)
-
-      // Initialize session_ttl from profile config
-      const ttl = cfg?.session_ttl ?? cfg?.params?.session_ttl ?? ''
-      setSessionTTL(ttl)
-
-      const paths = cfg?.unsynced_file_paths ?? cfg?.params?.unsynced_file_paths ?? []
-      setUnsyncedFilePaths(paths.join('\n'))
-      setProfileFiles(cfg?.files ?? [])
-      setProfileRepositories(cfg?.repositories ?? [])
-      setStorages(cfg?.params?.storages ?? [])
-      setSessionState(cfg?.session_state ?? { enabled: false, components: ['agent_state'], agents: ['claude'] })
-
-      setSettingsTeamId(cfg?.settings_team_id ?? '')
-      setCodexConnection(cfg?.codex_connection ?? null)
-      setClaudeConnection(cfg?.claude_connection ?? null)
-      setPiConnection(cfg?.pi_connection ?? null)
-      setCodexAuthMode(cfg?.params?.codex_auth_mode ?? '')
-      setClaudeAuthMode(cfg?.params?.claude_auth_mode ?? '')
-    } else {
-      // Reset form
-      setName('')
-      setDescription('')
-      setIsDefault(false)
-      setRepositorySelector('')
-      setOtherSelectorTags({})
-      setEnvPairs([{ key: '', value: '' }])
-      setTagPairs([{ key: '', value: '' }])
-      setPool('')
-      setAgentType('')
-      setCodexModel('')
-      setClaudeModel('')
-      setCodexDefaultModels({})
-      setClaudeDefaultModels({})
-      setDefaultModelTarget('codex:all')
-      setModelOptions('')
-      setMcpServers({})
-      setSourceProfileId('')
-      setSelectedSecretIds([])
-      setSkills([])
-      setPiPackages('')
-      setCommandWrapperTemplate('')
-      setSystemPrompt('')
-      setSystemPromptMode('override')
-      setAvailableProfiles([])
-      setDockerEnabled(false)
-      setDockerRegistries([])
-      setSandboxPolicyId('')
-      setSessionTTL('')
-      setUnsyncedFilePaths('')
-      setProfileFiles([])
-      setProfileRepositories([])
-      setStorages([])
-      setSessionState({ enabled: false, components: ['agent_state'], agents: ['claude'] })
-      setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
-      setCodexConnection(null)
-      setClaudeConnection(null)
-      setPiConnection(null)
-      setCodexAuthMode('')
-      setClaudeAuthMode('')
-      setConnectionId('')
-    }
-    setError(null)
-    setDirty(false)
-  }, [editingProfile, resetKey, createScope?.scope, createScope?.team_id])
-
-  useEffect(() => {
-    createAgentAPIProxyClientFromStorage().listGitHubIdentities()
-      .then(result => setLinkedConnections(result.identities))
-      .catch(() => setLinkedConnections([]))
-  }, [])
-
-  useEffect(() => { setDrawerOpen(false) }, [section])
-  useEffect(() => {
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (dirtyRef.current) { event.preventDefault(); event.returnValue = '' }
-    }
-    window.addEventListener('beforeunload', beforeUnload)
-    return () => window.removeEventListener('beforeunload', beforeUnload)
-  }, [])
-
-  // Key-value pair helpers
-  const updatePair = (
-    pairs: KeyValuePair[],
-    setPairs: React.Dispatch<React.SetStateAction<KeyValuePair[]>>,
-    index: number,
-    field: 'key' | 'value',
-    val: string
-  ) => {
-    const next = [...pairs]
-    next[index] = { ...next[index], [field]: val }
-    setDirty(true)
-    setPairs(next)
-  }
-
-  const addPair = (setPairs: React.Dispatch<React.SetStateAction<KeyValuePair[]>>) => {
-    setDirty(true)
-    setPairs((prev) => [...prev, { key: '', value: '' }])
-  }
-
-  const removePair = (
-    pairs: KeyValuePair[],
-    setPairs: React.Dispatch<React.SetStateAction<KeyValuePair[]>>,
-    index: number
-  ) => {
-    setDirty(true)
-    if (pairs.length === 1) {
-      setPairs([{ key: '', value: '' }])
-    } else {
-      setDirty(true)
-    setPairs((prev) => prev.filter((_, i) => i !== index))
-    }
-  }
-
-  const pairsToRecord = (pairs: KeyValuePair[]): Record<string, string> => {
-    const record: Record<string, string> = {}
-    pairs.forEach(({ key, value }) => {
-      if (key.trim()) record[key.trim()] = value
-    })
-    return record
-  }
-
-  const updateProfileFile = (index: number, field: keyof ProfileFile, value: string) => {
-    setDirty(true)
-    setProfileFiles(prev => prev.map((file, i) => (i === index ? { ...file, [field]: value } : file)))
-  }
-
-  const addProfileFile = () => {
-    setDirty(true)
-    setProfileFiles(prev => [...prev, { path: '', content: '', permissions: '0600' }])
-  }
-
-  const removeProfileFile = (index: number) => {
-    setDirty(true)
-    setProfileFiles(prev => prev.filter((_, i) => i !== index))
-  }
-
-  const updateProfileRepository = (index: number, field: keyof ProfileRepository, value: string) => {
-    setDirty(true)
-    setProfileRepositories(current => current.map((repository, i) => i === index ? { ...repository, [field]: value } : repository))
-  }
-
-  const addProfileRepository = () => {
-    setDirty(true)
-    setProfileRepositories(current => [...current, { repository: '', path: '', branch: '' }])
-  }
-
-  const removeProfileRepository = (index: number) => {
-    setDirty(true)
-    setProfileRepositories(current => current.filter((_, i) => i !== index))
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
-
-    if (!name.trim()) {
-      setError('基本情報で名前を入力してください')
-      return
-    }
-
-    const selectorRepositories = repositorySelector.split('\n').map(value => value.trim()).filter(Boolean)
-    if (selectorRepositories.some(repository => !/^[^/\s]+\/[^/\s]+$/.test(repository))) {
-      setError('リポジトリ自動選択は org/repo 形式で入力してください')
-      return
-    }
-
-    const wrapper = commandWrapperTemplate.trim()
-    if (wrapper && (wrapper.match(/{{\s*\.Command\s*}}/g)?.length ?? 0) !== 1) {
-      setError('コマンドラッパーには {{ .Command }} を1回だけ指定してください')
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      const client = createAgentAPIProxyClientFromStorage()
-
-      const environment = {
-        ...pairsToRecord(envPairs),
-        ...(codexModel.trim() ? { CODEX_MODEL: codexModel.trim() } : {}),
-        ...(claudeModel.trim() ? { ANTHROPIC_MODEL: claudeModel.trim() } : {}),
-      }
-      const tags = pairsToRecord(tagPairs)
-      const selectorTags = { ...otherSelectorTags }
-      const parsedUnsyncedFilePaths = unsyncedFilePaths
-        .split('\n')
-        .map(path => path.trim())
-        .filter(Boolean)
-      const parsedProfileFiles = profileFiles
-        .map(file => ({ ...file, path: file.path.trim(), permissions: file.permissions?.trim() }))
-        .filter(file => file.path)
-	  const parsedProfileRepositories = profileRepositories
-	    .map(repository => ({ repository: repository.repository.trim(), path: repository.path.trim(), branch: repository.branch?.trim() }))
-	    .filter(repository => repository.repository || repository.path)
-	  if (parsedProfileRepositories.some(repository => !/^[^/\s]+\/[^/\s]+$/.test(repository.repository))) throw new Error('事前配置リポジトリは owner/repository 形式で入力してください')
-	  if (parsedProfileRepositories.some(repository => !repository.path.startsWith('/'))) throw new Error('事前配置リポジトリの配置先は絶対パスで入力してください')
-
-      // Build docker config if enabled
-      let dockerConfig: { enabled: boolean; registries?: { server?: string; username?: string; password?: string; secret_name?: string; insecure?: boolean }[] } | undefined
-      if (dockerEnabled) {
-        const regs = dockerRegistries
-          .filter(r => r.server || r.username || r.secretName)
-          .map(r => ({
-            ...(r.server ? { server: r.server } : {}),
-            ...(r.secretName ? { secret_name: r.secretName } : {}),
-            ...(r.username && !r.secretName ? { username: r.username, password: r.password } : {}),
-            ...(r.insecure ? { insecure: true } : {}),
-          }))
-        dockerConfig = { enabled: true, ...(regs.length > 0 ? { registries: regs } : {}) }
-      }
-
-      const sandboxConfig = {
-        enabled: true,
-        ...(sandboxPolicyId ? { policy_id: sandboxPolicyId } : {}),
-        ...(!sandboxPolicyId ? { count_mode: true } : {}),
-      }
-
-      // Build params if any param is set
-      // Preserve fields managed through the API that are not exposed in this editor.
-      const extraParams = { ...editingProfile?.config?.params }
-      delete extraParams.storages
-      const storageError = validateStorageAttachments(storages)
-      if (storageError) throw new Error(storageError)
-      if (sessionState.enabled) {
-        if (!sessionState.storage_id) throw new Error('セッション情報の保存先Storageを選択してください')
-        if (!sessionState.components?.length) throw new Error('保持するセッション情報を選択してください')
-        if (sessionState.components.includes('agent_state') && !sessionState.agents?.length) throw new Error('対象エージェントを選択してください')
-        const fixedAgent = agentType.includes('codex') ? 'codex' : agentType.includes('claude') ? 'claude' : ''
-        if (sessionState.components.includes('agent_state') && sessionState.agents?.includes('codex')) throw new Error('Codexのセッション情報はStorageへ保存できません')
-        if (fixedAgent === 'claude' && sessionState.components.includes('agent_state') && !sessionState.agents?.includes('claude')) throw new Error('Profileのエージェントを保持対象に選択してください')
-      }
-      for (const key of ['pool', 'agent_type', 'model', 'model_options', 'sandbox', 'docker', 'connection_id', 'codex_auth_mode', 'claude_auth_mode', 'codex_default_models', 'claude_default_models', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
-      const parsedModelOptions = modelOptions.split('\n').map(line => line.trim()).filter(Boolean)
-      const trimmedModels = <T extends Record<string, string | undefined>>(models: T) => Object.fromEntries(
-        Object.entries(models).map(([mode, model]) => [mode, model?.trim()]).filter((entry): entry is [string, string] => Boolean(entry[1])),
-      )
-      const parsedCodexDefaultModels = trimmedModels(codexDefaultModels)
-      const parsedClaudeDefaultModels = trimmedModels(claudeDefaultModels)
-      const params = {
-        ...extraParams,
-        storages: storages.map(storage => ({ ...storage, mount_path: storage.mount_path.trim() })),
-        ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
-        ...(connectionId ? { connection_id: connectionId } : {}),
-        ...(parsedModelOptions.length > 0 ? { model_options: parsedModelOptions } : {}),
-        sandbox: sandboxConfig,
-        ...(dockerConfig ? { docker: dockerConfig } : {}),
-        ...(codexAuthMode ? { codex_auth_mode: codexAuthMode } : {}),
-        ...(claudeAuthMode ? { claude_auth_mode: claudeAuthMode } : {}),
-        ...(Object.keys(parsedCodexDefaultModels).length > 0 ? { codex_default_models: parsedCodexDefaultModels } : {}),
-        ...(Object.keys(parsedClaudeDefaultModels).length > 0 ? { claude_default_models: parsedClaudeDefaultModels } : {}),
-      }
-
-      const connectionPayload = (connection: ModelConnection | null) => {
-        if (!connection) return null
-        const payload = { ...connection }
-        delete payload.has_api_key
-        if (!payload.api_key) delete payload.api_key
-        return payload
-      }
-      const extraConfig = { ...editingProfile?.config }
-      const parsedPiPackages = piPackages.split('\n').map(value => value.trim()).filter(Boolean)
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'pi_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'pi_packages', 'files', 'repositories', 'command_wrapper_template', 'system_prompt', 'system_prompt_mode', 'session_state'] as const) delete extraConfig[key]
-      const parsedGitHubRepositories = githubRepositories.split('\n').map(value => value.trim()).filter(Boolean)
-      const config = {
-        ...extraConfig,
-        ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
-        codex_connection: connectionPayload(codexConnection),
-        claude_connection: connectionPayload(claudeConnection),
-        pi_connection: connectionPayload(piConnection),
-        ...(Object.keys(environment).length > 0 ? { environment } : {}),
-        ...(Object.keys(tags).length > 0 ? { tags } : {}),
-        ...(pool.trim() ? { pool: pool.trim() } : {}),
-        ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
-        params,
-        ...(sandboxPolicyId ? { sandbox_policy_id: sandboxPolicyId } : {}),
-        ...(sessionTTL.trim() ? { session_ttl: sessionTTL.trim() } : {}),
-        ...(parsedUnsyncedFilePaths.length > 0 ? { unsynced_file_paths: parsedUnsyncedFilePaths } : {}),
-        ...(sourceProfileId.trim() ? { source_session_profile_id: sourceProfileId.trim() } : {}),
-        ...(selectedSecretIds.length > 0 ? { secret_ids: selectedSecretIds } : {}),
-        ...(parsedGitHubRepositories.length > 0 ? { github_repositories: parsedGitHubRepositories } : {}),
-        ...(skills.length > 0 ? { skills } : {}),
-        ...(parsedPiPackages.length > 0 ? { pi_packages: parsedPiPackages } : {}),
-        ...(wrapper ? { command_wrapper_template: wrapper } : {}),
-        ...(systemPrompt ? { system_prompt: systemPrompt, system_prompt_mode: systemPromptMode } : {}),
-        files: parsedProfileFiles,
-        repositories: parsedProfileRepositories,
-        session_state: sessionState,
-      }
-
-      let savedProfile: SessionProfile
-      if (isEditing && editingProfile) {
-        const updateData: UpdateSessionProfileRequest = {
-          name: name.trim(),
-          description: description.trim(),
-          is_default: isDefault,
-          selector_tags: selectorTags,
-          selector_repositories: selectorRepositories,
-          config: Object.keys(config).length > 0 ? config : undefined,
-        }
-        savedProfile = await client.updateSessionProfile(editingProfile.id, updateData)
-      } else {
-        const scopeParams = createScope ?? getScopeParams()
-        const createData: CreateSessionProfileRequest = {
-          name: name.trim(),
-          description: description.trim(),
-          is_default: isDefault,
-          ...(Object.keys(selectorTags).length > 0 ? { selector_tags: selectorTags } : {}),
-          ...(selectorRepositories.length > 0 ? { selector_repositories: selectorRepositories } : {}),
-          ...(Object.keys(config).length > 0 ? { config } : {}),
-          ...scopeParams,
-        }
-        savedProfile = await client.createSessionProfile(createData)
-      }
-
-      setDirty(false)
-      dirtyRef.current = false
-      onSuccess(savedProfile)
-    } catch (err) {
-      console.error('Failed to save session profile:', err)
-      setError(err instanceof Error ? err.message : 'セッションプロファイルの保存に失敗しました')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const active = profileSections.find(item => item.slug === section) ?? profileSections[0]
+  const active = profileSections.find((item) => item.slug === section) ?? profileSections[0]
   const hrefFor = (slug: string) => {
     const query = new URLSearchParams(searchParams.toString())
     query.set('section', slug)
     return `${pathname}?${query}`
   }
-  const groups = [...new Set(profileSections.map(item => item.group))].map(title => ({
-    title, items: profileSections.filter(item => item.group === title).map(item => ({ ...item, href: hrefFor(item.slug) })),
+  const groups = [...new Set(profileSections.map((item) => item.group))].map((title) => ({
+    title,
+    items: profileSections
+      .filter((item) => item.group === title)
+      .map((item) => ({ ...item, href: hrefFor(item.slug) })),
   }))
   const leave = () => {
     if (!dirty || window.confirm('未保存の変更があります。破棄して移動しますか？')) onClose()
   }
-  const nav = <SideNav groups={groups} activeHref={hrefFor(active.slug)} ariaLabel="セッションプロファイルの設定" header={<div className="px-3 py-2"><p className="text-xs text-gray-500">{isEditing ? 'セッションプロファイル' : '新しいプロファイル'} · {scope === 'team' ? teamId : '個人'}</p><p className="truncate font-semibold">{name || '名前未設定'}</p></div>} />
+  const nav = (
+    <SideNav
+      groups={groups}
+      activeHref={hrefFor(active.slug)}
+      ariaLabel="セッションプロファイルの設定"
+      header={
+        <div className="px-3 py-2">
+          <p className="text-xs text-gray-500">
+            {isEditing ? 'セッションプロファイル' : '新しいプロファイル'} · {scope === 'team' ? teamId : '個人'}
+          </p>
+          <p className="truncate font-semibold">{name || '名前未設定'}</p>
+        </div>
+      }
+    />
+  )
   return (
     <main className="min-h-dvh bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-white">
       <div className="container mx-auto max-w-6xl px-4 py-6">
         <div className="mb-6 flex items-center gap-3">
-          <button type="button" className="md:hidden p-2" aria-label="設定項目を開く" onClick={() => setDrawerOpen(true)}><PanelLeft className="h-5 w-5" /></button>
-          <button type="button" onClick={leave} className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 dark:hover:text-white"><ArrowLeft className="h-4 w-4" />プロファイル一覧に戻る</button>
+          <button
+            type="button"
+            className="md:hidden p-2"
+            aria-label="設定項目を開く"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <PanelLeft className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={leave}
+            className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 dark:hover:text-white"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            プロファイル一覧に戻る
+          </button>
         </div>
         <div className="flex gap-8">
           <aside className="hidden md:block">{nav}</aside>
           <form onSubmit={handleSubmit} onChange={() => setDirty(true)} className="min-w-0 flex-1">
-            <SettingsPageHeader title={active.label} description="ベースの設定に、このプロファイルで指定した内容を上書きします。各項目の変更はまとめて保存されます。" />
-            <p className="mb-5 text-sm text-gray-500">ベース: {settingsTeamId ? `チーム ${settingsTeamId}` : '既定の個人・チーム設定'}。未指定の認証方法・モデル・環境変数・MCP はベースの設定を使用します。</p>
-            {error && <p role="alert" className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">{error}</p>}
-            <fieldset disabled={isSubmitting} className="space-y-5">
-            {active.slug === 'basic' && <div className="space-y-5">
-{/* Name */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                名前 <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="例: my-profile"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-                required
-              />
-            </div>
-
-            {/* Description */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                説明
-              </label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="このプロファイルの用途を説明してください"
-                rows={2}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
-              />
-            </div>
-
-{/* is_default */}
-            <div>
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isDefault}
-                  onChange={(e) => setIsDefault(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                <div>
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    デフォルトプロファイルに設定する
-                  </span>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    セッション作成時にこのプロファイルをデフォルトとして使用します。
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            <div>
-              <label htmlFor="session-profile-repository-selector" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                リポジトリ自動選択
-              </label>
-              <textarea
-                id="session-profile-repository-selector"
-                value={repositorySelector}
-                onChange={(e) => setRepositorySelector(e.target.value)}
-                rows={3}
-                placeholder={'例: org/repo\norg/another-repo'}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                1行に1つ owner/repository を入力すると、いずれかのリポジトリのセッション起動時にこのプロファイルを自動選択します。
-              </p>
-            </div>
-
-            
-            </div>}
-            {active.slug === 'storages' && <div className="space-y-6">
-              <SessionStateStorageEditor
-                value={sessionState}
-                onChange={value => { setSessionState(value); setDirty(true) }}
-                scope={(editingProfile ?? createScope ?? getScopeParams()).scope ?? 'user'}
-                teamId={(editingProfile ?? createScope ?? getScopeParams()).team_id}
-                agentType={agentType}
-              />
-              <div>
-                <h3 className="mb-1 font-medium">追加のStorageマウント</h3>
-                <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">データセットや共有ファイルを任意のパスへ配置します。</p>
-                <StorageAttachmentEditor
-                  value={storages}
-                  onChange={value => { setStorages(value); setDirty(true) }}
-                  scope={(editingProfile ?? createScope ?? getScopeParams()).scope ?? 'user'}
-                  teamId={(editingProfile ?? createScope ?? getScopeParams()).team_id}
-                />
-              </div>
-            </div>}
-            {active.slug === 'inheritance' && <div className="space-y-5">
-            <div>
-              <label htmlFor="profile-settings-team" className="block text-sm font-medium mb-1">ベースにする設定</label>
-              <select id="profile-settings-team" value={settingsTeamId} onChange={e => setSettingsTeamId(e.target.value)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
-                <option value="">既定の個人・チーム設定</option>
-                {[...new Set([...availableTeams, ...(settingsTeamId ? [settingsTeamId] : [])])].filter(team => {
-                  const scope = editingProfile ?? createScope ?? getScopeParams()
-                  return scope.scope !== 'team' || scope.team_id === team
-                }).map(team => <option key={team} value={team}>チーム: {team}</option>)}
-              </select>
-              <p className="text-xs text-gray-500 mt-2">選んだチームの設定をベースにします。認証方法・モデル・環境変数・MCP は、このプロファイルで指定した項目だけ上書きします。チームの設定自体は変更されません。</p>
-            </div>
-
-            <div>
-              <label htmlFor="profile-source" className="block text-sm font-medium mb-1">設定ソースプロファイル</label>
-              <select
-                id="profile-source"
-                value={sourceProfileId}
-                onChange={(e) => { setSourceProfileId(e.target.value); setDirty(true) }}
-                className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white"
+            <SettingsPageHeader
+              title={active.label}
+              description="ベースの設定に、このプロファイルで指定した内容を上書きします。各項目の変更はまとめて保存されます。"
+            />
+            <p className="mb-5 text-sm text-gray-500">
+              ベース: {settingsTeamId ? `チーム ${settingsTeamId}` : '既定の個人・チーム設定'}
+              。未指定の認証方法・モデル・環境変数・MCP はベースの設定を使用します。
+            </p>
+            {error && (
+              <p
+                role="alert"
+                className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400"
               >
-                <option value="">プロファイルを参照しない</option>
-                {availableProfiles
-                  .filter(profile => profile.id !== editingProfile?.id)
-                  .map(profile => (
-                    <option key={profile.id} value={profile.id}>{profile.name}</option>
-                  ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-2">参照先プロファイルの環境変数と MCP サーバーを取り込みます。このプロファイルの同名設定が優先されます。</p>
-            </div>
-
-            </div>}
-            {active.slug === 'authentication' && <div className="space-y-5">
-            <div>
-              <label htmlFor="profile-codex-auth" className="block text-sm font-medium mb-1">Codex の認証方法</label>
-              <select id="profile-codex-auth" value={codexAuthMode} onChange={e => setCodexAuthMode(e.target.value as typeof codexAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
-                <option value="">ベースの認証方法を使う</option>
-                <option value="auth_json">ChatGPT / auth.json</option>
-                <option value="openai_compatible">OpenAI 互換 API</option>
-              </select>
-            </div>
-            {codexAuthMode === 'openai_compatible' && <ProfileConnectionFields agent="codex" value={codexConnection} onChange={value => { setCodexConnection(value); setDirty(true) }} />}
-            <div>
-              <label htmlFor="profile-claude-auth" className="block text-sm font-medium mb-1">Claude Code の認証方法</label>
-              <select id="profile-claude-auth" value={claudeAuthMode} onChange={e => setClaudeAuthMode(e.target.value as typeof claudeAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
-                <option value="">ベースの認証方法を使う</option>
-                <option value="oauth">Claude OAuth</option>
-                <option value="bedrock">AWS Bedrock</option>
-                <option value="anthropic_compatible">Anthropic 互換 API</option>
-              </select>
-              <p className="text-xs text-gray-500 mt-2">認証方法を選ぶと、このプロファイルで使う方法を上書きします。互換 API の接続先・API キーも必要に応じて上書きできます。</p>
-            </div>
-
-            {claudeAuthMode === 'anthropic_compatible' && <ProfileConnectionFields agent="claude" value={claudeConnection} onChange={value => { setClaudeConnection(value); setDirty(true) }} />}
-
-            <ProfileConnectionFields agent="pi" value={piConnection} onChange={value => { setPiConnection(value); setDirty(true) }} />
-
-            <div>
-              <label htmlFor="profile-github-repositories" className="block text-sm font-medium mb-1">クローン可能な追加リポジトリ</label>
-              <textarea id="profile-github-repositories" value={githubRepositories}
-                onChange={event => { setGitHubRepositories(event.target.value); setDirty(true) }}
-                rows={5} placeholder={'^owner/repository$\n^owner/service-[a-z]+$'}
-                className="w-full rounded-md border bg-white p-2 font-mono text-xs dark:bg-gray-800" />
-              <p className="mt-2 text-xs text-gray-500">1行に1つ、RE2正規表現を指定します。リポジトリ名全体に適用され、チーム設定のリストに追加されます。</p>
-            </div>
-
-            </div>}
-            {active.slug === 'agent' && <div className="space-y-5">
-{/* Agent Type */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      エージェントタイプ
-                    </label>
-                    <div className="space-y-2">
-                      {([
-                        { value: '', label: 'デフォルト', description: '継承元のエージェント設定を使用します' },
-                        { value: 'auto', label: '自動選択', description: 'Codex の互換 API または auth.json があれば Codex ACP、それ以外は Claude ACP' },
-                        { value: 'claude-legacy', label: 'Claude Legacy', description: 'Claude の従来の実行方式' },
-                        { value: 'claude-acp', label: 'Claude ACP', description: 'Claude Code を使用します' },
-                        { value: 'codex-acp', label: 'Codex ACP', description: 'Codex を使用します' },
-                        { value: 'pi', label: 'Pi', description: '登録した互換 API に接続する Pi を使用します' },
-                        { value: 'cursor', label: 'Cursor ACP', description: 'Cursor を使用します' },
-                        { value: 'antigravity', label: 'Antigravity', description: 'Google Antigravity を使用します' },
-                      ]).map(({ value: v, label, description }) => (
-                        <label key={v} className="flex items-start cursor-pointer group">
-                          <input
-                            type="radio"
-                            name="profile-agent-type"
-                            value={v}
-                            checked={agentType === v}
-                            onChange={() => setAgentType(v)}
-                            className="mt-0.5 w-3.5 h-3.5 text-blue-600 border-gray-300 dark:border-gray-600 focus:ring-blue-500"
-                          />
-                          <span className="ml-2">
-                            <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 group-hover:text-gray-800 dark:group-hover:text-gray-200">
-                              {label}
-                            </span>
-                            <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                              {description}
-                            </span>
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  
-            </div>}
-            {active.slug === 'models' && <div className="space-y-5">
-                  <div className="space-y-3">
-                    <p className="text-sm font-medium">エージェントごとのモデル</p>
-                    <p className="text-xs text-gray-500">認証方式別の値が最優先です。「全認証方式」は個別の値がない場合のフォールバックとして使われます。</p>
-                    <label className="block text-sm">認証方式
-                      <select aria-label="デフォルトモデルの認証方式" value={defaultModelTarget}
-                        onChange={e => setDefaultModelTarget(e.target.value as DefaultModelTarget)}
-                        className="w-full rounded-md border bg-white p-2 dark:bg-gray-800">
-                        {DEFAULT_MODEL_TARGETS.map(({ value, label }) => {
-                          const [agent, mode] = value.split(':')
-                          const configured = mode === 'all'
-                            ? Boolean((agent === 'codex' ? codexModel : claudeModel).trim())
-                            : agent === 'codex'
-                            ? Boolean(codexDefaultModels[mode as keyof typeof codexDefaultModels]?.trim())
-                            : Boolean(claudeDefaultModels[mode as keyof typeof claudeDefaultModels]?.trim())
-                          return <option key={value} value={value}>{label}{configured ? ' （設定済み）' : ''}</option>
-                        })}
-                      </select>
-                    </label>
-                    <label className="block text-sm">デフォルトモデル
-                      <input aria-label="認証方式別のデフォルトモデル"
-                        value={defaultModelTarget.startsWith('codex:')
-                          ? defaultModelTarget === 'codex:all' ? codexModel : codexDefaultModels[defaultModelTarget.slice(6) as keyof typeof codexDefaultModels] ?? ''
-                          : defaultModelTarget === 'claude:all' ? claudeModel : claudeDefaultModels[defaultModelTarget.slice(7) as keyof typeof claudeDefaultModels] ?? ''}
-                        onChange={e => {
-                          if (defaultModelTarget === 'codex:all') {
-                            setCodexModel(e.target.value)
-                          } else if (defaultModelTarget === 'claude:all') {
-                            setClaudeModel(e.target.value)
-                          } else if (defaultModelTarget.startsWith('codex:')) {
-                            setCodexDefaultModels(current => ({ ...current, [defaultModelTarget.slice(6)]: e.target.value }))
-                          } else {
-                            setClaudeDefaultModels(current => ({ ...current, [defaultModelTarget.slice(7)]: e.target.value }))
-                          }
-                          setDirty(true)
-                        }}
-                        placeholder="接続設定から継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
-                    </label>
-                    <label className="block text-sm">モデル候補（ACP チャットの切り替え候補）
-                      <textarea aria-label="モデル候補" value={modelOptions}
-                        onChange={e => { setModelOptions(e.target.value); setDirty(true) }}
-                        placeholder={'1 行に 1 つ入力\nsonnet\nopus'}
-                        rows={3}
-                        className="w-full rounded-md border bg-white p-2 font-mono text-xs dark:bg-gray-800" />
-                    </label>
-                    <p className="text-xs text-gray-500">セッション情報パネルの「Switch Model」に表示する候補です（エージェントが提示する候補も常に表示されます）。codex-acp ではここで指定した候補が Codex のモデルカタログに登録され、セッション開始後に選択できます。登録に失敗した場合や Claude では、エージェントが候補を拒否することがあるため、切り替えに失敗するときは既定モデル（Codex / Claude モデル ID）を変えて新しいセッションを開始してください。</p>
-                  </div>
-
-                  
-            </div>}
-            {active.slug === 'mcp' && <div className="space-y-5">
-{/* MCP Servers */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      MCP サーバー
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                      個人・チーム設定の MCP サーバーを継承します。同じ名前のサーバーは、このプロファイルの設定で上書きされます。
-                    </p>
-                    <MCPServerSettings servers={mcpServers} onChange={value => { setMcpServers(value); setDirty(true) }} />
-                  </div>
-
-                  
-            </div>}
-            {active.slug === 'skills' && <div className="space-y-5">
-              <div>
-                <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-                  個人・チーム設定の Skills に、このプロファイルの package source を追加します。実際の導入先はセッションの agent type から Claude Code または Codex の一方だけが選ばれます。
-                </p>
-                <SkillSettings skills={skills} onChange={value => { setSkills(value); setDirty(true) }} />
-                <div className="mt-6">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Pi packages</label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Pi 起動前に導入する package source を1行ずつ指定します。Git管理のハーネスは <code>git:github.com/org/pi-harness@v1</code> のように指定できます。</p>
-                  <textarea value={piPackages} onChange={event => { setPiPackages(event.target.value); setDirty(true) }} rows={4} placeholder={'git:github.com/org/pi-harness@v1'} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-white" />
-                </div>
-              </div>
-            </div>}
-            {active.slug === 'environment' && <div className="space-y-5">
-{/* Environment Variables */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      環境変数
-                    </label>
-                    <div className="space-y-2">
-                      {envPairs.map((pair, idx) => (
-                        <div key={idx} className="rounded border border-gray-200 dark:border-gray-600 p-2 space-y-1.5 bg-gray-50 dark:bg-gray-900/40">
-                          <input
-                            type="text"
-                            value={pair.key}
-                            onChange={(e) => updatePair(envPairs, setEnvPairs, idx, 'key', e.target.value)}
-                            placeholder="KEY"
-                            className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={pair.value}
-                              onChange={(e) => updatePair(envPairs, setEnvPairs, idx, 'value', e.target.value)}
-                              placeholder="value"
-                              className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => removePair(envPairs, setEnvPairs, idx)}
-                              className="shrink-0 p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => addPair(setEnvPairs)}
-                        className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                        </svg>
-                        追加
-                      </button>
-                    </div>
-                  </div>
-
-                  
-            </div>}
-            {active.slug === 'system-prompt' && <div className="space-y-5">
-              <div>
-                <label htmlFor="session-profile-system-prompt" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  エージェントへの指示
-                </label>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                  セッション起動時に、選択されたエージェントが読み込む指示ファイルとして配置します。Claude では CLAUDE.md、それ以外の対応エージェントでは AGENTS.md が使用されます。
-                </p>
-                <textarea
-                  id="session-profile-system-prompt"
-                  value={systemPrompt}
-                  onChange={event => setSystemPrompt(event.target.value)}
-                  rows={18}
-                  placeholder={'# Instructions\n\nこのセッションでエージェントが従う指示を入力してください。'}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <label htmlFor="session-profile-system-prompt-mode" className="mt-4 block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  ベースプロファイルの指示
-                </label>
-                <select
-                  id="session-profile-system-prompt-mode"
-                  value={systemPromptMode}
-                  onChange={event => setSystemPromptMode(event.target.value as 'override' | 'append')}
-                  disabled={!sourceProfileId}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="override">上書きする</option>
-                  <option value="append">後ろに追記する</option>
-                </select>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {sourceProfileId ? '追記では、ベースプロファイルの指示の後ろにこの内容を追加します。' : '空欄の場合は、エージェントイメージに含まれる既定の指示を使用します。'}
-                </p>
-              </div>
-            </div>}
-            {active.slug === 'secrets' && <div className="space-y-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">参照するシークレット</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                  このプロファイルで開始するセッションへ投影するシークレットを選択します。値は表示されません。
-                </p>
-                {availableSecrets.length === 0 ? (
-                  <div className="rounded-lg bg-gray-50 py-8 text-center text-sm text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-                    利用できるシークレットがありません。設定の「シークレット」から追加してください。
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {availableSecrets.map(secret => {
-                      const checked = selectedSecretIds.includes(secret.id)
-                      return <label key={secret.id} className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600">
-                        <input type="checkbox" checked={checked} onChange={() => {
-                          setSelectedSecretIds(ids => checked ? ids.filter(id => id !== secret.id) : [...ids, secret.id])
-                          setDirty(true)
-                        }} className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                        <span className="min-w-0"><span className="block text-sm font-medium text-gray-900 dark:text-white">{secret.name}</span><span className="mt-0.5 block truncate text-xs text-gray-500">キー: {secret.keys.join(', ')}</span></span>
-                      </label>
-                    })}
-                  </div>
-                )}
-                {selectedSecretIds.length === 0 && availableSecrets.length > 0 && <p className="mt-3 text-xs text-gray-500">未選択の場合、既存プロファイルとの互換性のため、この設定スコープで投影が設定されたすべてのシークレットを使用します。</p>}
-              </div>
-            </div>}
-            {active.slug === 'files' && <div className="space-y-5">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">事前配置リポジトリ</label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">エージェントの起動前に clone するリポジトリと配置先を指定します。メインの作業リポジトリは変更しません。</p>
-                    {profileRepositories.length === 0 && <p className="text-xs text-gray-400 dark:text-gray-500">登録済みリポジトリはありません。</p>}
-                    <div className="space-y-3">
-                      {profileRepositories.map((repository, idx) => (
-                        <div key={idx} className="rounded border border-gray-200 dark:border-gray-600 p-3 space-y-2 bg-gray-50 dark:bg-gray-900/40">
-                          <div className="flex items-end gap-2">
-                            <div className="min-w-0 flex-1">
-                              <label htmlFor={`profile-repository-${idx}-name`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">リポジトリ</label>
-                              <input id={`profile-repository-${idx}-name`} value={repository.repository} onChange={e => updateProfileRepository(idx, 'repository', e.target.value)} placeholder="owner/repository" className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 font-mono" />
-                            </div>
-                            <button type="button" aria-label={`リポジトリ ${idx + 1} を削除`} onClick={() => removeProfileRepository(idx)} className="p-1 text-gray-400 hover:text-red-500">×</button>
-                          </div>
-                          <div>
-                            <label htmlFor={`profile-repository-${idx}-path`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">配置先</label>
-                            <input id={`profile-repository-${idx}-path`} value={repository.path} onChange={e => updateProfileRepository(idx, 'path', e.target.value)} placeholder="/home/agentapi/workdir/shared" className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 font-mono" />
-                          </div>
-                          <div>
-                            <label htmlFor={`profile-repository-${idx}-branch`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">ブランチ（任意）</label>
-                            <input id={`profile-repository-${idx}-branch`} value={repository.branch || ''} onChange={e => updateProfileRepository(idx, 'branch', e.target.value)} placeholder="main" className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 font-mono" />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <button type="button" onClick={addProfileRepository} className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800">リポジトリを追加</button>
-                  </div>
-                  <div>
-                    <label htmlFor="profile-repository-connection" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">トークンコネクション</label>
-                    <select id="profile-repository-connection" value={connectionId} onChange={event => { setConnectionId(event.target.value); setDirty(true) }} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700">
-                      <option value="">リポジトリ owner から自動選択</option>
-                      {linkedConnections.map(identity => <option key={identity.id} value={identity.connection_id}>{identity.connection_name} ({identity.login})</option>)}
-                    </select>
-                    <p className="mt-1 text-xs text-gray-500">この connection の token をメインリポジトリと事前配置リポジトリの clone に使用します。</p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      登録ファイル
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      このプロファイルでセッション起動時に配置するファイルを登録します。パスは絶対パスで指定してください。
-                    </p>
-                    {profileFiles.length === 0 && (
-                      <p className="text-xs text-gray-400 dark:text-gray-500">登録済みファイルはありません。</p>
-                    )}
-                    <div className="space-y-3">
-                      {profileFiles.map((file, idx) => (
-                        <div key={idx} className="rounded border border-gray-200 dark:border-gray-600 p-3 space-y-2 bg-gray-50 dark:bg-gray-900/40">
-                          <div className="flex items-end gap-2">
-                            <div className="min-w-0 flex-1">
-                              <label htmlFor={`profile-file-${idx}-name`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">表示名</label>
-                              <input
-                                type="text"
-                                id={`profile-file-${idx}-name`}
-                                value={file.name || ''}
-                                onChange={e => updateProfileFile(idx, 'name', e.target.value)}
-                                placeholder="SSH 鍵"
-                                className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              aria-label={`ファイル ${idx + 1} を削除`}
-                              onClick={() => removeProfileFile(idx)}
-                              className="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </div>
-                          <div>
-                            <label htmlFor={`profile-file-${idx}-path`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">配置パス</label>
-                            <input
-                              type="text"
-                              id={`profile-file-${idx}-path`}
-                              value={file.path}
-                              onChange={e => updateProfileFile(idx, 'path', e.target.value)}
-                              placeholder="/home/agentapi/.ssh/id_rsa"
-                              className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor={`profile-file-${idx}-content`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">内容</label>
-                            <textarea
-                              id={`profile-file-${idx}-content`}
-                              value={file.content || ''}
-                              onChange={e => updateProfileFile(idx, 'content', e.target.value)}
-                              rows={4}
-                              className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono resize-y focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor={`profile-file-${idx}-permissions`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">パーミッション</label>
-                            <input
-                              type="text"
-                              id={`profile-file-${idx}-permissions`}
-                              value={file.permissions || ''}
-                              onChange={e => updateProfileFile(idx, 'permissions', e.target.value)}
-                              placeholder="0600"
-                              className="w-24 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={addProfileFile}
-                      className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
-                    >
-                      ファイルを追加
-                    </button>
-                  </div>
-{/* 同期しないファイルパス */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      同期しないファイルパス
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      変更を保存先へ同期しない管理ファイルのパスを 1 行に 1 つ指定します。
-                    </p>
-                    <textarea
-                      value={unsyncedFilePaths}
-                      onChange={e => setUnsyncedFilePaths(e.target.value)}
-                      placeholder="/home/agentapi/.codex/auth.json"
-                      rows={3}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white font-mono resize-y"
-                    />
-                  </div>
-
-            </div>}
-            {active.slug === 'tags' && <div className="space-y-5">
-{/* Tags */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      タグ
-                    </label>
-                    <div className="space-y-2">
-                      {tagPairs.map((pair, idx) => (
-                        <div key={idx} className="rounded border border-gray-200 dark:border-gray-600 p-2 space-y-1.5 bg-gray-50 dark:bg-gray-900/40">
-                          <input
-                            type="text"
-                            value={pair.key}
-                            onChange={(e) => updatePair(tagPairs, setTagPairs, idx, 'key', e.target.value)}
-                            placeholder="key"
-                            className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={pair.value}
-                              onChange={(e) => updatePair(tagPairs, setTagPairs, idx, 'value', e.target.value)}
-                              placeholder="value"
-                              className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => removePair(tagPairs, setTagPairs, idx)}
-                              className="shrink-0 p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => addPair(setTagPairs)}
-                        className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                        </svg>
-                        追加
-                      </button>
-                    </div>
-                  </div>
-
-
-            </div>}
-            {active.slug === 'pool' && <div className="space-y-5">
-{/* Session Runner Pool */}
-                  <div>
-                    <label htmlFor="session-profile-pool" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Session Runner Pool
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      このプロファイルで作成するセッションの実行先Poolを指定します。空欄の場合は自動選択されます。
-                    </p>
-                    <select
-                      id="session-profile-pool"
-                      value={pool}
-                      onChange={(e) => setPool(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-                    >
-                      <option value="">自動選択</option>
-                      {pool && !availablePools.some((availablePool) => availablePool.name === pool) && (
-                        <option value={pool}>{pool}（現在の設定）</option>
-                      )}
-                      {availablePools.map((availablePool) => (
-                        <option key={availablePool.name} value={availablePool.name}>
-                          {availablePool.name}
-                        </option>
-                      ))}
-                    </select>
-                    {availablePools.length === 0 && (
-                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                        選択可能なPool候補がありません。
-                      </p>
-                    )}
-                  </div>
-
-                  
-            </div>}
-            {active.slug === 'runtime' && <div className="space-y-5">
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <label htmlFor="session-profile-command-wrapper" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    コマンドラッパー
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => { setCommandWrapperTemplate(value => `${value}${value && !value.endsWith('\n') ? '\n' : ''}exec {{ .Command }}`); setDirty(true) }}
-                    className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                  >
-                    {'{{ .Command }}'} を挿入
-                  </button>
-                </div>
-                <textarea
-                  id="session-profile-command-wrapper"
-                  value={commandWrapperTemplate}
-                  onChange={e => { setCommandWrapperTemplate(e.target.value); setDirty(true) }}
-                  placeholder={'#!/bin/sh\nset -eu\nexec env PROFILE=development {{ .Command }}'}
-                  rows={7}
-                  className="w-full rounded-md border border-gray-300 bg-white p-2 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-                />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Go template として保存され、shell quote 済みの既定コマンドを <code>{'{{ .Command }}'}</code> に1回挿入します。signal を正しく転送するため <code>exec</code> の使用を推奨します。
-                </p>
-              </div>
-            </div>}
-            {active.slug === 'sandbox' && <div className="space-y-5">
-{/* Network Sandbox */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      sandbox policy
-                    </label>
-                    <select
-                      value={sandboxPolicyId}
-                      onChange={(e) => setSandboxPolicyId(e.target.value)}
-                      className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                    >
-                      <option value="">ポリシーなし（count mode）</option>
-                      {sandboxPolicies.map((policy) => (
-                        <option key={policy.id} value={policy.id}>
-                          {policy.name}{policy.scope === 'team' ? ' [チーム]' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    {sandboxPolicies.length === 0 && (
-                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                        適用できる sandbox policy がありません。count mode で起動します。
-                      </p>
-                    )}
-                  </div>
-
-                  
-            </div>}
-            {active.slug === 'docker' && <div className="space-y-5">
-{/* Docker in Docker (DinD) */}
-                  <div>
-                    <label className="flex items-start gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={dockerEnabled}
-                        onChange={(e) => setDockerEnabled(e.target.checked)}
-                        className="mt-0.5 h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                      />
-                      <div>
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          Docker in Docker (DinD) を有効にする
-                        </span>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                          セッション Pod に docker:dind サイドカーを追加し、<code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">DOCKER_HOST</code> を自動設定します。
-                        </p>
-                      </div>
-                    </label>
-
-                    {dockerEnabled && (
-                      <div className="mt-3 ml-6 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium text-gray-600 dark:text-gray-400">認証済みレジストリ（任意）</span>
-                          <button
-                            type="button"
-                            onClick={addDockerRegistry}
-                            className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700"
-                          >
-                            + 追加
-                          </button>
-                        </div>
-                        {dockerRegistries.length === 0 && (
-                          <p className="text-xs text-gray-400 dark:text-gray-500">
-                            認証不要な場合は追加不要です。
-                          </p>
-                        )}
-                        {dockerRegistries.map((registry, index) => (
-                          <div key={index} className="border border-gray-200 dark:border-gray-600 rounded-lg p-3 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-medium text-gray-600 dark:text-gray-400">レジストリ #{index + 1}</span>
-                              <button
-                                type="button"
-                                onClick={() => removeDockerRegistry(index)}
-                                className="text-xs text-red-500 hover:text-red-600"
-                              >
-                                削除
-                              </button>
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">サーバー（空 = Docker Hub）</label>
-                              <input
-                                type="text"
-                                value={registry.server}
-                                onChange={e => updateDockerRegistry(index, 'server', e.target.value)}
-                                placeholder="ghcr.io"
-                                className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                              />
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                id={`insecure-${index}`}
-                                checked={registry.insecure}
-                                onChange={e => updateDockerRegistry(index, 'insecure', e.target.checked)}
-                                className="w-3 h-3 rounded"
-                              />
-                              <label htmlFor={`insecure-${index}`} className="text-xs text-gray-500 dark:text-gray-400">HTTP（insecure）レジストリ</label>
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">K8s Secret 名（docker config JSON）</label>
-                              <input
-                                type="text"
-                                value={registry.secretName}
-                                onChange={e => updateDockerRegistry(index, 'secretName', e.target.value)}
-                                placeholder="my-registry-secret"
-                                className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                              />
-                            </div>
-                            {!registry.secretName && (
-                              <>
-                                <div>
-                                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">ユーザー名</label>
-                                  <input
-                                    type="text"
-                                    value={registry.username}
-                                    onChange={e => updateDockerRegistry(index, 'username', e.target.value)}
-                                    placeholder="myuser"
-                                    className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">パスワード / アクセストークン</label>
-                                  <input
-                                    type="password"
-                                    value={registry.password}
-                                    onChange={e => updateDockerRegistry(index, 'password', e.target.value)}
-                                    placeholder="••••••••"
-                                    className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                                  />
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  
-            </div>}
-            {active.slug === 'lifecycle' && <div className="space-y-5">
-{/* セッション TTL */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      セッション自動削除 TTL
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      処理が終了してからこの時間が経過するとセッションを自動削除します。実行中は削除されず、次の処理が終了すると再計測します。例: <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">24h</code>、<code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">168h</code>（空欄 = 自動削除なし / グローバル設定に従う）
-                    </p>
-                    <input
-                      type="text"
-                      value={sessionTTL}
-                      onChange={e => setSessionTTL(e.target.value)}
-                      placeholder="例: 24h、72h、168h"
-                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                    />
-                  </div>
-
-                  
-            </div>}
+                {error}
+              </p>
+            )}
+            <fieldset disabled={isSubmitting} className="space-y-5">
+              {active.slug === 'basic' && <ProfileBasicSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'storages' && <ProfileStoragesSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'inheritance' && (
+                <ProfileInheritanceSection {...{ ...state, editingProfile, createScope }} />
+              )}
+              {active.slug === 'authentication' && (
+                <ProfileAuthenticationSection {...{ ...state, editingProfile, createScope }} />
+              )}
+              {active.slug === 'agent' && <ProfileAgentSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'models' && <ProfileModelsSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'mcp' && <ProfileMcpSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'skills' && <ProfileSkillsSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'environment' && (
+                <ProfileEnvironmentSection {...{ ...state, editingProfile, createScope }} />
+              )}
+              {active.slug === 'system-prompt' && (
+                <ProfileSystemPromptSection {...{ ...state, editingProfile, createScope }} />
+              )}
+              {active.slug === 'secrets' && <ProfileSecretsSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'files' && <ProfileFilesSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'tags' && <ProfileTagsSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'pool' && <ProfilePoolSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'runtime' && <ProfileRuntimeSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'sandbox' && <ProfileSandboxSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'docker' && <ProfileDockerSection {...{ ...state, editingProfile, createScope }} />}
+              {active.slug === 'lifecycle' && (
+                <ProfileLifecycleSection {...{ ...state, editingProfile, createScope }} />
+              )}
             </fieldset>
             <div className="sticky bottom-0 z-30 -mx-4 mt-8 border-t border-gray-200 bg-white/90 px-4 py-3 backdrop-blur dark:border-gray-700 dark:bg-gray-900/90">
               <div className="flex flex-wrap items-center justify-end gap-3">
-                {dirty && <span role="status" className="mr-auto text-sm text-amber-600 dark:text-amber-400">未保存の変更があります</span>}
-                <button type="button" disabled={isSubmitting || !dirty} onClick={() => setResetKey(key => key + 1)} className="rounded-md border px-4 py-1.5 text-sm disabled:opacity-50">破棄</button>
-                <button type="submit" disabled={isSubmitting} className="rounded-md bg-blue-600 px-5 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{isSubmitting ? '保存中...' : isEditing ? '保存' : '作成'}</button>
+                {dirty && (
+                  <span role="status" className="mr-auto text-sm text-amber-600 dark:text-amber-400">
+                    未保存の変更があります
+                  </span>
+                )}
+                <button
+                  type="button"
+                  disabled={isSubmitting || !dirty}
+                  onClick={() => setResetKey((key) => key + 1)}
+                  className="rounded-md border px-4 py-1.5 text-sm disabled:opacity-50"
+                >
+                  破棄
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="rounded-md bg-blue-600 px-5 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {isSubmitting ? '保存中...' : isEditing ? '保存' : '作成'}
+                </button>
               </div>
             </div>
           </form>
         </div>
       </div>
-      {drawerOpen && <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="設定項目">
-        <button type="button" className="absolute inset-0 bg-black/40" aria-label="設定項目を閉じる" onClick={() => setDrawerOpen(false)} />
-        <div className="absolute inset-y-0 left-0 w-72 overflow-y-auto bg-white p-4 dark:bg-gray-900">
-          <button type="button" autoFocus aria-label="閉じる" className="mb-2 p-2" onClick={() => setDrawerOpen(false)}><X className="h-5 w-5" /></button>{nav}
+      {drawerOpen && (
+        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="設定項目">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="設定項目を閉じる"
+            onClick={() => setDrawerOpen(false)}
+          />
+          <div className="absolute inset-y-0 left-0 w-72 overflow-y-auto bg-white p-4 dark:bg-gray-900">
+            <button
+              type="button"
+              autoFocus
+              aria-label="閉じる"
+              className="mb-2 p-2"
+              onClick={() => setDrawerOpen(false)}
+            >
+              <X className="h-5 w-5" />
+            </button>
+            {nav}
+          </div>
         </div>
-      </div>}
+      )}
     </main>
   )
 }

@@ -13,7 +13,8 @@ vi.mock('../../../contexts/TeamScopeContext', () => ({ useTeamScope: () => ({ ge
 vi.mock('../../../lib/agentapi-proxy-client', () => ({ createAgentAPIProxyClientFromStorage: () => mocks }))
 vi.mock('../TopBar', () => ({ default: () => null }))
 vi.mock('../NavigationTabs', () => ({ default: () => null }))
-afterEach(() => { cleanup(); vi.clearAllMocks(); vi.restoreAllMocks() })
+let restoreConfirm: (() => void) | undefined
+afterEach(() => { cleanup(); restoreConfirm?.(); vi.clearAllMocks(); vi.restoreAllMocks() })
 
 it('lists scoped storage, creates, edits, and deletes it', async () => {
   render(<StoragesPage />)
@@ -29,7 +30,15 @@ it('lists scoped storage, creates, edits, and deletes it', async () => {
   fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(mocks.updateStorage).toHaveBeenCalledWith('one', { name: 'Renamed', description: '' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-  vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+  const confirmDescriptor = Object.getOwnPropertyDescriptor(window, 'confirm')
+  Object.defineProperty(window, 'confirm', {
+    configurable: true,
+    value: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
+  })
+  restoreConfirm = () => {
+    if (confirmDescriptor) Object.defineProperty(window, 'confirm', confirmDescriptor)
+    else Reflect.deleteProperty(window, 'confirm')
+  }
   fireEvent.click(await screen.findByRole('button', { name: '削除' }))
   expect(mocks.deleteStorage).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '削除' }))

@@ -17,8 +17,8 @@ function parseToolUseContent(content: string): ToolUseContent | null {
     if (parsed.type === 'tool_use' && parsed.name && parsed.id) {
       return parsed as ToolUseContent;
     }
-  } catch {
-    // Not a valid tool_use JSON
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
   }
   return null;
 }

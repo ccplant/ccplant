@@ -34,8 +34,8 @@ export default function SessionProfileSelect({
         const client = createAgentAPIProxyClientFromStorage()
         const response = await client.getSessionProfiles({ ...getScopeParams() })
         setProfiles(response.session_profiles || [])
-      } catch {
-        // silently ignore fetch errors
+      } catch (error) {
+        console.warn('Failed to load session profiles:', error)
       } finally {
         setLoading(false)
       }
