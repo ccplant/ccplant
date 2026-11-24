@@ -110,7 +110,10 @@ func (c *Client) RegisterNotificationHandler(method string, h NotificationHandle
 func (c *Client) Call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
 	id := c.nextID.Add(1)
 	idStr := fmt.Sprintf("%d", id)
-	idRaw, _ := json.Marshal(idStr)
+	idRaw, err := json.Marshal(idStr)
+	if err != nil {
+		return nil, fmt.Errorf("jsonrpc: marshal request id: %w", err)
+	}
 
 	paramBytes, err := json.Marshal(params)
 	if err != nil {
@@ -186,8 +189,12 @@ func (c *Client) send(msg Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.rawLog {
-		raw, _ := json.Marshal(msg)
-		log.Printf("[acp-raw-json] --> %s", raw)
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[acp-raw-json] failed to encode outbound message: %v", err)
+		} else {
+			log.Printf("[acp-raw-json] --> %s", raw)
+		}
 	}
 	return c.encoder.Encode(msg)
 }
@@ -229,7 +236,10 @@ func (c *Client) dispatch(ctx context.Context, msg *Message) {
 	// Response to one of our outgoing calls
 	case msg.ID != nil && msg.Method == "":
 		idStr := ""
-		_ = json.Unmarshal(*msg.ID, &idStr)
+		if err := json.Unmarshal(*msg.ID, &idStr); err != nil {
+			log.Printf("[jsonrpc] invalid response id: %v", err)
+			return
+		}
 		c.pendingMu.Lock()
 		ch, ok := c.pending[idStr]
 		if ok {
@@ -245,7 +255,7 @@ func (c *Client) dispatch(ctx context.Context, msg *Message) {
 		id := *msg.ID
 		h, ok := c.reqHandlers[msg.Method]
 		if !ok {
-			_ = c.Respond(id, nil, &RPCError{
+			c.respondAndLog(id, nil, &RPCError{
 				Code:    -32601,
 				Message: "Method not found: " + msg.Method,
 			})
@@ -254,10 +264,10 @@ func (c *Client) dispatch(ctx context.Context, msg *Message) {
 		go func() {
 			result, err := h(ctx, msg.Params)
 			if err != nil {
-				_ = c.Respond(id, nil, &RPCError{Code: -32000, Message: err.Error()})
+				c.respondAndLog(id, nil, &RPCError{Code: -32000, Message: err.Error()})
 				return
 			}
-			_ = c.Respond(id, result, nil)
+			c.respondAndLog(id, result, nil)
 		}()
 
 	// Notification (no id)
@@ -268,5 +278,11 @@ func (c *Client) dispatch(ctx context.Context, msg *Message) {
 		if h, ok := c.notifHandlers[msg.Method]; ok {
 			h(msg.Params)
 		}
+	}
+}
+
+func (c *Client) respondAndLog(id json.RawMessage, result interface{}, rpcErr *RPCError) {
+	if err := c.Respond(id, result, rpcErr); err != nil {
+		log.Printf("[jsonrpc] failed to send response: %v", err)
 	}
 }

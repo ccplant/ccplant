@@ -1,0 +1,8 @@
+presets = ["full"]
+include = ["**/*"]
+exclude = [
+  "frontend/docs/_book/**",
+]
+
+[scoring]
+fail_under = 80

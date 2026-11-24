@@ -5,12 +5,13 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 // Only generated configuration is removed. Conversations, workspace and arbitrary

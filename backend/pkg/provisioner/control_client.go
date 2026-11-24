@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 var (
@@ -81,7 +82,10 @@ func runSessionControlClient(ctx context.Context, client *http.Client, cfg PullC
 	if cursorPath == "" {
 		cursorPath = "/workspace/.agentapi-session-control-cursor"
 	}
-	cursorBytes, _ := os.ReadFile(cursorPath)
+	cursorBytes, err := os.ReadFile(cursorPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("[SESSION_CONTROL] Failed to read cursor: %v", err)
+	}
 	cursor := strings.TrimSpace(string(cursorBytes))
 	if cursor == "" {
 		cursor = "0-0"
@@ -141,7 +145,7 @@ func pollControlCommands(ctx context.Context, client *http.Client, cfg PullClien
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer closeutils.SafeCloseResponseBody(resp.Body) //nolint:errcheck
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, nil
 	}
@@ -200,7 +204,11 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 			SnapshotID string `json:"snapshot_id"`
 			ParkHerdr  bool   `json:"park_herdr"`
 		}
-		_ = json.Unmarshal(command.Payload, &checkpoint)
+		if len(command.Payload) > 0 {
+			if err := json.Unmarshal(command.Payload, &checkpoint); err != nil {
+				return fmt.Errorf("decode checkpoint command: %w", err)
+			}
+		}
 		if err := sessionSetupCheckpointError(os.Getenv("AGENTAPI_SESSION_ID")); err != nil {
 			return err
 		}
@@ -219,8 +227,7 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 			list := exec.CommandContext(ctx, "hc", "ls")
 			output, err := list.Output()
 			if err != nil {
-				_ = os.Remove(marker)
-				return fmt.Errorf("list herdr terminals before parking: %w", err)
+				return removeParkMarker(marker, fmt.Errorf("list herdr terminals before parking: %w", err))
 			}
 			var terminals struct {
 				Terminals []struct {
@@ -228,8 +235,7 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 				} `json:"terminals"`
 			}
 			if err := json.Unmarshal(output, &terminals); err != nil {
-				_ = os.Remove(marker)
-				return fmt.Errorf("decode herdr terminals before parking: %w", err)
+				return removeParkMarker(marker, fmt.Errorf("decode herdr terminals before parking: %w", err))
 			}
 			for _, terminal := range terminals.Terminals {
 				if terminal.Address == "" {
@@ -237,14 +243,14 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 				}
 				keep := exec.CommandContext(ctx, "hc", "keep", terminal.Address)
 				if output, err := keep.CombinedOutput(); err != nil {
-					_ = os.Remove(marker)
-					return fmt.Errorf("keep herdr terminal %s before parking: %w: %s", terminal.Address, err, strings.TrimSpace(string(output)))
+					cause := fmt.Errorf("keep herdr terminal %s before parking: %w: %s", terminal.Address, err, strings.TrimSpace(string(output)))
+					return removeParkMarker(marker, cause)
 				}
 			}
 			park := exec.CommandContext(ctx, "hc", "server", "stop")
 			if output, err := park.CombinedOutput(); err != nil {
-				_ = os.Remove(marker)
-				return fmt.Errorf("park herdr terminals: %w: %s", err, strings.TrimSpace(string(output)))
+				cause := fmt.Errorf("park herdr terminals: %w: %s", err, strings.TrimSpace(string(output)))
+				return removeParkMarker(marker, cause)
 			}
 		}
 		return nil
@@ -265,11 +271,18 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer closeutils.SafeCloseResponseBody(resp.Body) //nolint:errcheck
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("local command returned HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func removeParkMarker(marker string, cause error) error {
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(cause, fmt.Errorf("remove herdr park marker: %w", err))
+	}
+	return cause
 }
 
 func localACPSessionID(ctx context.Context, client *http.Client, base string) (string, error) {
@@ -282,7 +295,7 @@ func localACPSessionID(ctx context.Context, client *http.Client, base string) (s
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer closeutils.SafeCloseResponseBody(resp.Body) //nolint:errcheck
 	var body struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -311,7 +324,7 @@ func postControlEvents(ctx context.Context, client *http.Client, cfg PullClientC
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer closeutils.SafeCloseResponseBody(resp.Body) //nolint:errcheck
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("event upload returned HTTP %d", resp.StatusCode)
 	}
@@ -330,9 +343,9 @@ func forwardRuntimeEvents(ctx context.Context, client, localClient *http.Client,
 			resp, requestErr := localClient.Do(req)
 			if requestErr == nil && resp.StatusCode == http.StatusOK {
 				scanRuntimeEventStream(ctx, resp.Body, client, cfg)
-				_ = resp.Body.Close()
+				closeutils.SafeCloseResponseBody(resp.Body)
 			} else if resp != nil {
-				_ = resp.Body.Close()
+				closeutils.SafeCloseResponseBody(resp.Body)
 			}
 		}
 		sleepOrDone(ctx, 2*time.Second)

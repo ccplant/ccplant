@@ -3,6 +3,7 @@ package sessionsettings
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 const (
@@ -42,7 +45,7 @@ func refreshPiCloudCache(env map[string]string, outputDir string) error {
 	apiKey := env["OLLAMA_API_KEY"]
 
 	var list ollamaCloudModelList
-	if err := ollamaCloudRequest(client, http.MethodGet, baseURL+"/v1/models", apiKey, nil, &list); err != nil {
+	if err := ollamaCloudRequest(client, ollamaCloudRequestOptions{method: http.MethodGet, url: baseURL + "/v1/models", apiKey: apiKey, target: &list}); err != nil {
 		return fmt.Errorf("list models: %w", err)
 	}
 
@@ -61,7 +64,8 @@ func refreshPiCloudCache(env map[string]string, outputDir string) error {
 					continue
 				}
 				var detail json.RawMessage
-				if err := ollamaCloudRequest(client, http.MethodPost, baseURL+"/api/show", apiKey, body, &detail); err != nil {
+				options := ollamaCloudRequestOptions{method: http.MethodPost, url: baseURL + "/api/show", apiKey: apiKey, body: body, target: &detail}
+				if err := ollamaCloudRequest(client, options); err != nil {
 					continue
 				}
 				mu.Lock()
@@ -86,6 +90,10 @@ func refreshPiCloudCache(env map[string]string, outputDir string) error {
 		return fmt.Errorf("marshal cache: %w", err)
 	}
 
+	return writePiCloudCache(outputDir, cache)
+}
+
+func writePiCloudCache(outputDir string, cache []byte) (returnErr error) {
 	cacheDir := filepath.Join(outputDir, ".pi", "agent", "cache")
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return fmt.Errorf("create cache directory: %w", err)
@@ -95,14 +103,20 @@ func refreshPiCloudCache(env map[string]string, outputDir string) error {
 		return fmt.Errorf("create temporary cache: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
+	defer func() {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) && returnErr == nil {
+			returnErr = fmt.Errorf("remove temporary cache: %w", err)
+		}
+	}()
 	if err := tmp.Chmod(0600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("set cache permissions: %w", err)
+		return errors.Join(fmt.Errorf("set cache permissions: %w", err), tmp.Close())
 	}
-	if _, err := tmp.Write(cache); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write cache: %w", err)
+	written, err := tmp.Write(cache)
+	if err != nil || written != len(cache) {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		return errors.Join(fmt.Errorf("write cache: %w", err), tmp.Close())
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close cache: %w", err)
@@ -113,27 +127,36 @@ func refreshPiCloudCache(env map[string]string, outputDir string) error {
 	return nil
 }
 
-func ollamaCloudRequest(client *http.Client, method, url, apiKey string, body []byte, target any) error {
-	req, err := http.NewRequest(method, url, bytes.NewReader(body))
+type ollamaCloudRequestOptions struct {
+	method, url, apiKey string
+	body                []byte
+	target              any
+}
+
+func ollamaCloudRequest(client *http.Client, options ollamaCloudRequestOptions) error {
+	req, err := http.NewRequest(options.method, options.url, bytes.NewReader(options.body))
 	if err != nil {
 		return err
 	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+	if options.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+options.apiKey)
 	}
-	if body != nil {
+	if options.body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		message, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if err != nil {
+			return fmt.Errorf("read error response: %w", err)
+		}
 		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(message)))
 	}
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(options.target); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil

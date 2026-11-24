@@ -3,6 +3,8 @@ package utils
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -124,11 +126,19 @@ func CheckHTTPResponse(resp *http.Response, url string) error {
 
 // SafeCloseResponse safely closes HTTP response body with error logging
 func SafeCloseResponse(resp *http.Response) {
-	if resp != nil && resp.Body != nil {
-		if err := resp.Body.Close(); err != nil {
-			// Note: Using fmt.Printf since we're creating a utility package
-			// In a real application, this should use a structured logger
-			fmt.Printf("Warning: failed to close HTTP response body: %v\n", err)
-		}
+	if resp != nil {
+		SafeCloseResponseBody(resp.Body)
+	}
+}
+
+// SafeCloseResponseBody reports cleanup failures without writing into a CLI's
+// stdout response. Passing the body directly also preserves defer's receiver
+// capture semantics when a response body is subsequently wrapped or replaced.
+func SafeCloseResponseBody(body io.Closer) {
+	if body == nil {
+		return
+	}
+	if err := body.Close(); err != nil {
+		log.Printf("Warning: failed to close HTTP response body: %v", err)
 	}
 }

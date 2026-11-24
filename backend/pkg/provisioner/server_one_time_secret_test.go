@@ -4,11 +4,38 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+func TestOneTimeSecretParentRequestDoesNotUseFilterSocket(t *testing.T) {
+	t.Setenv("NETWORK_FILTER_CONTROL_SOCKET", filepath.Join(t.TempDir(), "filter.sock"))
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer runtime-token" {
+			t.Error("missing runtime credential")
+		}
+		if _, err := w.Write([]byte(`{"value":"test-value"}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer parent.Close()
+	server := New(9001, "")
+	if server.filterClient() == server.httpClient {
+		t.Fatal("filter and parent clients must be separate")
+	}
+	server.activeSettings = &sessionsettings.SessionSettings{ParentRuntime: &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: parent.URL, SessionID: "public-session", Token: "runtime-token", Generation: 4,
+	}}
+	request := httptest.NewRequest(http.MethodGet, "/one-time-secrets/secret-1", nil)
+	request.RemoteAddr = "127.0.0.1:12345"
+	response := httptest.NewRecorder()
+	server.handleOneTimeSecret(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.JSONEq(t, `{"value":"test-value"}`, response.Body.String())
+}
 
 func TestHandleOneTimeSecretProxiesWithRuntimeCredential(t *testing.T) {
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

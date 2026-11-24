@@ -15,7 +15,7 @@ import (
 func TestHasACPUserMessageMatchesExactRestoredPrompt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"messages":[{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"old prompt"}}}}]}`))
+		writeACPTestResponse(t, w, `{"messages":[{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"old prompt"}}}}]}`)
 	}))
 	defer server.Close()
 
@@ -46,7 +46,7 @@ func newMultiTurnACPServerWithRPC(t *testing.T, turns []string, rpc func(http.Re
 		switch r.URL.Path {
 		case "/messages":
 			if len(turns) == 0 {
-				_, _ = w.Write([]byte(`{"messages":[],"userPromptCount":0}`))
+				writeACPTestResponse(t, w, `{"messages":[],"userPromptCount":0}`)
 				return
 			}
 			index := len(turns) - 1
@@ -54,22 +54,31 @@ func newMultiTurnACPServerWithRPC(t *testing.T, turns []string, rpc func(http.Re
 				i, err := strconv.Atoi(q)
 				if err != nil || i < 0 || i >= len(turns) {
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = w.Write([]byte(`{"error":"out of range"}`))
+					writeACPTestResponse(t, w, `{"error":"out of range"}`)
 					return
 				}
 				index = i
 			}
-			_, _ = fmt.Fprintf(w, `{"messages":[%s],"userPromptCount":%d,"userPromptIndex":%d}`, userChunk(turns[index]), len(turns), index)
+			if _, err := fmt.Fprintf(w, `{"messages":[%s],"userPromptCount":%d,"userPromptIndex":%d}`, userChunk(turns[index]), len(turns), index); err != nil {
+				t.Errorf("write messages response: %v", err)
+			}
 		case "/status":
-			_, _ = w.Write([]byte(`{"status":"stable"}`))
+			writeACPTestResponse(t, w, `{"status":"stable"}`)
 		case "/session":
-			_, _ = w.Write([]byte(`{"sessionId":"acp-session","status":"stable"}`))
+			writeACPTestResponse(t, w, `{"sessionId":"acp-session","status":"stable"}`)
 		case "/rpc":
 			rpc(w)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+}
+
+func writeACPTestResponse(t *testing.T, w http.ResponseWriter, body string) {
+	t.Helper()
+	if _, err := w.Write([]byte(body)); err != nil {
+		t.Errorf("write ACP test response: %v", err)
+	}
 }
 
 func TestHasACPUserMessageFindsPromptInEarlierTurn(t *testing.T) {
@@ -94,7 +103,7 @@ func TestSendACPInitialMessageRestoredSkipsWhenPromptInEarlierTurn(t *testing.T)
 	server := newMultiTurnACPServer(t, []string{"initial prompt", "follow-up prompt"}, &rpcCalls)
 	defer server.Close()
 
-	sendACPInitialMessage(context.Background(), server.URL, "initial prompt", 0, true, filepath.Join(t.TempDir(), ".session", "initial-message-sent-sess-1"))
+	sendACPInitialMessage(context.Background(), initialMessageRequest{agentapiURL: server.URL, message: "initial prompt", restored: true, markerPath: filepath.Join(t.TempDir(), ".session", "initial-message-sent-sess-1")})
 
 	if got := rpcCalls.Load(); got != 0 {
 		t.Fatalf("session/prompt calls = %d, want 0", got)
@@ -106,7 +115,7 @@ func TestSendACPInitialMessageRestoredSendsWhenPromptMissing(t *testing.T) {
 	server := newMultiTurnACPServer(t, []string{"older prompt", "follow-up prompt"}, &rpcCalls)
 	defer server.Close()
 
-	sendACPInitialMessage(context.Background(), server.URL, "initial prompt", 0, true, filepath.Join(t.TempDir(), ".session", "initial-message-sent-sess-1"))
+	sendACPInitialMessage(context.Background(), initialMessageRequest{agentapiURL: server.URL, message: "initial prompt", restored: true, markerPath: filepath.Join(t.TempDir(), ".session", "initial-message-sent-sess-1")})
 
 	if got := rpcCalls.Load(); got != 1 {
 		t.Fatalf("session/prompt calls = %d, want 1", got)
@@ -142,7 +151,7 @@ func TestSendACPInitialMessageSkipsWhenOwnMarkerExists(t *testing.T) {
 	marker := initialMessageMarkerPath(home, "sess-1")
 	writeTestMarker(t, marker)
 
-	sendACPInitialMessage(context.Background(), server.URL, "initial prompt", 0, true, marker)
+	sendACPInitialMessage(context.Background(), initialMessageRequest{agentapiURL: server.URL, message: "initial prompt", restored: true, markerPath: marker})
 
 	if got := rpcCalls.Load(); got != 0 {
 		t.Fatalf("session/prompt calls = %d, want 0", got)
@@ -155,7 +164,7 @@ func TestSendACPInitialMessageSendsAndWritesMarkerWhenMissing(t *testing.T) {
 	defer server.Close()
 	marker := initialMessageMarkerPath(t.TempDir(), "sess-1")
 
-	sendACPInitialMessage(context.Background(), server.URL, "initial prompt", 0, true, marker)
+	sendACPInitialMessage(context.Background(), initialMessageRequest{agentapiURL: server.URL, message: "initial prompt", restored: true, markerPath: marker})
 
 	if got := rpcCalls.Load(); got != 1 {
 		t.Fatalf("session/prompt calls = %d, want 1", got)
@@ -175,7 +184,7 @@ func TestSendACPInitialMessageDoesNotWriteMarkerWhenSendFails(t *testing.T) {
 	defer server.Close()
 	marker := initialMessageMarkerPath(t.TempDir(), "sess-1")
 
-	sendACPInitialMessage(ctx, server.URL, "initial prompt", 0, false, marker)
+	sendACPInitialMessage(ctx, initialMessageRequest{agentapiURL: server.URL, message: "initial prompt", markerPath: marker})
 
 	if got := rpcCalls.Load(); got != 1 {
 		t.Fatalf("session/prompt calls = %d, want 1", got)
@@ -191,7 +200,7 @@ func TestSendACPInitialMessageSendsWhenOnlyAnotherSessionMarkerExists(t *testing
 	writeTestMarker(t, initialMessageMarkerPath(home, "template-source-session"))
 	marker := initialMessageMarkerPath(home, "sess-workspace")
 
-	sendACPInitialMessage(context.Background(), server.URL, "initial prompt", 0, true, marker)
+	sendACPInitialMessage(context.Background(), initialMessageRequest{agentapiURL: server.URL, message: "initial prompt", restored: true, markerPath: marker})
 
 	if got := rpcCalls.Load(); got != 1 {
 		t.Fatalf("session/prompt calls = %d, want 1", got)
@@ -205,7 +214,7 @@ func TestSendACPInitialMessageMigratesLegacyHistoryToMarker(t *testing.T) {
 	defer server.Close()
 	marker := initialMessageMarkerPath(t.TempDir(), "sess-1")
 
-	sendACPInitialMessage(context.Background(), server.URL, "initial prompt", 0, true, marker)
+	sendACPInitialMessage(context.Background(), initialMessageRequest{agentapiURL: server.URL, message: "initial prompt", restored: true, markerPath: marker})
 
 	if got := rpcCalls.Load(); got != 0 {
 		t.Fatalf("session/prompt calls = %d, want 0", got)

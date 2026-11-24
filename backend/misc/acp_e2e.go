@@ -28,8 +28,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	c := &acpClient{proxyURL: proxyURL, apiKey: apiKey}
+	runACPChecks(&acpClient{proxyURL: proxyURL, apiKey: apiKey})
+}
 
+func runACPChecks(c *acpClient) {
 	step("1. initialize")
 	initResult := must(c.call("initialize", map[string]any{
 		"protocolVersion":    1,
@@ -79,7 +81,10 @@ func main() {
 	step("6. session/load")
 	must(c.call("session/load", map[string]any{"sessionId": sessionID}))
 	fmt.Println("  OK (history replay via GET /acp/sse)")
+	runACPInteractionChecks(c, sessionID)
+}
 
+func runACPInteractionChecks(c *acpClient, sessionID string) {
 	step("7. session/prompt")
 	must(c.call("session/prompt", map[string]any{
 		"sessionId": sessionID,
@@ -135,8 +140,14 @@ func (c *acpClient) call(method string, params any) (map[string]any, error) {
 		"method":  method,
 		"params":  params,
 	}
-	body, _ := json.Marshal(req)
-	httpReq, _ := http.NewRequest(http.MethodPost, c.proxyURL+"/acp", bytes.NewReader(body))
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: encode request: %w", method, err)
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, c.proxyURL+"/acp", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("%s: create request: %w", method, err)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
@@ -164,8 +175,11 @@ func (c *acpClient) call(method string, params any) (map[string]any, error) {
 
 // sseEvents fetches GET /acp/sse and returns all data lines received within timeout.
 func (c *acpClient) sseEvents(sessionID string, timeout time.Duration) ([]string, error) {
-	req, _ := http.NewRequest(http.MethodGet,
+	req, err := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("%s/acp/sse?session_id=%s", c.proxyURL, sessionID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create SSE request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Accept", "text/event-stream")
 
@@ -214,7 +228,10 @@ func waitActive(c *acpClient, sessionID string, timeout time.Duration) string {
 // waitForPong reads SSE events and returns true if an agent_message_chunk containing
 // "PONG" is observed within timeout.
 func waitForPong(c *acpClient, sessionID string, timeout time.Duration) bool {
-	lines, _ := c.sseEvents(sessionID, timeout)
+	lines, err := c.sseEvents(sessionID, timeout)
+	if err != nil {
+		return false
+	}
 	for _, line := range lines {
 		if strings.Contains(strings.ToUpper(line), "PONG") {
 			return true
@@ -224,7 +241,10 @@ func waitForPong(c *acpClient, sessionID string, timeout time.Duration) bool {
 }
 
 func sessionAddrAndStatus(c *acpClient, sessionID string) (addr, status string) {
-	req, _ := http.NewRequest(http.MethodGet, c.proxyURL+"/search", nil)
+	req, err := http.NewRequest(http.MethodGet, c.proxyURL+"/search", nil)
+	if err != nil {
+		return "", ""
+	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -255,11 +275,16 @@ func agentapiStatus(addr string) string {
 		return ""
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
 	var st struct {
 		Status string `json:"status"`
 	}
-	_ = json.Unmarshal(b, &st)
+	if err := json.Unmarshal(b, &st); err != nil {
+		return ""
+	}
 	return st.Status
 }
 

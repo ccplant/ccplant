@@ -106,8 +106,9 @@ func TestStorageSyncUploadsFilesPresentBeforeWorkerStarts(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancellation performs a final sync without waiting for the ticker
-	runOneStorageSync(ctx, server.Client(), server.URL, "secret", sessionsettings.StorageAttachment{
-		StorageID: "storage-1", StoragePath: "workspace", MountPath: mount, Kind: "object_snapshot",
+	runOneStorageSync(ctx, storageSyncWorker{
+		connection: storageConnection{client: server.Client(), endpoint: server.URL, apiKey: "secret"},
+		storage:    sessionsettings.StorageAttachment{StorageID: "storage-1", StoragePath: "workspace", MountPath: mount, Kind: "object_snapshot"},
 	})
 	require.EqualValues(t, 1, uploads.Load())
 }

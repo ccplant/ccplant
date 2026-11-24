@@ -3,7 +3,9 @@ package provisioner
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -60,44 +62,19 @@ func startModelEndpointRelay(c *modelprovider.Connection, agent string, env map[
 	if err := c.Validate(agent); err != nil {
 		return "", nil, err
 	}
-	upstream, _ := url.Parse(c.BaseURL)
+	upstream, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return "", nil, fmt.Errorf("parse model endpoint URL: %w", err)
+	}
 	fixedPath := "/responses"
 	if agent == "claude" {
 		fixedPath = "/v1/messages"
 	}
 	prefix := strings.TrimRight(upstream.Path, "/")
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// Use the same outbound proxy and CA configuration as the session process.
-	// Do not rely on ProxyFromEnvironment's globally cached parent environment.
-	lookup := func(keys ...string) string {
-		for _, key := range keys {
-			if value, ok := env[key]; ok {
-				return value
-			}
-		}
-		for _, key := range keys {
-			if value := os.Getenv(key); value != "" {
-				return value
-			}
-		}
-		return ""
+	transport, err := newModelEndpointTransport(env)
+	if err != nil {
+		return "", nil, err
 	}
-	proxyConfig := &httpproxy.Config{HTTPProxy: lookup("HTTP_PROXY", "http_proxy"), HTTPSProxy: lookup("HTTPS_PROXY", "https_proxy"), NoProxy: lookup("NO_PROXY", "no_proxy")}
-	proxyFunc := proxyConfig.ProxyFunc()
-	transport.Proxy = func(r *http.Request) (*url.URL, error) { return proxyFunc(r.URL) }
-	roots, _ := x509.SystemCertPool()
-	if roots == nil {
-		roots = x509.NewCertPool()
-	}
-	for _, key := range []string{"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"} {
-		if file := lookup(key); file != "" {
-			pem, err := os.ReadFile(file)
-			if err != nil || !roots.AppendCertsFromPEM(pem) {
-				return "", nil, fmt.Errorf("invalid model endpoint CA configuration")
-			}
-		}
-	}
-	transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	endpointPath := c.EndpointPath
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
@@ -120,15 +97,64 @@ func startModelEndpointRelay(c *modelprovider.Connection, agent string, env map[
 			http.Error(w, "compatible API endpoint unavailable", http.StatusBadGateway)
 		},
 	}
+	return serveModelEndpointRelay(proxy, transport)
+}
+
+func newModelEndpointTransport(env map[string]string) (*http.Transport, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Use the same outbound proxy and CA configuration as the session process.
+	// Do not rely on ProxyFromEnvironment's globally cached parent environment.
+	lookup := func(keys ...string) string {
+		for _, key := range keys {
+			if value, ok := env[key]; ok {
+				return value
+			}
+		}
+		for _, key := range keys {
+			if value := os.Getenv(key); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	proxyConfig := &httpproxy.Config{HTTPProxy: lookup("HTTP_PROXY", "http_proxy"), HTTPSProxy: lookup("HTTPS_PROXY", "https_proxy"), NoProxy: lookup("NO_PROXY", "no_proxy")}
+	proxyFunc := proxyConfig.ProxyFunc()
+	transport.Proxy = func(r *http.Request) (*url.URL, error) { return proxyFunc(r.URL) }
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("load system CA pool: %w", err)
+	}
+	if roots == nil {
+		roots = x509.NewCertPool()
+	}
+	for _, key := range []string{"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"} {
+		if file := lookup(key); file != "" {
+			pem, err := os.ReadFile(file)
+			if err != nil || !roots.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("invalid model endpoint CA configuration")
+			}
+		}
+	}
+	transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	return transport, nil
+}
+
+func serveModelEndpointRelay(proxy http.Handler, transport *http.Transport) (string, func(), error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to listen for model endpoint relay")
 	}
 	server := &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = server.Serve(listener) }()
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("[PROVISIONER] Model endpoint relay stopped unexpectedly: %v", err)
+		}
+	}()
 	stop := func() {
 		// Close active streams as well when the supervised agent exits.
-		_ = server.Close()
+		if err := server.Close(); err != nil {
+			log.Printf("[PROVISIONER] Failed to close model endpoint relay: %v", err)
+		}
 		transport.CloseIdleConnections()
 	}
 	return "http://" + listener.Addr().String(), stop, nil

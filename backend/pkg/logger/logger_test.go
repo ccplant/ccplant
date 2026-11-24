@@ -8,16 +8,10 @@ import (
 
 func TestLogger(t *testing.T) {
 	// Create temporary directory for testing
-	tmpDir, err := os.MkdirTemp("", "logger-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	// Set LOG_DIR environment variable
-	originalLogDir := os.Getenv("LOG_DIR")
-	_ = os.Setenv("LOG_DIR", tmpDir)
-	defer func() { _ = os.Setenv("LOG_DIR", originalLogDir) }()
+	t.Setenv("LOG_DIR", tmpDir)
 
 	logger := NewLogger()
 
@@ -25,7 +19,7 @@ func TestLogger(t *testing.T) {
 	sessionID := "test-session-123"
 	repository := "owner/repo"
 
-	err = logger.LogSessionStart(sessionID, repository)
+	err := logger.LogSessionStart(sessionID, repository)
 	if err != nil {
 		t.Fatalf("Failed to log session start: %v", err)
 	}

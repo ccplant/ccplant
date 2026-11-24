@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 	"io"
 	"net/http"
 	"net/url"
@@ -51,7 +52,7 @@ func (c *Client) ListSchedules(ctx context.Context, opts *ListSchedulesOptions) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -85,7 +86,7 @@ func (c *Client) GetSchedule(ctx context.Context, id string) (json.RawMessage, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -123,7 +124,7 @@ func (c *Client) CreateSchedule(ctx context.Context, data []byte) (json.RawMessa
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -162,7 +163,7 @@ func (c *Client) ApplySchedule(ctx context.Context, id string, data []byte) (jso
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -200,7 +201,7 @@ func (c *Client) DeleteSchedule(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"net/http"
 	"net/url"
+
+	"github.com/google/uuid"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 type SessionRestartStatus struct {
@@ -46,7 +48,7 @@ func (c *Client) SessionLifecycle(ctx context.Context, id, action string, reload
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer closeutils.SafeCloseResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("session %s failed: HTTP %d", action, resp.StatusCode)
 	}

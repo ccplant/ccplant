@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 type PullClientConfig struct {
@@ -60,7 +61,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 	}
 	srv.SetRestartSettingsHandler(func(settings *sessionsettings.SessionSettings) {
 		if settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
-			go runDirectRuntimeClient(ctx, client.Transport, settings.ParentRuntime, cfg.PodName, srv.port)
+			go runDirectRuntimeClient(ctx, client.Transport, settings.ParentRuntime, directRuntimeIdentity{cfg.PodName, srv.port})
 		}
 	})
 	if cfg.RunnerPool != "" {
@@ -92,7 +93,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 			continue
 		}
 		if runtime := provisionReq.Settings.ParentRuntime; runtime != nil && runtime.Enabled {
-			go runDirectRuntimeClient(ctx, client.Transport, runtime, cfg.PodName, srv.port)
+			go runDirectRuntimeClient(ctx, client.Transport, runtime, directRuntimeIdentity{cfg.PodName, srv.port})
 		}
 
 		srv.SetStatusReporter(func(st Status, msg, errorCode string) {
@@ -206,7 +207,7 @@ func runRunnerClaimClient(ctx context.Context, srv *Server, client *http.Client,
 			continue
 		}
 		applyRunnerClaimParent(claim, cfg.ProxyURL)
-		go runDirectRuntimeClient(ctx, client.Transport, claim.Settings.ParentRuntime, cfg.RunnerID, srv.port)
+		go runDirectRuntimeClient(ctx, client.Transport, claim.Settings.ParentRuntime, directRuntimeIdentity{cfg.RunnerID, srv.port})
 		if err := ackRunnerClaim(ctx, client, cfg, claim.Allocation.SessionID, claim.LeaseID); err != nil {
 			return fmt.Errorf("ack runner claim: %w", err)
 		}
@@ -261,7 +262,7 @@ func pollRunnerClaim(ctx context.Context, client *http.Client, cfg PullClientCon
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer closeutils.SafeCloseResponseBody(resp.Body) //nolint:errcheck
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, false, nil
 	}
@@ -298,7 +299,7 @@ func postRunnerJSON(ctx context.Context, client *http.Client, cfg PullClientConf
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer closeutils.SafeCloseResponseBody(resp.Body) //nolint:errcheck
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("POST %s returned HTTP %d", path, resp.StatusCode)
 	}
@@ -377,7 +378,7 @@ func pollProvisionRequest(ctx context.Context, client *http.Client, cfg PullClie
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer closeutils.SafeCloseResponseBody(resp.Body) //nolint:errcheck
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, false, nil
 	}
@@ -389,66 +390,4 @@ func pollProvisionRequest(ctx context.Context, client *http.Client, cfg PullClie
 		return nil, false, err
 	}
 	return &provisionReq, true, nil
-}
-
-func reportProvisionRequestStatus(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg string) error {
-	return reportProvisionRequestStatusWithCode(ctx, client, cfg, requestID, st, msg, "")
-}
-
-func reportProvisionRequestStatusWithCode(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg, errorCode string) error {
-	path := "/internal/session-provisioners/" + url.PathEscape(cfg.SessionID) + "/provision-requests/" + url.PathEscape(requestID) + "/status"
-	return postJSON(ctx, client, cfg, path, map[string]interface{}{
-		"status":     string(st),
-		"message":    msg,
-		"error_code": errorCode,
-		"pod_name":   cfg.PodName,
-	})
-}
-
-func postJSON(ctx context.Context, client *http.Client, cfg PullClientConfig, path string, body interface{}) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.ProxyURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	authorizePullRequest(req, cfg)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &httpStatusError{method: http.MethodPost, path: path, status: resp.StatusCode}
-	}
-	return nil
-}
-
-type httpStatusError struct {
-	method string
-	path   string
-	status int
-}
-
-func (e *httpStatusError) Error() string {
-	return fmt.Sprintf("%s %s returned HTTP %d", e.method, e.path, e.status)
-}
-
-func authorizePullRequest(req *http.Request, cfg PullClientConfig) {
-	if cfg.UpstreamAuthToken != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.UpstreamAuthToken)
-		req.Header.Set("X-Session-Manager-Token", cfg.Token)
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
-}
-
-func sleepOrDone(ctx context.Context, d time.Duration) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(d):
-	}
 }

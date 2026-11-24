@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -23,40 +25,46 @@ func AtomicWriteFile(filePath string, data []byte, perm os.FileMode) error {
 	}
 
 	// Write data
-	_, writeErr := file.Write(data)
+	written, writeErr := file.Write(data)
+	if writeErr == nil && written != len(data) {
+		writeErr = io.ErrShortWrite
+	}
 
 	// Close file
 	closeErr := file.Close()
 
 	// Check for write error
 	if writeErr != nil {
-		// Clean up temporary file on write error
-		_ = os.Remove(tempFile)
-		return fmt.Errorf("failed to write to temporary file %s: %w", tempFile, writeErr)
+		cause := fmt.Errorf("failed to write to temporary file %s: %w", tempFile, writeErr)
+		return cleanupAtomicFile(tempFile, cause)
 	}
 
 	// Check for close error
 	if closeErr != nil {
-		// Clean up temporary file on close error
-		_ = os.Remove(tempFile)
-		return fmt.Errorf("failed to close temporary file %s: %w", tempFile, closeErr)
+		cause := fmt.Errorf("failed to close temporary file %s: %w", tempFile, closeErr)
+		return cleanupAtomicFile(tempFile, cause)
 	}
 
 	// Set file permissions
 	if err := os.Chmod(tempFile, perm); err != nil {
-		// Clean up temporary file on chmod error
-		_ = os.Remove(tempFile)
-		return fmt.Errorf("failed to set permissions on temporary file %s: %w", tempFile, err)
+		cause := fmt.Errorf("failed to set permissions on temporary file %s: %w", tempFile, err)
+		return cleanupAtomicFile(tempFile, cause)
 	}
 
 	// Atomically move temporary file to final location
 	if err := os.Rename(tempFile, filePath); err != nil {
-		// Clean up temporary file on rename error
-		_ = os.Remove(tempFile)
-		return fmt.Errorf("failed to rename temporary file %s to %s: %w", tempFile, filePath, err)
+		cause := fmt.Errorf("failed to rename temporary file %s to %s: %w", tempFile, filePath, err)
+		return cleanupAtomicFile(tempFile, cause)
 	}
 
 	return nil
+}
+
+func cleanupAtomicFile(path string, cause error) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(cause, fmt.Errorf("failed to remove temporary file %s: %w", path, err))
+	}
+	return cause
 }
 
 // SafeClose safely closes a file with error logging

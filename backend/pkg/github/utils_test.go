@@ -1,9 +1,6 @@
 package github
 
-import (
-	"os"
-	"testing"
-)
+import "testing"
 
 func TestExtractRepositoryHostname(t *testing.T) {
 	tests := []struct {
@@ -166,22 +163,7 @@ func TestGetAPIBase(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original env value
-			originalValue := os.Getenv("GITHUB_API")
-			defer func() {
-				if originalValue != "" {
-					_ = os.Setenv("GITHUB_API", originalValue)
-				} else {
-					_ = os.Unsetenv("GITHUB_API")
-				}
-			}()
-
-			// Set test env value
-			if tt.envValue != "" {
-				_ = os.Setenv("GITHUB_API", tt.envValue)
-			} else {
-				_ = os.Unsetenv("GITHUB_API")
-			}
+			t.Setenv("GITHUB_API", tt.envValue)
 
 			result := GetAPIBase()
 			if result != tt.expected {
@@ -211,22 +193,7 @@ func TestGetGitHubURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original env value
-			originalValue := os.Getenv("GITHUB_URL")
-			defer func() {
-				if originalValue != "" {
-					_ = os.Setenv("GITHUB_URL", originalValue)
-				} else {
-					_ = os.Unsetenv("GITHUB_URL")
-				}
-			}()
-
-			// Set test env value
-			if tt.envValue != "" {
-				_ = os.Setenv("GITHUB_URL", tt.envValue)
-			} else {
-				_ = os.Unsetenv("GITHUB_URL")
-			}
+			t.Setenv("GITHUB_URL", tt.envValue)
 
 			result := GetGitHubURL()
 			if result != tt.expected {
@@ -316,21 +283,7 @@ func TestCreateAuthenticatedURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set GitHub URL environment variable
-			originalValue := os.Getenv("GITHUB_URL")
-			defer func() {
-				if originalValue != "" {
-					_ = os.Setenv("GITHUB_URL", originalValue)
-				} else {
-					_ = os.Unsetenv("GITHUB_URL")
-				}
-			}()
-
-			if tt.githubURL != "" {
-				_ = os.Setenv("GITHUB_URL", tt.githubURL)
-			} else {
-				_ = os.Unsetenv("GITHUB_URL")
-			}
+			t.Setenv("GITHUB_URL", tt.githubURL)
 
 			result, err := CreateAuthenticatedURL(tt.repoURL, tt.token)
 			if tt.expectErr {

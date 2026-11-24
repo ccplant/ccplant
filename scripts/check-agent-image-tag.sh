@@ -6,7 +6,7 @@ tag=$("$repo_root/scripts/agent-image-tag.sh")
 image="ghcr.io/ccplant/ccplant-agent:$tag"
 files=(
   backend/Dockerfile
-  backend/pkg/config/config.go
+  backend/pkg/config/config_integration_types.go
   backend/helm/agentapi-proxy/values.yaml
   chart/session-manager/values.yaml
 )

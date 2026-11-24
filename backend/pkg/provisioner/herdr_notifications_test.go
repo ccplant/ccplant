@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	testassert "github.com/stretchr/testify/assert"
 )
 
 func TestRunHerdrNotificationBridgeSendsACPPrompt(t *testing.T) {
@@ -22,7 +24,7 @@ func TestRunHerdrNotificationBridgeSendsACPPrompt(t *testing.T) {
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case http.MethodGet + " /session":
-			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": "acp-session"})
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"sessionId": "acp-session"}))
 		case http.MethodPost + " /rpc":
 			if err := json.NewDecoder(r.Body).Decode(&rpcBody); err != nil {
 				t.Fatal(err)

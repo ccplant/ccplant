@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 	"io"
 	"net/http"
 	"net/url"
@@ -94,7 +95,7 @@ func (c *Client) localUserRequest(ctx context.Context, method, path string, inpu
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode != expected {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, b)

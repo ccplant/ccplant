@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 	"io"
 	"net/http"
 	"net/url"
@@ -55,7 +56,7 @@ func (c *Client) ListWebhooks(ctx context.Context, opts *ListWebhooksOptions) (j
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -89,7 +90,7 @@ func (c *Client) GetWebhook(ctx context.Context, id string) (json.RawMessage, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -127,7 +128,7 @@ func (c *Client) CreateWebhook(ctx context.Context, data []byte) (json.RawMessag
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -166,7 +167,7 @@ func (c *Client) ApplyWebhook(ctx context.Context, id string, data []byte) (json
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -204,7 +205,7 @@ func (c *Client) DeleteWebhook(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -242,7 +243,7 @@ func (c *Client) RegenerateWebhookSecret(ctx context.Context, id string) (json.R
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

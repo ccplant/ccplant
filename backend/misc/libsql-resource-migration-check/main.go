@@ -9,6 +9,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -71,7 +73,11 @@ func main() {
 		fatal(err)
 	}
 	db := sql.OpenDB(connector)
-	defer func() { _ = db.Close() }()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("close database: %v", err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -116,9 +122,12 @@ func snapshot(ctx context.Context, db *sql.DB, output string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("close snapshot: %v", err)
+		}
+	}()
 	writer := bufio.NewWriter(file)
-	defer func() { _ = writer.Flush() }()
 
 	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {
@@ -128,8 +137,7 @@ func snapshot(ctx context.Context, db *sql.DB, output string) error {
 	for rows.Next() {
 		var table string
 		if err := rows.Scan(&table); err != nil {
-			_ = rows.Close()
-			return err
+			return errors.Join(err, rows.Close())
 		}
 		tables = append(tables, table)
 	}
@@ -156,7 +164,11 @@ func snapshotTable(ctx context.Context, db *sql.DB, table string, encoder *json.
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("close table rows: %v", err)
+		}
+	}()
 	columns, err := rows.Columns()
 	if err != nil {
 		return err
@@ -211,16 +223,22 @@ func prepare(ctx context.Context, db *sql.DB, namespace string) error {
 			return err
 		}
 		value := []byte(fmt.Sprintf("%s:%s", markerValue, resource.table))
-		_, err = db.ExecContext(ctx, `INSERT INTO agentapi_kv
+		result, execErr := db.ExecContext(ctx, `INSERT INTO agentapi_kv
 (kind, namespace, key, version, value, updated_at, owner_scope, metadata)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, resource.kind, namespace, resource.key, index+11, value,
 			time.Now().UTC().Format(time.RFC3339Nano), "verification", metadata)
+		if execErr != nil {
+			return fmt.Errorf("prepare %s: %w", resource.table, execErr)
+		}
+		affected, err := result.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("prepare %s: %w", resource.table, err)
+			return fmt.Errorf("inspect prepared %s row count: %w", resource.table, err)
+		}
+		if affected != 1 {
+			return fmt.Errorf("prepare %s affected %d rows, expected 1", resource.table, affected)
 		}
 	}
-	fmt.Printf("prepared %d resource fixtures in %s\n", len(resources), namespace)
-	return nil
+	return writeStatus("prepared %d resource fixtures in %s\n", len(resources), namespace)
 }
 
 func verify(ctx context.Context, db *sql.DB, namespace string) error {
@@ -250,8 +268,7 @@ func verify(ctx context.Context, db *sql.DB, namespace string) error {
 		verified = append(verified, resource.table)
 	}
 	sort.Strings(verified)
-	fmt.Printf("verified %d migrated resource tables: %s\n", len(verified), strings.Join(verified, ","))
-	return nil
+	return writeStatus("verified %d migrated resource tables: %s\n", len(verified), strings.Join(verified, ","))
 }
 
 func cleanup(ctx context.Context, db *sql.DB, namespace string) error {
@@ -282,6 +299,21 @@ func resourceTables() []string {
 }
 
 func fatal(err error) {
-	_, _ = fmt.Fprintln(os.Stderr, err)
+	written, writeErr := fmt.Fprintln(os.Stderr, err)
+	if writeErr != nil || written == 0 {
+		os.Exit(2)
+	}
 	os.Exit(1)
+}
+
+func writeStatus(format string, args ...any) error {
+	message := fmt.Sprintf(format, args...)
+	written, err := io.WriteString(os.Stdout, message)
+	if err != nil {
+		return err
+	}
+	if written != len(message) {
+		return io.ErrShortWrite
+	}
+	return nil
 }

@@ -1,8 +1,9 @@
 package sessionsettings
 
 import (
-	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"testing"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
 func TestRestartAllowsFullConfigurationAndCredentialReplacement(t *testing.T) {

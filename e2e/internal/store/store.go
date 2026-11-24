@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ccplant/ccplant/e2e/internal/domain"
@@ -19,9 +20,9 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	db = configureDB(db)
 	s := &Store{db: db}
-	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
+	result, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS runs (
  id TEXT PRIMARY KEY, scenario_id TEXT NOT NULL, scenario_description TEXT NOT NULL,
  category_id TEXT NOT NULL, category_description TEXT NOT NULL, kind TEXT NOT NULL,
@@ -38,17 +39,37 @@ CREATE TABLE IF NOT EXISTS run_events (
  created_at TEXT NOT NULL, FOREIGN KEY(run_id) REFERENCES runs(id)
 );`)
 	if err != nil {
-		db.Close()
-		return nil, err
+		return nil, errors.Join(err, db.Close())
+	}
+	if result == nil {
+		return nil, errors.Join(errors.New("initialize E2E store returned no result"), db.Close())
 	}
 	return s, nil
+}
+
+func configureDB(db *sql.DB) *sql.DB {
+	db.SetMaxOpenConns(1)
+	return db
 }
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) CreateRun(ctx context.Context, r domain.Run) error {
-	p, _ := json.Marshal(r.Parameters)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO runs(id,scenario_id,scenario_description,category_id,category_description,kind,environment,target_api_url,target_frontend_url,auth_type,parameters,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.ScenarioID, r.ScenarioDescription, r.CategoryID, r.CategoryDescription, r.Kind, r.Environment, r.TargetAPIURL, r.TargetFrontendURL, r.AuthType, string(p), r.Status, format(r.CreatedAt))
-	return err
+	p, err := json.Marshal(r.Parameters)
+	if err != nil {
+		return fmt.Errorf("encode run parameters: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO runs(id,scenario_id,scenario_description,category_id,category_description,kind,environment,target_api_url,target_frontend_url,auth_type,parameters,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.ScenarioID, r.ScenarioDescription, r.CategoryID, r.CategoryDescription, r.Kind, r.Environment, r.TargetAPIURL, r.TargetFrontendURL, r.AuthType, string(p), r.Status, format(r.CreatedAt))
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return fmt.Errorf("created %d runs, want 1", affected)
+	}
+	return nil
 }
 
 func (s *Store) ListRuns(ctx context.Context, category, scenario, status string) ([]domain.Run, error) {
@@ -86,7 +107,9 @@ func (s *Store) Events(ctx context.Context, id string, after int64) ([]domain.Ev
 		if err := rows.Scan(&e.Sequence, &e.RunID, &e.Type, &e.Message, &e.Test, &payload, &created); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(payload), &e.Payload)
+		if err := json.Unmarshal([]byte(payload), &e.Payload); err != nil {
+			return nil, fmt.Errorf("decode event payload: %w", err)
+		}
 		e.CreatedAt = parse(created)
 		out = append(out, e)
 	}
@@ -94,7 +117,10 @@ func (s *Store) Events(ctx context.Context, id string, after int64) ([]domain.Ev
 }
 
 func (s *Store) AddEvent(ctx context.Context, e domain.Event) (int64, error) {
-	p, _ := json.Marshal(e.Payload)
+	p, err := json.Marshal(e.Payload)
+	if err != nil {
+		return 0, fmt.Errorf("encode event payload: %w", err)
+	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO run_events(run_id,type,message,test,payload,created_at) VALUES(?,?,?,?,?,?)`, e.RunID, e.Type, e.Message, e.Test, string(p), format(time.Now().UTC()))
 	if err != nil {
 		return 0, err
@@ -107,7 +133,10 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if n == 0 {
 		return sql.ErrNoRows
 	}
@@ -119,7 +148,11 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration, k
 	if err != nil {
 		return domain.Run{}, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			log.Printf("rollback claim transaction: %v", rollbackErr)
+		}
+	}()
 	now := time.Now().UTC()
 	placeholders := ""
 	args := []any{format(now)}
@@ -143,7 +176,10 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration, k
 	if err != nil {
 		return domain.Run{}, err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.Run{}, err
+	}
 	if n != 1 {
 		return domain.Run{}, sql.ErrNoRows
 	}
@@ -163,7 +199,10 @@ func (s *Store) Heartbeat(ctx context.Context, id, worker string, lease time.Dur
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
 	if n != 1 {
 		return false, sql.ErrNoRows
 	}
@@ -178,7 +217,10 @@ func (s *Store) Complete(ctx context.Context, id, worker, status string) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if n != 1 {
 		return sql.ErrNoRows
 	}
@@ -198,7 +240,9 @@ func scanRun(s scanner) (domain.Run, error) {
 		return r, err
 	}
 	r.CancelRequested = cancel != 0
-	json.Unmarshal([]byte(p.String), &r.Parameters)
+	if err := json.Unmarshal([]byte(p.String), &r.Parameters); err != nil {
+		return r, fmt.Errorf("decode run parameters: %w", err)
+	}
 	r.CreatedAt = parse(created.String)
 	r.LeaseExpiresAt = parsePtr(lease)
 	r.StartedAt = parsePtr(started)
@@ -206,7 +250,13 @@ func scanRun(s scanner) (domain.Run, error) {
 	return r, nil
 }
 func format(t time.Time) string { return t.Format(time.RFC3339Nano) }
-func parse(v string) time.Time  { t, _ := time.Parse(time.RFC3339Nano, v); return t }
+func parse(v string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
 func parsePtr(v sql.NullString) *time.Time {
 	if !v.Valid {
 		return nil
@@ -214,5 +264,3 @@ func parsePtr(v sql.NullString) *time.Time {
 	t := parse(v.String)
 	return &t
 }
-
-var _ = errors.Is

@@ -2,9 +2,10 @@ package sessionsettings
 
 import (
 	"fmt"
+	"reflect"
+
 	"github.com/pelletier/go-toml/v2"
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
-	"reflect"
 )
 
 // ValidateRestart rejects incompatible changes before stopping the running agent.

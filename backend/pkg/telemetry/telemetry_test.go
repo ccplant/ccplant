@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel/semconv/v1.40.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
 func TestEnabled(t *testing.T) {

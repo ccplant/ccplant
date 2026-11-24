@@ -3,13 +3,14 @@ package provisioner
 import (
 	"context"
 	"errors"
-	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestPauseAgentWaitsForProcessAndCredentialWorker(t *testing.T) {

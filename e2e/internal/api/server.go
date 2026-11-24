@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -127,7 +128,9 @@ func (s *Server) CreateRun(ctx context.Context, in RunRequest) (domain.Run, erro
 		time.AfterFunc(5*time.Minute, func() {
 			if _, ok := s.secrets.LoadAndDelete(run.ID); ok {
 				s.manifests.Delete(run.ID)
-				_ = s.store.Cancel(context.Background(), run.ID)
+				if err := s.store.Cancel(context.Background(), run.ID); err != nil {
+					log.Printf("cancel expired E2E run %s: %v", run.ID, err)
+				}
 			}
 		})
 	}
@@ -184,13 +187,27 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, err.Error())
 		return
 	}
-	sc, _, _ := catalog.Find(s.currentCatalog(), run.ScenarioID)
+	sc, category, found := catalog.Find(s.currentCatalog(), run.ScenarioID)
+	if !found || category.ID == "" {
+		problem(w, http.StatusInternalServerError, "claimed run scenario is no longer available")
+		return
+	}
 	if manifest, ok := s.manifests.LoadAndDelete(run.ID); ok {
-		sc, _ = manifest.(domain.Scenario)
+		stored, valid := manifest.(domain.Scenario)
+		if !valid {
+			problem(w, http.StatusInternalServerError, "stored run manifest is invalid")
+			return
+		}
+		sc = stored
 	}
 	target := domain.Target{APIURL: run.TargetAPIURL, FrontendURL: run.TargetFrontendURL, AuthType: run.AuthType}
 	if value, ok := s.secrets.LoadAndDelete(run.ID); ok {
-		target.AuthValue, _ = value.(string)
+		secret, valid := value.(string)
+		if !valid {
+			problem(w, http.StatusInternalServerError, "stored run credential is invalid")
+			return
+		}
+		target.AuthValue = secret
 	}
 	write(w, 200, map[string]any{"run": run, "scenario": sc, "target": target})
 }
@@ -273,7 +290,10 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "stream unsupported")
 		return
 	}
-	after, _ := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
+	after, parseErr := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
+	if parseErr != nil {
+		after = 0
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	ticker := time.NewTicker(time.Second)
@@ -284,8 +304,13 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, e := range events {
-			b, _ := json.Marshal(e)
-			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.Sequence, b)
+			b, err := json.Marshal(e)
+			if err != nil {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.Sequence, b); err != nil {
+				return
+			}
 			after = e.Sequence
 		}
 		flusher.Flush()
@@ -299,7 +324,9 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 func write(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("encode E2E API response: %v", err)
+	}
 }
 func problem(w http.ResponseWriter, status int, msg string) {
 	write(w, status, map[string]string{"error": msg})
