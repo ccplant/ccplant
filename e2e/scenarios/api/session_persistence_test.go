@@ -57,7 +57,7 @@ func TestSessionPersistenceSuspendResume(t *testing.T) {
 
 	waitForConversationMarker(t, c, created.SessionID, marker, 4*time.Minute)
 	if err := suspendConcurrently(c, sessionPath); err != nil {
-		t.Fatal(err)
+		t.Fatalf("concurrent suspend for session %s failed: %v", created.SessionID, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

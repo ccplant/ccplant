@@ -56,6 +56,7 @@ type nativeClaim struct {
 
 type completionRequest struct {
 	runnerID, token, sessionID, leaseID, action string
+	remoteSessionID                             string
 }
 
 type managerCall struct {
@@ -217,39 +218,45 @@ func (w *RunnerWorker) runSlotOnce(ctx context.Context, pool string) {
 			continue
 		}
 		if claim.Settings == nil || claim.RuntimeToken == "" || claim.Allocation.SessionID == "" {
-			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail"})
+			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail", ""})
 			continue
 		}
 		creator, ok := w.manager.(directSessionManager)
 		if !ok {
-			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail"})
+			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail", ""})
 			return
 		}
 		// The parent route addresses the allocated workload by runner ID. Keep the
 		// manager's local session key aligned with that route so lifecycle commands
 		// (especially DELETE) target the process that was actually created.
-		if createErr := w.createClaimSession(ctx, creator, runnerID, claim); createErr != nil {
+		createdSession, createErr := w.createClaimSession(ctx, creator, runnerID, claim)
+		if createErr != nil {
 			log.Printf("[SESSION_RUNNER] create %s for session %s: %v", runnerID, claim.Allocation.SessionID, createErr)
-			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail"})
+			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail", ""})
 			continue
 		}
-		if err = w.complete(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "ack"}); err != nil {
+		if createdSession == nil || createdSession.ID() == "" {
+			log.Printf("[SESSION_RUNNER] create %s for session %s returned no session ID", runnerID, claim.Allocation.SessionID)
+			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail", ""})
+			continue
+		}
+		if err = w.complete(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "ack", createdSession.ID()}); err != nil {
 			log.Printf("[SESSION_RUNNER] ack %s: %v", claim.Allocation.SessionID, err)
 		}
 		return
 	}
 }
 
-func (w *RunnerWorker) createClaimSession(ctx context.Context, creator directSessionManager, runnerID string, claim *nativeClaim) error {
+func (w *RunnerWorker) createClaimSession(ctx context.Context, creator directSessionManager, runnerID string, claim *nativeClaim) (entities.Session, error) {
 	claim.Settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: w.upstream, SessionID: claim.Allocation.SessionID, ManagerID: claim.Allocation.ManagerID, Token: claim.RuntimeToken, Generation: claim.Allocation.Generation}
 	createdSession, err := creator.CreateSessionDirect(ctx, runnerID, runRequestFromSettings(claim.Settings), nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if createdSession == nil {
-		return fmt.Errorf("session manager returned no session")
+		return nil, fmt.Errorf("session manager returned no session")
 	}
-	return nil
+	return createdSession, nil
 }
 
 func (w *RunnerWorker) register(ctx context.Context, id, pool string) (string, error) {
@@ -283,7 +290,11 @@ func (w *RunnerWorker) claim(ctx context.Context, id, token, pool string) (*nati
 	return &out, true, err
 }
 func (w *RunnerWorker) complete(ctx context.Context, completion completionRequest) error {
-	raw, err := json.Marshal(map[string]string{"lease_id": completion.leaseID})
+	body := map[string]string{"lease_id": completion.leaseID}
+	if completion.action == "ack" && completion.remoteSessionID != "" {
+		body["remote_session_id"] = completion.remoteSessionID
+	}
+	raw, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encode completion: %w", err)
 	}
