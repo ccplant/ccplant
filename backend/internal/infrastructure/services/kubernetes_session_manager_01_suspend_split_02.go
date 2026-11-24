@@ -29,6 +29,9 @@ func (m *KubernetesSessionManager) acquireSessionSuspendOwnership(ctx context.Co
 	}
 	now := time.Now()
 	owner := svc.Annotations[sessionSuspendOwnerAnnotation]
+	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
+		return svc, "", false, nil
+	}
 	expiresAt, parseErr := time.Parse(time.RFC3339Nano, svc.Annotations[sessionSuspendOwnerExpiresAtAnnotation])
 	if owner != "" && parseErr == nil && expiresAt.After(now) {
 		return svc, "", false, nil
@@ -48,6 +51,34 @@ func (m *KubernetesSessionManager) acquireSessionSuspendOwnership(ctx context.Co
 		return nil, "", false, err
 	}
 	return updated, claim, true, nil
+}
+
+// acquireSessionSuspendOwnershipOrWait makes concurrent suspend requests
+// observe the first owner's completion instead of returning success while its
+// checkpoint and workload shutdown are still in progress. If that owner exits
+// without suspending the session, or its lease expires, this request retries
+// ownership and can complete the operation itself.
+func (m *KubernetesSessionManager) acquireSessionSuspendOwnershipOrWait(ctx context.Context, serviceName string) (*corev1.Service, string, bool, error) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		svc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, serviceName)
+		if err != nil {
+			return nil, "", false, err
+		}
+		if acquired {
+			return svc, claim, true, nil
+		}
+		if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
+			return svc, "", false, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, "", false, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (m *KubernetesSessionManager) releaseSessionSuspendOwnership(ctx context.Context, serviceName, claim string) error {
@@ -284,11 +315,16 @@ func (m *KubernetesSessionManager) clearStockSuspendTimer(ctx context.Context, s
 }
 
 func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, sessionID string, svc *corev1.Service) error {
-	ownedSvc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, svc.Name)
+	ownedSvc, claim, acquired, err := m.acquireSessionSuspendOwnershipOrWait(ctx, svc.Name)
 	if err != nil {
 		return err
 	}
 	if !acquired {
+		if session := m.GetSession(sessionID); session != nil {
+			if ks, ok := session.(*KubernetesSession); ok {
+				ks.SetStatus("suspended")
+			}
+		}
 		return nil
 	}
 	return m.suspendSessionWorkloadOwned(ctx, sessionID, ownedSvc, claim)

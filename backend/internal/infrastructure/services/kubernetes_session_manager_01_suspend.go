@@ -311,17 +311,15 @@ func (m *KubernetesSessionManager) suspendSessionIf(ctx context.Context, session
 	if !ok {
 		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
 	}
-	if session.Status() == "suspended" {
-		return nil
-	}
 	if running, confirmed := m.podReportsRunning(ctx, ks); !confirmed || running {
 		return fmt.Errorf("session is busy")
 	}
-	svc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, ks.ServiceName())
+	svc, claim, acquired, err := m.acquireSessionSuspendOwnershipOrWait(ctx, ks.ServiceName())
 	if err != nil {
 		return fmt.Errorf("acquire session suspend ownership: %w", err)
 	}
 	if !acquired {
+		ks.SetStatus("suspended")
 		return nil
 	}
 	running, confirmed := m.podReportsRunning(ctx, ks)
@@ -379,9 +377,6 @@ func (m *KubernetesSessionManager) SuspendSessionOnTermination(ctx context.Conte
 	}
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
 	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
-		if session.Status() == "suspended" {
-			return nil
-		}
 		serviceName = session.ServiceName()
 	}
 	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
@@ -393,11 +388,16 @@ func (m *KubernetesSessionManager) SuspendSessionOnTermination(ctx context.Conte
 	if err != nil {
 		return err
 	}
-	ownedSvc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, svc.Name)
+	ownedSvc, claim, acquired, err := m.acquireSessionSuspendOwnershipOrWait(ctx, svc.Name)
 	if err != nil {
 		return err
 	}
 	if !acquired {
+		if session := m.GetSession(sessionID); session != nil {
+			if ks, ok := session.(*KubernetesSession); ok {
+				ks.SetStatus("suspended")
+			}
+		}
 		return nil
 	}
 	if err := m.persistSuspendSettings(ctx, sessionID, nil, m.config.SessionPersistence.Backend != ""); err != nil {
