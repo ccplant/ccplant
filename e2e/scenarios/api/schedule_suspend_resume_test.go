@@ -21,8 +21,10 @@ type triggerResult struct {
 }
 
 type searchSession struct {
-	SessionID string `json:"session_id"`
-	Status    string `json:"status"`
+	SessionID    string `json:"session_id"`
+	Status       string `json:"status"`
+	ErrorCode    string `json:"error_code"`
+	ErrorMessage string `json:"error_message"`
 }
 
 func TestScheduleSuspendResume(t *testing.T) {
@@ -139,7 +141,7 @@ func waitForSessionStatus(t *testing.T, c *apitest.Client, tag, sessionID string
 		want[status] = true
 	}
 	deadline := time.Now().Add(timeout)
-	last := "not found"
+	last := searchSession{Status: "not found"}
 	for {
 		var out struct {
 			Sessions []searchSession `json:"sessions"`
@@ -152,14 +154,15 @@ func waitForSessionStatus(t *testing.T, c *apitest.Client, tag, sessionID string
 		}
 		for _, session := range out.Sessions {
 			if session.SessionID == sessionID {
-				last = strings.ToLower(session.Status)
-				if want[last] {
+				session.Status = strings.ToLower(session.Status)
+				last = session
+				if want[session.Status] {
 					return
 				}
 			}
 		}
 		if time.Now().Add(2 * time.Second).After(deadline) {
-			t.Fatalf("session %s did not reach status %v; last status %q", sessionID, wanted, last)
+			t.Fatalf("session %s did not reach status %v; last session state: %+v", sessionID, wanted, last)
 		}
 		time.Sleep(2 * time.Second)
 	}
