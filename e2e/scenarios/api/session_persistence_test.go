@@ -56,7 +56,9 @@ func TestSessionPersistenceSuspendResume(t *testing.T) {
 	})
 
 	waitForConversationMarker(t, c, created.SessionID, marker, 4*time.Minute)
-	if err := suspendConcurrently(c, sessionPath); err != nil {
+	t.Logf("public session route before concurrent suspend: %s", sessionRouteInventory(t, c, marker, created.SessionID))
+	t.Logf("session-pool inventory before concurrent suspend: %s", managerInventory(t, c))
+	if err := suspendConcurrently(t, c, marker, created.SessionID, sessionPath); err != nil {
 		t.Fatalf("concurrent suspend for session %s failed: %v", created.SessionID, err)
 	}
 
@@ -69,7 +71,7 @@ func TestSessionPersistenceSuspendResume(t *testing.T) {
 	waitForConversationMarker(t, c, created.SessionID, marker, 3*time.Minute)
 }
 
-func suspendConcurrently(c *apitest.Client, sessionPath string) error {
+func suspendConcurrently(t *testing.T, c *apitest.Client, tag, sessionID, sessionPath string) error {
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -78,7 +80,7 @@ func suspendConcurrently(c *apitest.Client, sessionPath string) error {
 		go func() {
 			defer wg.Done()
 			<-start
-			errs <- suspendWhenIdle(c, sessionPath, 2*time.Minute)
+			errs <- suspendWhenIdle(t, c, tag, sessionID, sessionPath, 2*time.Minute)
 		}()
 	}
 	close(start)
@@ -94,7 +96,7 @@ func suspendConcurrently(c *apitest.Client, sessionPath string) error {
 	return nil
 }
 
-func suspendWhenIdle(c *apitest.Client, sessionPath string, timeout time.Duration) error {
+func suspendWhenIdle(t *testing.T, c *apitest.Client, tag, sessionID, sessionPath string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		var response struct {
@@ -110,7 +112,7 @@ func suspendWhenIdle(c *apitest.Client, sessionPath string, timeout time.Duratio
 			return nil
 		}
 		if !strings.Contains(strings.ToLower(response.Message), "session is busy") {
-			return fmt.Errorf("suspend failed: %s", response.Message)
+			return fmt.Errorf("suspend failed for session %s: %s; public session route: %s; manager inventory: %s", sessionID, response.Message, sessionRouteInventory(t, c, tag, sessionID), managerInventory(t, c))
 		}
 		if time.Now().Add(2 * time.Second).After(deadline) {
 			return errors.New("session remained busy while waiting to suspend")
