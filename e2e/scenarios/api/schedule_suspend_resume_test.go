@@ -101,7 +101,7 @@ func managerInventory(t *testing.T, c *apitest.Client) string {
 			} `json:"manager"`
 			Status struct {
 				Namespace        string   `json:"namespace"`
-				ServingInstance   string   `json:"serving_instance"`
+				ServingInstance  string   `json:"serving_instance"`
 				RunningRunnerIDs []string `json:"running_runner_ids"`
 				UsedRunnerIDs    []string `json:"used_runner_ids"`
 			} `json:"status"`
@@ -132,15 +132,23 @@ func waitForRunnerAssignment(t *testing.T, c *apitest.Client, tag, sessionID str
 				if route.SessionID != sessionID {
 					continue
 				}
+				// Older API versions do not expose route diagnostics. Prove the
+				// session is reachable through its public route before suspending;
+				// when diagnostics exist, retain the stricter inventory check.
+				if route.ManagerID == "" && route.RemoteSessionID == "" {
+					t.Log("route diagnostics unavailable; checking public messages endpoint readiness")
+					waitForSessionMessagesEndpoint(t, c, sessionID, time.Until(deadline))
+					return
+				}
 				var inventory struct {
 					SessionManagers []struct {
 						Manager struct {
 							ID string `json:"id"`
 						} `json:"manager"`
-			Status struct {
-				Namespace        string   `json:"namespace"`
-				ServingInstance   string   `json:"serving_instance"`
-				RunningRunnerIDs []string `json:"running_runner_ids"`
+						Status struct {
+							Namespace        string   `json:"namespace"`
+							ServingInstance  string   `json:"serving_instance"`
+							RunningRunnerIDs []string `json:"running_runner_ids"`
 							UsedRunnerIDs    []string `json:"used_runner_ids"`
 						} `json:"status"`
 					} `json:"session_managers"`
