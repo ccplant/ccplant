@@ -46,6 +46,9 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 		// namespace and even observe the runner through aggregate pool inventory,
 		// but must not restore it into its local session map or operate on it.
 		if errors.IsNotFound(err) && m.config != nil && m.config.SessionManager.ID != "" {
+			if m.config.SessionManager.RunnerPool != "" {
+				log.Printf("[K8S_SESSION] Runner service missing for session=%s namespace=%s local_manager=%s", id, m.namespace, sanitizeLabelValue(m.config.SessionManager.ID))
+			}
 			return nil
 		}
 		// If we can't reach K8s but have the session in memory, still return it
