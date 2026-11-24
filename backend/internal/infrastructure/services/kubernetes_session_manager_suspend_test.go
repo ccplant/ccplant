@@ -188,6 +188,101 @@ func TestAcquireSessionSuspendOwnershipIsExclusiveAndCanBeTakenOverAfterExpiry(t
 	}
 }
 
+func TestAcquireSessionSuspendOwnershipOrWaitsForConcurrentSuspend(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Annotations: map[string]string{
+			sessionSuspendOwnerAnnotation:          "manager-a/claim",
+			sessionSuspendOwnerExpiresAtAnnotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano),
+		},
+	}}
+	manager := newSuspendTestManager(t, service)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	type result struct {
+		service  *corev1.Service
+		claim    string
+		acquired bool
+		err      error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		stored, claim, acquired, err := manager.acquireSessionSuspendOwnershipOrWait(ctx, service.Name)
+		resultCh <- result{service: stored, claim: claim, acquired: acquired, err: err}
+	}()
+
+	select {
+	case got := <-resultCh:
+		t.Fatalf("concurrent suspend returned before owner completion: %#v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(ctx, service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(stored.Annotations, sessionSuspendOwnerAnnotation)
+	delete(stored.Annotations, sessionSuspendOwnerExpiresAtAnnotation)
+	stored.Annotations[sessionSuspendedAtAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := manager.client.CoreV1().Services("test-ns").Update(ctx, stored, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-resultCh:
+		if got.err != nil || got.acquired || got.claim != "" || got.service == nil || got.service.Annotations[sessionSuspendedAtAnnotation] == "" {
+			t.Fatalf("concurrent suspend result = %#v, want completed without acquiring ownership", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("concurrent suspend did not observe owner completion")
+	}
+}
+
+func TestSuspendSessionIfDoesNotTrustLocalSuspendedStatusDuringConcurrentSuspend(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Annotations: map[string]string{
+			sessionSuspendOwnerAnnotation:          "manager-a/claim",
+			sessionSuspendOwnerExpiresAtAnnotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano),
+		},
+	}}
+	manager := newSuspendTestManager(t, service)
+	session := NewKubernetesSession("session-1", &entities.RunServerRequest{UserID: "user-1", AgentType: "codex-acp"},
+		"agentapi-session-session-1", service.Name, "session-1-pvc", "test-ns", 9000, nil, nil)
+	session.SetStatus("suspended")
+	manager.sessions[session.id] = session
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- manager.suspendSessionIf(ctx, session.id, nil, false) }()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("suspend returned before canonical state was persisted: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(ctx, service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(stored.Annotations, sessionSuspendOwnerAnnotation)
+	delete(stored.Annotations, sessionSuspendOwnerExpiresAtAnnotation)
+	stored.Annotations[sessionSuspendedAtAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := manager.client.CoreV1().Services("test-ns").Update(ctx, stored, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("suspend after canonical completion: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("suspend did not observe canonical completion")
+	}
+}
+
 func TestReleaseSessionSuspendOwnershipDoesNotReleaseAnotherClaim(t *testing.T) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
 		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
