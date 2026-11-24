@@ -23,6 +23,8 @@ type triggerResult struct {
 type searchSession struct {
 	SessionID          string `json:"session_id"`
 	AllocatedSessionID string `json:"allocated_session_id"`
+	ManagerID          string `json:"manager_id"`
+	RemoteSessionID    string `json:"remote_session_id"`
 	Status             string `json:"status"`
 	ErrorCode          string `json:"error_code"`
 	ErrorMessage       string `json:"error_message"`
