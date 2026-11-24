@@ -2606,6 +2606,12 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 		}
 		return nil
 	}
+	if m.config != nil && m.config.SessionManager.RunnerPool != "" {
+		owner := svc.Labels["agentapi.proxy/session-manager-id"]
+		if owner != "" && owner != sanitizeLabelValue(m.config.SessionManager.ID) {
+			return nil
+		}
+	}
 
 	// Repair adoption metadata from the canonical Service instead of doing a full
 	// re-restore, which would start duplicate watcher goroutines.
