@@ -94,8 +94,10 @@ func TestRunnerPollRefreshesLastSeen(t *testing.T) {
 }
 
 func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
-	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
-	controller := NewSessionPoolController(store, nil)
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	controller := NewSessionPoolController(store, routes)
 
 	managerResult := callSessionPoolHandler(t, controller.CreateManager, http.MethodPost, "/admin/session-managers",
 		map[string]any{"id": "manager-a", "name": "Manager A"}, nil, nil)
@@ -171,6 +173,9 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	if err := store.Enqueue(context.Background(), &core.Allocation{SessionID: "session-a", Pool: "linux", RuntimeToken: "runtime-secret", Requirements: map[string]string{"dind": "true"}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := routes.Save(context.Background(), &portrepos.SessionRoute{SessionID: "session-a", RemoteSessionID: "initial", Status: "starting"}); err != nil {
+		t.Fatal(err)
+	}
 	claimResult := callSessionPoolHandler(t, controller.ClaimRunnerAllocation, http.MethodGet, "/internal/session-runners/allocations/next?wait=0s",
 		nil, nil, map[string]string{"Authorization": "Bearer " + registered.RunnerToken, "X-Session-Runner-ID": "runner-a"})
 	if claimResult.Code != http.StatusOK {
@@ -186,7 +191,7 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	}
 
 	ackResult := callSessionPoolHandler(t, controller.AckRunnerAllocation, http.MethodPost, "/internal/session-runners/allocations/session-a/ack",
-		map[string]any{"lease_id": claim.LeaseID}, map[string]string{"sessionId": "session-a"},
+		map[string]any{"lease_id": claim.LeaseID, "remote_session_id": "adopted-stock-session"}, map[string]string{"sessionId": "session-a"},
 		map[string]string{"Authorization": "Bearer " + registered.RunnerToken, "X-Session-Runner-ID": "runner-a"})
 	if ackResult.Code != http.StatusOK {
 		t.Fatalf("ack status=%d body=%s", ackResult.Code, ackResult.Body.String())
@@ -194,6 +199,10 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	runner, err = store.GetRunner(context.Background(), "runner-a")
 	if err != nil || runner.Status != core.RunnerRunning {
 		t.Fatalf("runner should be running: runner=%+v err=%v", runner, err)
+	}
+	route, err := routes.Get(context.Background(), "session-a")
+	if err != nil || route.RemoteSessionID != "adopted-stock-session" {
+		t.Fatalf("route should use the actual local session ID: route=%+v err=%v", route, err)
 	}
 }
 
