@@ -3,6 +3,10 @@ import { RepositoryHistoryItem, loadFullGlobalSettings } from '../types/settings
 const ORGANIZATION_HISTORY_PREFIX = 'agentapi-org-history-';
 const MAX_HISTORY_SIZE = 10;
 
+function reportOrganizationHistoryError(operation: string, error: unknown): void {
+  console.warn(`[organization-history] ${operation} failed`, error);
+}
+
 export interface OrganizationRepositoryHistory {
   organization: string;
   repositories: RepositoryHistoryItem[];
@@ -29,7 +33,8 @@ export class OrganizationHistory {
         repository: item.repository,
         lastUsed: new Date(item.lastUsed)
       }));
-    } catch {
+    } catch (error) {
+      reportOrganizationHistoryError('load', error);
       return [];
     }
   }
@@ -56,8 +61,8 @@ export class OrganizationHistory {
     try {
       const key = this.getOrganizationKey(organization);
       localStorage.setItem(key, JSON.stringify(trimmed));
-    } catch {
-      // ストレージエラーを無視
+    } catch (error) {
+      reportOrganizationHistoryError('save', error);
     }
   }
 
@@ -75,8 +80,8 @@ export class OrganizationHistory {
           }
         }
       }
-    } catch {
-      // ストレージエラーを無視
+    } catch (error) {
+      reportOrganizationHistoryError('list', error);
     }
 
     return histories;
@@ -88,8 +93,8 @@ export class OrganizationHistory {
     try {
       const key = this.getOrganizationKey(organization);
       localStorage.removeItem(key);
-    } catch {
-      // ストレージエラーを無視
+    } catch (error) {
+      reportOrganizationHistoryError('clear', error);
     }
   }
 
@@ -103,8 +108,8 @@ export class OrganizationHistory {
         }
       }
       keysToRemove.forEach(key => localStorage.removeItem(key));
-    } catch {
-      // ストレージエラーを無視
+    } catch (error) {
+      reportOrganizationHistoryError('clear all', error);
     }
   }
 
@@ -139,8 +144,8 @@ export class OrganizationHistory {
             // 既存の履歴にないリポジトリを追加
             repositories = [...repositories, ...parsedRepos];
           }
-        } catch {
-          // sessionStorageエラーを無視
+        } catch (error) {
+          reportOrganizationHistoryError('load repository suggestions', error);
         }
       }
 
@@ -172,7 +177,8 @@ export class OrganizationHistory {
       });
 
       return sortedRepos.slice(0, 50); // より多くのリポジトリを表示可能に
-    } catch {
+    } catch (error) {
+      reportOrganizationHistoryError('build repository suggestions', error);
       return [];
     }
   }
@@ -202,8 +208,8 @@ export class OrganizationHistory {
             const parsedRepos: string[] = JSON.parse(userRepos);
             allRepos = parsedRepos;
           }
-        } catch {
-          // sessionStorageエラーを無視
+        } catch (error) {
+          reportOrganizationHistoryError('load grouped repository suggestions', error);
         }
       }
 
@@ -230,7 +236,8 @@ export class OrganizationHistory {
         history: uniqueHistory.slice(0, 20),
         repositories: uniqueRepositories.slice(0, 50)
       };
-    } catch {
+    } catch (error) {
+      reportOrganizationHistoryError('build grouped repository suggestions', error);
       return { history: [], repositories: [] };
     }
   }

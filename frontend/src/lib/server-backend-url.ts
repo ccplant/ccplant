@@ -52,7 +52,8 @@ export async function getRequestBackendBaseUrl(
       if (new URL(publicBaseUrl).hostname.toLowerCase() === hostname.trim().toLowerCase()) {
         return getBackendBaseUrl()
       }
-    } catch {
+    } catch (error) {
+      console.warn('NEXT_PUBLIC_BASE_URL is invalid; falling back to subdomain routing:', error)
       // Invalid public URL configuration should not disable subdomain routing.
     }
   }

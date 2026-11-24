@@ -40,8 +40,8 @@ function ChatsPageInner() {
       try {
         const saved = localStorage.getItem(CHATS_TAG_FILTERS_KEY)
         if (saved) return JSON.parse(saved) as TagFilter
-      } catch {
-        // ignore parse error
+      } catch (error) {
+        console.warn('Failed to restore chat tag filters:', error)
       }
     }
     return {}

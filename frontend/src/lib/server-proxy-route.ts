@@ -33,6 +33,12 @@ function debugLog(message: string, metadata?: Record<string, unknown>) {
   }
 }
 
+function debugStreamCleanupFailure(operation: string, error: unknown) {
+  debugLog(`Proxy stream ${operation} raced with downstream cancellation`, {
+    error: error instanceof Error ? error.message : String(error),
+  })
+}
+
 interface LinkedAbort {
   controller: AbortController
   cleanup: () => void
@@ -105,8 +111,8 @@ function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort, sse
         keepalive = setInterval(() => {
           try {
             controller.enqueue(encoder.encode(': keepalive\n\n'))
-          } catch {
-            // Cancellation races with the interval callback.
+          } catch (error) {
+            debugStreamCleanupFailure('keepalive', error)
           }
         }, 15000)
 
@@ -138,8 +144,8 @@ function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort, sse
         if (!linkedAbort.controller.signal.aborted) linkedAbort.controller.abort(reason)
         try {
           await reader.cancel(reason)
-        } catch {
-          // The abort may already have closed the upstream reader.
+        } catch (error) {
+          debugStreamCleanupFailure('reader cancellation', error)
         } finally {
           finish()
         }
@@ -169,8 +175,8 @@ function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort, sse
       }
       try {
         await reader.cancel(reason)
-      } catch {
-        // The abort may already have closed the upstream reader.
+      } catch (error) {
+        debugStreamCleanupFailure('reader cancellation', error)
       } finally {
         finish()
       }
@@ -224,8 +230,8 @@ function proxyServerSentEvents(
       keepalive = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(': keepalive\n\n'))
-        } catch {
-          // Cancellation races with the interval callback.
+        } catch (error) {
+          debugStreamCleanupFailure('keepalive', error)
         }
       }, 15000)
 
@@ -247,7 +253,8 @@ function proxyServerSentEvents(
             }
             controller.enqueue(value)
           }
-        } catch {
+        } catch (error) {
+          debugStreamCleanupFailure('upstream request', error)
           finish()
           // Once the eager SSE response has been committed, surfacing an
           // exception makes Next.js fail its response pipe and log a full stack
@@ -255,8 +262,8 @@ function proxyServerSentEvents(
           if (!linkedAbort.controller.signal.aborted) {
             try {
               closeWithUpstreamError(controller, 502)
-            } catch {
-              // The downstream may have disconnected concurrently.
+            } catch (closeError) {
+              debugStreamCleanupFailure('upstream error delivery', closeError)
             }
           }
         }
@@ -266,8 +273,8 @@ function proxyServerSentEvents(
       if (!linkedAbort.controller.signal.aborted) linkedAbort.controller.abort(reason)
       try {
         await upstreamReader?.cancel(reason)
-      } catch {
-        // The abort may already have closed the upstream reader.
+      } catch (error) {
+        debugStreamCleanupFailure('reader cancellation', error)
       } finally {
         finish()
       }
