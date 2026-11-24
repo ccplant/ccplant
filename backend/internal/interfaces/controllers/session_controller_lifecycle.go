@@ -281,6 +281,8 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		log.Printf("[SESSION_SUSPEND] remote command failed public_session=%s manager=%s remote_session=%s runner=%s status=%d",
+			route.SessionID, route.ManagerID, route.RemoteSessionID, allocation.RunnerID, resp.StatusCode)
 		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "suspended"); err != nil {
