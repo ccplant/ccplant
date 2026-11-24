@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	testassert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
@@ -47,12 +49,12 @@ func TestRunnerWorkerCreatesWorkloadWithAllocatedRunnerID(t *testing.T) {
 			var body map[string]string
 			require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 			registeredRunnerID = body["runner_id"]
-			_ = json.NewEncoder(w).Encode(map[string]string{"runner_token": "token"})
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"runner_token": "token"}))
 		case req.Method == http.MethodGet && req.URL.Path == "/internal/session-runners/allocations/next":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"allocation": map[string]any{"session_id": "public-session", "manager_id": "manager", "generation": 1},
 				"lease_id":   "lease", "runtime_token": "runtime-token", "settings": &sessionsettings.SessionSettings{},
-			})
+			}))
 		case req.Method == http.MethodPost && req.URL.Path == "/internal/session-runners/allocations/public-session/ack":
 			w.WriteHeader(http.StatusNoContent)
 		default:

@@ -54,6 +54,15 @@ type nativeClaim struct {
 	Settings     *sessionsettings.SessionSettings `json:"settings"`
 }
 
+type completionRequest struct {
+	runnerID, token, sessionID, leaseID, action string
+}
+
+type managerCall struct {
+	method, path  string
+	input, output any
+}
+
 func NewRunnerWorker(manager repositories.SessionManager, upstream, managerID, token string) *RunnerWorker {
 	return &RunnerWorker{manager: manager, upstream: strings.TrimRight(upstream, "/"), managerID: managerID, token: token, client: utils.NewHTTPClient(utils.HTTPClientConfig{Timeout: 35 * time.Second}), idle: map[string]int{}}
 }
@@ -87,53 +96,66 @@ func (w *RunnerWorker) reconcileOnce(ctx context.Context) {
 	for _, session := range sessions {
 		statuses[session.ID()] = session.Status()
 	}
-	body, _ := json.Marshal(map[string]any{"session_statuses": statuses})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-managers/"+url.PathEscape(w.managerID)+"/heartbeat", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+w.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := w.client.Do(req)
+	result, err := w.sendHeartbeat(ctx, statuses)
 	if err != nil {
 		log.Printf("[SESSION_RUNNER] heartbeat failed: %v", err)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode/100 != 2 {
-		log.Printf("[SESSION_RUNNER] heartbeat returned HTTP %d", resp.StatusCode)
-		return
-	}
-	var result struct {
-		Pools              []runnerPool `json:"pools"`
-		OrphanedSessionIDs []string     `json:"orphaned_session_ids"`
-	}
-	if json.NewDecoder(resp.Body).Decode(&result) != nil {
 		return
 	}
 	cleanupOrphanedSessions(w.manager, result.OrphanedSessionIDs)
 	// Re-read after orphan cleanup so stale local workloads do not consume pool
 	// capacity for another heartbeat interval.
-	sessions = w.manager.ListSessions(entities.SessionFilter{})
-	active := activeSessionCount(sessions)
-	for _, p := range result.Pools {
-		if !p.Enabled || p.Draining {
-			continue
-		}
-		desired := p.MinIdle
-		if desired < 1 {
-			desired = 1
-		}
-		if p.MaxRunners > 0 && desired > p.MaxRunners-active {
-			desired = p.MaxRunners - active
-		}
-		if desired < 0 {
-			desired = 0
-		}
-		w.mu.Lock()
-		missing := desired - w.idle[p.Pool]
-		w.idle[p.Pool] += max(0, missing)
-		w.mu.Unlock()
-		for range max(0, missing) {
-			go w.runSlot(ctx, p.Pool)
-		}
+	active := activeSessionCount(w.manager.ListSessions(entities.SessionFilter{}))
+	for _, pool := range result.Pools {
+		w.ensureIdleCapacity(ctx, pool, active)
+	}
+}
+
+type heartbeatResult struct {
+	Pools              []runnerPool `json:"pools"`
+	OrphanedSessionIDs []string     `json:"orphaned_session_ids"`
+}
+
+func (w *RunnerWorker) sendHeartbeat(ctx context.Context, statuses map[string]string) (*heartbeatResult, error) {
+	body, err := json.Marshal(map[string]any{"session_statuses": statuses})
+	if err != nil {
+		return nil, fmt.Errorf("encode heartbeat: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-managers/"+url.PathEscape(w.managerID)+"/heartbeat", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create heartbeat request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+w.token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { utils.SafeCloseResponseBody(resp.Body) }()
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("heartbeat returned HTTP %d", resp.StatusCode)
+	}
+	var result heartbeatResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode heartbeat: %w", err)
+	}
+	return &result, nil
+}
+
+func (w *RunnerWorker) ensureIdleCapacity(ctx context.Context, pool runnerPool, active int) {
+	if !pool.Enabled || pool.Draining {
+		return
+	}
+	desired := max(1, pool.MinIdle)
+	if pool.MaxRunners > 0 {
+		desired = min(desired, pool.MaxRunners-active)
+	}
+	desired = max(0, desired)
+	w.mu.Lock()
+	missing := max(0, desired-w.idle[pool.Pool])
+	w.idle[pool.Pool] += missing
+	w.mu.Unlock()
+	for range missing {
+		go w.runSlot(ctx, pool.Pool)
 	}
 }
 
@@ -195,48 +217,61 @@ func (w *RunnerWorker) runSlotOnce(ctx context.Context, pool string) {
 			continue
 		}
 		if claim.Settings == nil || claim.RuntimeToken == "" || claim.Allocation.SessionID == "" {
-			_ = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail")
+			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail"})
 			continue
 		}
-		claim.Settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: w.upstream, SessionID: claim.Allocation.SessionID, ManagerID: claim.Allocation.ManagerID, Token: claim.RuntimeToken, Generation: claim.Allocation.Generation}
-		req := runRequestFromSettings(claim.Settings)
 		creator, ok := w.manager.(directSessionManager)
 		if !ok {
-			_ = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail")
+			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail"})
 			return
 		}
 		// The parent route addresses the allocated workload by runner ID. Keep the
 		// manager's local session key aligned with that route so lifecycle commands
 		// (especially DELETE) target the process that was actually created.
-		if _, err = creator.CreateSessionDirect(ctx, runnerID, req, nil); err != nil {
-			log.Printf("[SESSION_RUNNER] create %s for session %s: %v", runnerID, claim.Allocation.SessionID, err)
-			_ = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail")
+		if createErr := w.createClaimSession(ctx, creator, runnerID, claim); createErr != nil {
+			log.Printf("[SESSION_RUNNER] create %s for session %s: %v", runnerID, claim.Allocation.SessionID, createErr)
+			w.completeAndLog(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail"})
 			continue
 		}
-		if err = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "ack"); err != nil {
+		if err = w.complete(ctx, completionRequest{runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "ack"}); err != nil {
 			log.Printf("[SESSION_RUNNER] ack %s: %v", claim.Allocation.SessionID, err)
 		}
 		return
 	}
 }
 
+func (w *RunnerWorker) createClaimSession(ctx context.Context, creator directSessionManager, runnerID string, claim *nativeClaim) error {
+	claim.Settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: w.upstream, SessionID: claim.Allocation.SessionID, ManagerID: claim.Allocation.ManagerID, Token: claim.RuntimeToken, Generation: claim.Allocation.Generation}
+	createdSession, err := creator.CreateSessionDirect(ctx, runnerID, runRequestFromSettings(claim.Settings), nil)
+	if err != nil {
+		return err
+	}
+	if createdSession == nil {
+		return fmt.Errorf("session manager returned no session")
+	}
+	return nil
+}
+
 func (w *RunnerWorker) register(ctx context.Context, id, pool string) (string, error) {
 	var out struct {
 		RunnerToken string `json:"runner_token"`
 	}
-	err := w.managerRequest(ctx, http.MethodPost, "/internal/session-runners/register", map[string]string{"runner_id": id, "pool": pool}, &out)
+	err := w.managerRequest(ctx, managerCall{http.MethodPost, "/internal/session-runners/register", map[string]string{"runner_id": id, "pool": pool}, &out})
 	return out.RunnerToken, err
 }
 func (w *RunnerWorker) claim(ctx context.Context, id, token, pool string) (*nativeClaim, bool, error) {
 	u := w.upstream + "/internal/session-runners/allocations/next?wait=30s&pool=" + url.QueryEscape(pool)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("create claim request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Session-Runner-ID", id)
 	resp, err := w.client.Do(req)
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, false, nil
 	}
@@ -247,25 +282,44 @@ func (w *RunnerWorker) claim(ctx context.Context, id, token, pool string) (*nati
 	err = json.NewDecoder(resp.Body).Decode(&out)
 	return &out, true, err
 }
-func (w *RunnerWorker) complete(ctx context.Context, id, token, sessionID, leaseID, action string) error {
-	raw, _ := json.Marshal(map[string]string{"lease_id": leaseID})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-runners/allocations/"+url.PathEscape(sessionID)+"/"+action, bytes.NewReader(raw))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-Session-Runner-ID", id)
+func (w *RunnerWorker) complete(ctx context.Context, completion completionRequest) error {
+	raw, err := json.Marshal(map[string]string{"lease_id": completion.leaseID})
+	if err != nil {
+		return fmt.Errorf("encode completion: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-runners/allocations/"+url.PathEscape(completion.sessionID)+"/"+completion.action, bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("create completion request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+completion.token)
+	req.Header.Set("X-Session-Runner-ID", completion.runnerID)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := w.client.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
-func (w *RunnerWorker) managerRequest(ctx context.Context, method, path string, in, out any) error {
-	raw, _ := json.Marshal(in)
-	req, _ := http.NewRequestWithContext(ctx, method, w.upstream+path, bytes.NewReader(raw))
+
+func (w *RunnerWorker) completeAndLog(ctx context.Context, completion completionRequest) {
+	if err := w.complete(ctx, completion); err != nil {
+		log.Printf("[SESSION_RUNNER] %s allocation %s: %v", completion.action, completion.sessionID, err)
+	}
+}
+
+func (w *RunnerWorker) managerRequest(ctx context.Context, call managerCall) error {
+	raw, err := json.Marshal(call.input)
+	if err != nil {
+		return fmt.Errorf("encode manager request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, call.method, w.upstream+call.path, bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("create manager request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+w.token)
 	req.Header.Set("X-Session-Manager-ID", w.managerID)
 	req.Header.Set("Content-Type", "application/json")
@@ -273,11 +327,11 @@ func (w *RunnerWorker) managerRequest(ctx context.Context, method, path string, 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return json.NewDecoder(resp.Body).Decode(call.output)
 }
 
 func runRequestFromSettings(settings *sessionsettings.SessionSettings) *entities.RunServerRequest {

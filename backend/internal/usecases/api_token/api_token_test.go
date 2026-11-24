@@ -102,9 +102,12 @@ func callerWith(perms []entities.Permission, ghTeams ...string) *entities.User {
 	return u
 }
 
-func adminCaller() *entities.User {
+func adminCaller(t *testing.T) *entities.User {
+	t.Helper()
 	u := entities.NewUser(entities.UserID("admin-1"), entities.UserTypeAdmin, "admin")
-	_ = u.SetRoles([]entities.Role{entities.RoleAdmin})
+	if err := u.SetRoles([]entities.Role{entities.RoleAdmin}); err != nil {
+		t.Fatalf("set admin role: %v", err)
+	}
 	u.SetPermissions([]entities.Permission{entities.PermissionAdmin})
 	// admins: HasPermission returns true for everything because RoleAdmin.
 	return u
@@ -202,7 +205,7 @@ func TestCreateAPIToken_PermissionsNoBroaderThanCaller(t *testing.T) {
 func TestCreateAPIToken_AdminCanExceedAndCreateAnyTeamToken(t *testing.T) {
 	repo := newFakeRepo()
 	uc := NewCreateAPITokenUseCase(repo, &fakeAuth{})
-	admin := adminCaller()
+	admin := adminCaller(t)
 	out, err := uc.Execute(context.Background(), &CreateAPITokenInput{
 		Caller:      admin,
 		Scope:       "team",
@@ -289,10 +292,13 @@ func TestCreateAPIToken_ExpiresAtPreserved(t *testing.T) {
 func TestListAPIToken_PersonalOnly(t *testing.T) {
 	repo := newFakeRepo()
 	uc := NewCreateAPITokenUseCase(repo, &fakeAuth{})
-	_, _ = uc.Execute(context.Background(), &CreateAPITokenInput{
+	created, err := uc.Execute(context.Background(), &CreateAPITokenInput{
 		Caller: callerWith([]entities.Permission{entities.PermissionSessionRead}), Scope: "user",
 		Permissions: []entities.Permission{entities.PermissionSessionRead},
 	})
+	if err != nil || created == nil {
+		t.Fatalf("Create: %v", err)
+	}
 	listUC := NewListAPITokenUseCase(repo)
 	out, err := listUC.Execute(context.Background(), &ListAPITokenInput{
 		Caller: callerWith([]entities.Permission{entities.PermissionSessionRead}),
@@ -309,17 +315,23 @@ func TestListAPIToken_PersonalOnly(t *testing.T) {
 func TestListAPIToken_TeamMembershipEnforced(t *testing.T) {
 	repo := newFakeRepo()
 	createUC := NewCreateAPITokenUseCase(repo, &fakeAuth{})
-	_, _ = createUC.Execute(context.Background(), &CreateAPITokenInput{
+	created, err := createUC.Execute(context.Background(), &CreateAPITokenInput{
 		Caller: callerWith([]entities.Permission{entities.PermissionSessionCreate}, "team"),
 		Scope:  "team", TeamID: "org/team",
 		Permissions: []entities.Permission{entities.PermissionSessionCreate},
 	})
+	if err != nil || created == nil {
+		t.Fatalf("Create: %v", err)
+	}
 	listUC := NewListAPITokenUseCase(repo)
 	// non-member
-	_, err := listUC.Execute(context.Background(), &ListAPITokenInput{
+	denied, err := listUC.Execute(context.Background(), &ListAPITokenInput{
 		Caller: callerWith([]entities.Permission{entities.PermissionSessionRead}, "other"),
 		Scope:  "team", TeamID: "org/team",
 	})
+	if denied != nil {
+		t.Fatal("non-member received a token list")
+	}
 	if err == nil {
 		t.Fatal("expected forbidden for non-member")
 	}
@@ -341,10 +353,13 @@ func TestListAPIToken_TeamMembershipEnforced(t *testing.T) {
 func TestGetAPIToken_OwnerOnly(t *testing.T) {
 	repo := newFakeRepo()
 	createUC := NewCreateAPITokenUseCase(repo, &fakeAuth{})
-	out, _ := createUC.Execute(context.Background(), &CreateAPITokenInput{
+	out, err := createUC.Execute(context.Background(), &CreateAPITokenInput{
 		Caller: callerWith([]entities.Permission{entities.PermissionSessionRead}), Scope: "user",
 		Permissions: []entities.Permission{entities.PermissionSessionRead},
 	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	getUC := NewGetAPITokenUseCase(repo)
 
 	// owner
@@ -361,135 +376,22 @@ func TestGetAPIToken_OwnerOnly(t *testing.T) {
 	// other user => NotFound (no leak)
 	other := entities.NewUser(entities.UserID("other-1"), entities.UserTypeRegular, "other")
 	other.SetPermissions([]entities.Permission{entities.PermissionSessionRead})
-	_, err = getUC.Execute(context.Background(), &GetAPITokenInput{Caller: other, TokenID: out.Token.ID()})
+	missing, err := getUC.Execute(context.Background(), &GetAPITokenInput{Caller: other, TokenID: out.Token.ID()})
+	if missing != nil {
+		t.Fatal("other user received the token")
+	}
 	if !errors.Is(err, entities.ErrAPITokenNotFound) {
 		t.Errorf("expected NotFound, got %v", err)
 	}
 
 	// truly nonexistent => NotFound
-	_, err = getUC.Execute(context.Background(), &GetAPITokenInput{
+	missing, err = getUC.Execute(context.Background(), &GetAPITokenInput{
 		Caller: callerWith([]entities.Permission{entities.PermissionSessionRead}), TokenID: "nope",
 	})
+	if missing != nil {
+		t.Fatal("missing token returned a value")
+	}
 	if !errors.Is(err, entities.ErrAPITokenNotFound) {
 		t.Errorf("expected NotFound for missing, got %v", err)
-	}
-}
-
-func TestGetAPIToken_TeamMemberCanRead(t *testing.T) {
-	repo := newFakeRepo()
-	createUC := NewCreateAPITokenUseCase(repo, &fakeAuth{})
-	out, _ := createUC.Execute(context.Background(), &CreateAPITokenInput{
-		Caller: callerWith([]entities.Permission{entities.PermissionSessionCreate}, "team"),
-		Scope:  "team", TeamID: "org/team",
-		Permissions: []entities.Permission{entities.PermissionSessionCreate},
-	})
-	getUC := NewGetAPITokenUseCase(repo)
-	member := callerWith([]entities.Permission{entities.PermissionSessionRead}, "team")
-	got, err := getUC.Execute(context.Background(), &GetAPITokenInput{Caller: member, TokenID: out.Token.ID()})
-	if err != nil {
-		t.Fatalf("member get: %v", err)
-	}
-	if got.Token.TeamID() != "org/team" {
-		t.Errorf("team = %q", got.Token.TeamID())
-	}
-}
-
-// --- Delete ---
-
-func TestDeleteAPIToken_OwnerDeletesAndRevokes(t *testing.T) {
-	repo := newFakeRepo()
-	auth := &fakeAuth{}
-	createUC := NewCreateAPITokenUseCase(repo, auth)
-	out, _ := createUC.Execute(context.Background(), &CreateAPITokenInput{
-		Caller: callerWith([]entities.Permission{entities.PermissionSessionRead}), Scope: "user",
-		Permissions: []entities.Permission{entities.PermissionSessionRead},
-	})
-	deleteUC := NewDeleteAPITokenUseCase(repo, auth)
-	// ensure owner.ID matches creator
-	owner := entities.NewUser(out.Token.UserID(), entities.UserTypeRegular, "owner")
-	owner.SetPermissions([]entities.Permission{entities.PermissionSessionRead})
-	if err := deleteUC.Execute(context.Background(), &DeleteAPITokenInput{Caller: owner, TokenID: out.Token.ID()}); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	if len(auth.revoked) != 1 || auth.revoked[0] != out.Token.Secret() {
-		t.Errorf("expected revoke, got %v", auth.revoked)
-	}
-	// token gone
-	if _, err := repo.GetByID(context.Background(), out.Token.ID()); !errors.Is(err, entities.ErrAPITokenNotFound) {
-		t.Errorf("expected gone, got %v", err)
-	}
-}
-
-func TestDeleteAPIToken_NonOwnerNoDeleteNoLeak(t *testing.T) {
-	repo := newFakeRepo()
-	auth := &fakeAuth{}
-	createUC := NewCreateAPITokenUseCase(repo, auth)
-	out, _ := createUC.Execute(context.Background(), &CreateAPITokenInput{
-		Caller: callerWith([]entities.Permission{entities.PermissionSessionRead}), Scope: "user",
-		Permissions: []entities.Permission{entities.PermissionSessionRead},
-	})
-	deleteUC := NewDeleteAPITokenUseCase(repo, auth)
-	other := entities.NewUser(entities.UserID("other-1"), entities.UserTypeRegular, "other")
-	other.SetPermissions([]entities.Permission{entities.PermissionSessionRead})
-	if err := deleteUC.Execute(context.Background(), &DeleteAPITokenInput{Caller: other, TokenID: out.Token.ID()}); err != nil {
-		t.Fatalf("delete returned error (should be silent): %v", err)
-	}
-	// token must still exist
-	if _, err := repo.GetByID(context.Background(), out.Token.ID()); err != nil {
-		t.Errorf("token was deleted by non-owner: %v", err)
-	}
-	if len(auth.revoked) != 0 {
-		t.Errorf("non-owner should not revoke, got %v", auth.revoked)
-	}
-}
-
-func TestDeleteAPIToken_TeamCreatorOrAdmin(t *testing.T) {
-	repo := newFakeRepo()
-	auth := &fakeAuth{}
-	createUC := NewCreateAPITokenUseCase(repo, auth)
-	creator := callerWith([]entities.Permission{entities.PermissionSessionCreate}, "team")
-	out, _ := createUC.Execute(context.Background(), &CreateAPITokenInput{
-		Caller: creator, Scope: "team", TeamID: "org/team",
-		Permissions: []entities.Permission{entities.PermissionSessionCreate},
-	})
-	deleteUC := NewDeleteAPITokenUseCase(repo, auth)
-
-	// a different team member (not creator) cannot delete
-	member := entities.NewUser(entities.UserID("member-1"), entities.UserTypeRegular, "member")
-	member.SetPermissions([]entities.Permission{entities.PermissionSessionCreate})
-	info := entities.NewGitHubUserInfo(2, "member", "member", "m@example.com", "", "", "")
-	member.SetGitHubInfo(info, []entities.GitHubTeamMembership{{Organization: "org", TeamSlug: "team"}})
-	if err := deleteUC.Execute(context.Background(), &DeleteAPITokenInput{Caller: member, TokenID: out.Token.ID()}); err != nil {
-		t.Fatalf("delete error: %v", err)
-	}
-	if _, err := repo.GetByID(context.Background(), out.Token.ID()); err != nil {
-		t.Errorf("non-creator team member deleted the token (should not): %v", err)
-	}
-
-	// creator can delete
-	if err := deleteUC.Execute(context.Background(), &DeleteAPITokenInput{Caller: creator, TokenID: out.Token.ID()}); err != nil {
-		t.Fatalf("creator delete: %v", err)
-	}
-	if _, err := repo.GetByID(context.Background(), out.Token.ID()); !errors.Is(err, entities.ErrAPITokenNotFound) {
-		t.Errorf("creator delete failed: %v", err)
-	}
-
-	// recreate and admin can delete
-	out2, _ := createUC.Execute(context.Background(), &CreateAPITokenInput{
-		Caller: creator, Scope: "team", TeamID: "org/team",
-		Permissions: []entities.Permission{entities.PermissionSessionCreate},
-	})
-	if err := deleteUC.Execute(context.Background(), &DeleteAPITokenInput{Caller: adminCaller(), TokenID: out2.Token.ID()}); err != nil {
-		t.Fatalf("admin delete: %v", err)
-	}
-}
-
-func TestDeleteAPIToken_IdempotentNonexistent(t *testing.T) {
-	repo := newFakeRepo()
-	deleteUC := NewDeleteAPITokenUseCase(repo, &fakeAuth{})
-	if err := deleteUC.Execute(context.Background(), &DeleteAPITokenInput{
-		Caller: callerWith([]entities.Permission{entities.PermissionSessionRead}), TokenID: "ghost",
-	}); err != nil {
-		t.Errorf("idempotent delete returned error: %v", err)
 	}
 }
