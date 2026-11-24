@@ -164,6 +164,9 @@ func (w *ControlWorker) executeCommand(commandCtx context.Context, command core.
 		w.postExecutionError(commandCtx, command, err)
 		return err
 	}
+	if command.Method == http.MethodPost && strings.HasSuffix(command.Path, "/suspend") {
+		log.Printf("[ESM_CONTROL] suspend command response id=%s path=%s status=%d", command.ID, command.Path, resp.StatusCode)
+	}
 	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 	return w.forwardCommandResponse(commandCtx, command, resp)
 }
