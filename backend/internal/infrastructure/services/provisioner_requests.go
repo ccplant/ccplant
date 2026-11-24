@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"log"
 	"time"
 
@@ -63,9 +64,16 @@ const sessionControlTokenContext = "session-control-auth:v1\x00"
 
 func deriveSessionControlToken(masterKey, sessionID string) string {
 	mac := hmac.New(sha256.New, []byte(masterKey))
-	_, _ = mac.Write([]byte(sessionControlTokenContext))
-	_, _ = mac.Write([]byte(sessionID))
+	writeSessionControlTokenHash(mac, []byte(sessionControlTokenContext))
+	writeSessionControlTokenHash(mac, []byte(sessionID))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func writeSessionControlTokenHash(mac hash.Hash, value []byte) {
+	written, err := mac.Write(value)
+	if err != nil || written != len(value) {
+		panic("sha256 hash rejected session control token input")
+	}
 }
 
 func validateSessionControlToken(masterKey, sessionID, token string) bool {
@@ -355,8 +363,14 @@ func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{"request.json": data},
 		}
-		_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, sec, metav1.CreateOptions{})
-		return err
+		created, createErr := m.client.CoreV1().Secrets(m.namespace).Create(ctx, sec, metav1.CreateOptions{})
+		if createErr != nil {
+			return createErr
+		}
+		if created == nil {
+			return fmt.Errorf("create provision request Secret returned no object")
+		}
+		return nil
 	}
 	if err != nil {
 		return err
@@ -367,8 +381,14 @@ func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req
 		sec.Data = make(map[string][]byte)
 	}
 	sec.Data["request.json"] = data
-	_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, sec, metav1.UpdateOptions{})
-	return err
+	updated, err := m.client.CoreV1().Secrets(m.namespace).Update(ctx, sec, metav1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+	if updated == nil {
+		return fmt.Errorf("update provision request Secret returned no object")
+	}
+	return nil
 }
 
 func (m *KubernetesSessionManager) deleteProvisionRequest(ctx context.Context, sessionID string) error {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // SimpleNotificationService implements NotificationService with basic functionality
@@ -157,7 +159,7 @@ func (s *SimpleNotificationService) sendWebhookNotification(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("failed to send webhook: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("webhook returned error status: %d", resp.StatusCode)
@@ -223,7 +225,7 @@ func (s *SimpleNotificationService) validateWebhookSubscription(subscription *en
 	if err != nil {
 		return fmt.Errorf("webhook endpoint unreachable: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(resp.Body) }()
 
 	return nil
 }

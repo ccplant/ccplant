@@ -3,7 +3,6 @@ package kvstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -166,47 +165,8 @@ func libSQLTableForRecord(record Record) string {
 
 func ensureLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
 	for _, table := range allLibSQLDataTables() {
-		statement := libSQLDataTableDDL(table, true)
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("initialize libSQL resource table %s: %w", table, err)
-		}
-		if table != libSQLFallbackTable {
-			if err := migrateLibSQLDedicatedTableKind(ctx, db, table); err != nil {
-				return err
-			}
-		}
-		if err := ensureLibSQLQueryColumns(ctx, db, table); err != nil {
+		if err := ensureLibSQLResourceTable(ctx, db, table); err != nil {
 			return err
-		}
-		columns := []string{"owner_scope"}
-		for _, resource := range libSQLResourceTables {
-			if resource.name == table {
-				columns = append(columns, resource.indexColumns...)
-				break
-			}
-		}
-		if table == libSQLFallbackTable {
-			columns = append(columns, libSQLQueryColumns...)
-		}
-		for _, column := range columns {
-			index := table + "_" + column + "_lookup"
-			trailingColumns := "namespace"
-			if table == libSQLFallbackTable {
-				trailingColumns = "kind, namespace"
-			} else if column == "runner_pool" {
-				// Runner lookups combine pool with a resource key prefix. Keep
-				// both constraints and ordering in one index lookup.
-				trailingColumns = "namespace, key"
-			}
-			// IF NOT EXISTS cannot evolve the older two-column pool index.
-			if column == "runner_pool" {
-				if _, err := db.ExecContext(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS %s`, index)); err != nil {
-					return fmt.Errorf("replace libSQL resource index %s: %w", index, err)
-				}
-			}
-			if _, err := db.ExecContext(ctx, fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (%s, %s)`, index, table, column, trailingColumns)); err != nil {
-				return fmt.Errorf("initialize libSQL resource index %s: %w", index, err)
-			}
 		}
 	}
 	if err := migrateLibSQLResourceTables(ctx, db); err != nil {
@@ -216,6 +176,28 @@ func ensureLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	return backfillLibSQLSessionRunnerQueryColumns(ctx, db)
+}
+
+func ensureLibSQLResourceTable(ctx context.Context, db *sql.DB, table string) error {
+	if _, err := db.ExecContext(ctx, libSQLDataTableDDL(table, true)); err != nil {
+		return fmt.Errorf("initialize libSQL resource table %s: %w", table, err)
+	}
+	if table != libSQLFallbackTable {
+		if err := migrateLibSQLDedicatedTableKind(ctx, db, table); err != nil {
+			return err
+		}
+	}
+	if err := ensureLibSQLQueryColumns(ctx, db, table); err != nil {
+		return err
+	}
+	columns := []string{"owner_scope"}
+	if resource, ok := libSQLResourceTableNamed(table); ok {
+		columns = append(columns, resource.indexColumns...)
+	}
+	if table == libSQLFallbackTable {
+		columns = append(columns, libSQLQueryColumns...)
+	}
+	return ensureLibSQLResourceIndexes(ctx, db, table, columns)
 }
 
 func libSQLDataTableDDL(table string, ifNotExists bool) string {
@@ -242,7 +224,7 @@ metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}
 PRIMARY KEY (%s))`, prefix, table, kindColumn, primaryKey)
 }
 
-func migrateLibSQLDedicatedTableKind(ctx context.Context, db *sql.DB, table string) error {
+func migrateLibSQLDedicatedTableKind(ctx context.Context, db *sql.DB, table string) (returnErr error) {
 	columns, err := libSQLTableColumns(ctx, db, table)
 	if err != nil || !columns["kind"] {
 		return err
@@ -251,7 +233,11 @@ func migrateLibSQLDedicatedTableKind(ctx context.Context, db *sql.DB, table stri
 	if err != nil {
 		return fmt.Errorf("begin libSQL kind migration for %s: %w", table, err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone && returnErr == nil {
+			returnErr = fmt.Errorf("rollback libSQL kind migration for %s: %w", table, err)
+		}
+	}()
 	legacy := table + "_kind_legacy"
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s RENAME TO %s", table, legacy)); err != nil {
 		return fmt.Errorf("rename libSQL table %s for kind migration: %w", table, err)
@@ -283,13 +269,17 @@ SELECT namespace, key, version, value, updated_at, owner_scope, metadata, %s FRO
 	return nil
 }
 
-func libSQLTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+func libSQLTableColumns(ctx context.Context, db *sql.DB, table string) (existing map[string]bool, returnErr error) {
 	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
 	if err != nil {
 		return nil, fmt.Errorf("inspect libSQL resource table %s: %w", table, err)
 	}
-	defer func() { _ = rows.Close() }()
-	existing := make(map[string]bool)
+	defer func() {
+		if err := rows.Close(); err != nil && returnErr == nil {
+			returnErr = fmt.Errorf("close libSQL table inspection for %s: %w", table, err)
+		}
+	}()
+	existing = make(map[string]bool)
 	for rows.Next() {
 		var cid, notNull, primaryKey int
 		var name, columnType string
@@ -358,56 +348,8 @@ name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); er
 		return nil
 	}
 	for _, table := range allLibSQLDataTables() {
-		hasKind := table == libSQLFallbackTable
-		selectColumns := "namespace, key, metadata"
-		if hasKind {
-			selectColumns = "kind, " + selectColumns
-		}
-		rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT %s FROM %s", selectColumns, table))
-		if err != nil {
+		if err := backfillLibSQLTableQueryColumns(ctx, db, table); err != nil {
 			return err
-		}
-		type pending struct {
-			kind, namespace, key string
-			values               []string
-		}
-		var updates []pending
-		for rows.Next() {
-			var item pending
-			var metadata []byte
-			destinations := []any{&item.namespace, &item.key, &metadata}
-			if hasKind {
-				destinations = append([]any{&item.kind}, destinations...)
-			}
-			if err := rows.Scan(destinations...); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			item.values, err = libSQLQueryColumnValues(metadata)
-			if err != nil {
-				_ = rows.Close()
-				return err
-			}
-			updates = append(updates, item)
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		set := strings.Join(libSQLQueryColumns, " = ?, ") + " = ?"
-		for _, item := range updates {
-			args := make([]any, 0, len(item.values)+3)
-			for _, value := range item.values {
-				args = append(args, value)
-			}
-			where := "namespace = ? AND key = ?"
-			if hasKind {
-				where = "kind = ? AND " + where
-				args = append(args, item.kind)
-			}
-			args = append(args, item.namespace, item.key)
-			if _, err := db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s WHERE %s", table, set, where), args...); err != nil {
-				return fmt.Errorf("backfill libSQL query columns in %s: %w", table, err)
-			}
 		}
 	}
 	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, migration); err != nil {
@@ -416,132 +358,65 @@ name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); er
 	return nil
 }
 
-func backfillLibSQLSessionRunnerQueryColumns(ctx context.Context, db *sql.DB) error {
-	const migration = "materialized-session-runner-columns-v1"
-	var applied int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, migration).Scan(&applied); err != nil {
-		return fmt.Errorf("inspect libSQL session runner column migration: %w", err)
-	}
-	if applied == 0 {
-		for _, resource := range libSQLResourceTables {
-			if resource.labelKey != "agentapi.proxy/session-runner-resource" {
-				continue
-			}
-			statement := fmt.Sprintf(`UPDATE %s SET
-runner_pool = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-pool-hash"'), ''),
-runner_status = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-status"'), ''),
-runner_dind = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-dind"'), '')`, resource.name)
-			if _, err := db.ExecContext(ctx, statement); err != nil {
-				return fmt.Errorf("backfill libSQL session runner query columns in %s: %w", resource.name, err)
-			}
-		}
-		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, migration); err != nil {
-			return fmt.Errorf("record libSQL session runner column migration: %w", err)
-		}
-	}
-	const managerMigration = "materialized-session-runner-manager-column-v1"
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, managerMigration).Scan(&applied); err != nil {
-		return fmt.Errorf("inspect libSQL session runner manager column migration: %w", err)
-	}
-	if applied != 0 {
-		return nil
-	}
-	for _, resource := range []string{"agentapi_session_runners", "agentapi_session_allocations"} {
-		statement := fmt.Sprintf(`UPDATE %s SET runner_manager = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-manager-hash"'), '')`, resource)
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("backfill libSQL session runner manager column in %s: %w", resource, err)
-		}
-	}
-	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, managerMigration); err != nil {
-		return fmt.Errorf("record libSQL session runner manager column migration: %w", err)
-	}
-	return nil
+type pendingLibSQLQueryColumnUpdate struct {
+	kind, namespace, key string
+	values               []string
 }
 
-// migrateLibSQLResourceTables moves records created by older releases out of
-// the catch-all table. INSERT OR IGNORE plus the correlated DELETE makes the
-// migration restart-safe if a process is interrupted between resource groups.
-func migrateLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
-	for _, resource := range libSQLResourceTables {
-		var predicate string
-		var args []any
-		if resource.labelKey != "" {
-			predicate = `json_extract(metadata, '$.labels."' || ? || '"') = ?`
-			args = []any{resource.labelKey, resource.labelValue}
-		} else {
-			predicate = `substr(key, 1, length(?)) = ?`
-			args = []any{resource.keyPrefix, resource.keyPrefix}
+func backfillLibSQLTableQueryColumns(ctx context.Context, db *sql.DB, table string) error {
+	hasKind := table == libSQLFallbackTable
+	updates, err := readPendingLibSQLQueryColumnUpdates(ctx, db, table, hasKind)
+	if err != nil {
+		return err
+	}
+	set := strings.Join(libSQLQueryColumns, " = ?, ") + " = ?"
+	for _, item := range updates {
+		args := make([]any, 0, len(item.values)+3)
+		for _, value := range item.values {
+			args = append(args, value)
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin libSQL resource migration: %w", err)
+		where := "namespace = ? AND key = ?"
+		if hasKind {
+			where = "kind = ? AND " + where
+			args = append(args, item.kind)
 		}
-		insert := fmt.Sprintf(`INSERT OR IGNORE INTO %s
-(namespace, key, version, value, updated_at, owner_scope, metadata)
-SELECT namespace, key, version, value, updated_at, owner_scope, metadata
-FROM agentapi_kv WHERE kind = ? AND %s`, resource.name, predicate)
-		migrationArgs := append([]any{resource.kind}, args...)
-		if _, err = tx.ExecContext(ctx, insert, migrationArgs...); err == nil {
-			remove := fmt.Sprintf(`DELETE FROM agentapi_kv WHERE kind = ? AND %s AND EXISTS (
-SELECT 1 FROM %s target WHERE target.namespace = agentapi_kv.namespace
-AND target.key = agentapi_kv.key)`, predicate, resource.name)
-			_, err = tx.ExecContext(ctx, remove, migrationArgs...)
-		}
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("migrate libSQL resource table %s: %w", resource.name, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit libSQL resource migration for %s: %w", resource.name, err)
+		args = append(args, item.namespace, item.key)
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s WHERE %s", table, set, where), args...); err != nil {
+			return fmt.Errorf("backfill libSQL query columns in %s: %w", table, err)
 		}
 	}
 	return nil
 }
 
-func (s *LibSQLStore) tableContaining(ctx context.Context, kind Kind, namespace, key string) (string, error) {
-	locationKey := libSQLLocationKey(kind, namespace, key)
-	if cached, ok := s.tableLocations.Load(locationKey); ok {
-		return cached.(string), nil
+func readPendingLibSQLQueryColumnUpdates(ctx context.Context, db *sql.DB, table string, hasKind bool) (updates []pendingLibSQLQueryColumnUpdate, returnErr error) {
+	selectColumns := "namespace, key, metadata"
+	if hasKind {
+		selectColumns = "kind, " + selectColumns
 	}
-	var statement strings.Builder
-	var args []any
-	wroteTable := false
-	statement.WriteString("SELECT table_name FROM (")
-	tables := allLibSQLDataTables()
-	if table, ok := libSQLSessionRunnerTableForKey(kind, key); ok {
-		// Keep fallback compatibility for rolling upgrades without probing every
-		// unrelated resource table on each runner point read or write.
-		tables = []string{table, libSQLFallbackTable}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT %s FROM %s", selectColumns, table))
+	if err != nil {
+		return nil, err
 	}
-	for _, table := range tables {
-		resource, dedicated := libSQLResourceTableNamed(table)
-		if dedicated && resource.kind != kind {
-			continue
+	defer func() {
+		if err := rows.Close(); err != nil && returnErr == nil {
+			returnErr = fmt.Errorf("close libSQL query column scan for %s: %w", table, err)
 		}
-		if wroteTable {
-			statement.WriteString(" UNION ALL ")
+	}()
+	for rows.Next() {
+		var item pendingLibSQLQueryColumnUpdate
+		var metadata []byte
+		destinations := []any{&item.namespace, &item.key, &metadata}
+		if hasKind {
+			destinations = append([]any{&item.kind}, destinations...)
 		}
-		if dedicated {
-			fmt.Fprintf(&statement, "SELECT '%s' AS table_name FROM %s WHERE namespace = ? AND key = ?", table, table)
-			args = append(args, namespace, key)
-		} else {
-			fmt.Fprintf(&statement, "SELECT '%s' AS table_name FROM %s WHERE kind = ? AND namespace = ? AND key = ?", table, table)
-			args = append(args, kind, namespace, key)
+		if err := rows.Scan(destinations...); err != nil {
+			return nil, err
 		}
-		wroteTable = true
+		item.values, err = libSQLQueryColumnValues(metadata)
+		if err != nil {
+			return nil, err
+		}
+		updates = append(updates, item)
 	}
-	statement.WriteString(") LIMIT 1")
-	var table string
-	if err := s.db.QueryRowContext(ctx, statement.String(), args...).Scan(&table); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrNotFound
-		}
-		return "", fmt.Errorf("locate libSQL resource: %w", err)
-	}
-	s.tableLocations.Store(locationKey, table)
-	return table, nil
-}
-
-func libSQLLocationKey(kind Kind, namespace, key string) string {
-	return string(kind) + "\x00" + namespace + "\x00" + key
+	return updates, rows.Err()
 }

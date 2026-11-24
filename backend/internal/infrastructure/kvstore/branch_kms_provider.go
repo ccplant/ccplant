@@ -14,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -128,7 +129,7 @@ func (p *cloudKMSProvider) call(ctx context.Context, keyRef, operation string, i
 	if err != nil {
 		return fmt.Errorf("call Cloud KMS %s: %w", operation, err)
 	}
-	defer resp.Body.Close()
+	defer closeutils.SafeCloseResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("Cloud KMS %s returned HTTP %d", operation, resp.StatusCode)

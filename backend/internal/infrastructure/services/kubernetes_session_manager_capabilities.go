@@ -8,6 +8,7 @@ import (
 	"time"
 
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	closeutils "github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 func (m *KubernetesSessionManager) TouchSession(ctx context.Context, id string, at time.Time) error {
@@ -42,7 +43,7 @@ func (m *KubernetesSessionManager) GetSessionSandboxDomains(ctx context.Context,
 	if err != nil {
 		return nil, fmt.Errorf("query session network filter: %w", err)
 	}
-	defer func() { _ = response.Body.Close() }()
+	defer func() { closeutils.SafeCloseResponseBody(response.Body) }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("session network filter returned %s", response.Status)
 	}

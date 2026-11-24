@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -113,7 +114,10 @@ func TestScopedBranchKMSKeyringSeparatesOwnersAndReadsLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyStore, _ := NewEncryptedStore(backend, legacyKeyring)
+	legacyStore, err := NewEncryptedStore(backend, legacyKeyring)
+	if err != nil {
+		t.Fatal(err)
+	}
 	legacyValue := secretDocument(t, "legacy", map[string]string{"agentapi.proxy/settings-name": "legacy-user"}, "legacy-secret")
 	if _, err := legacyStore.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "legacy", Value: legacyValue}); err != nil {
 		t.Fatal(err)
@@ -123,7 +127,10 @@ func TestScopedBranchKMSKeyringSeparatesOwnersAndReadsLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scopedStore, _ := NewEncryptedStore(backend, scopedKeyring)
+	scopedStore, err := NewEncryptedStore(backend, scopedKeyring)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, owner := range []string{"alice", "bob"} {
 		value := secretDocument(t, owner, map[string]string{"agentapi.proxy/settings-name": owner}, "secret-"+owner)
 		if _, err := scopedStore.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: owner, Value: value}); err != nil {
@@ -146,8 +153,14 @@ func TestScopedBranchKMSKeyringSeparatesOwnersAndReadsLegacy(t *testing.T) {
 	if err != nil || !recognized || aliceBranch.Scope == "" {
 		t.Fatalf("scoped branch = %#v recognized=%t err=%v", aliceBranch, recognized, err)
 	}
-	compatibleReader, _ := newPersistentBranchKMSKeyring("current", keys, provider, registry, nil, time.Hour, 8, false)
-	compatibleStore, _ := NewEncryptedStore(backend, compatibleReader)
+	compatibleReader, err := newPersistentBranchKMSKeyring("current", keys, provider, registry, nil, time.Hour, 8, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatibleStore, err := NewEncryptedStore(backend, compatibleReader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := compatibleStore.Get(ctx, KindSecret, "ns", "alice"); err != nil {
 		t.Fatalf("legacy-configured reader did not accept v3: %v", err)
 	}
@@ -159,15 +172,27 @@ func TestScopedBranchKMSKeyringRewrapsLegacyWithoutChangingCiphertext(t *testing
 	registry := NewMemoryBranchKeyRegistry()
 	keys := map[string]string{"current": "arn:aws:kms:region:account:key/current"}
 	backend := newMemoryStore()
-	legacy, _ := newPersistentBranchKMSKeyring("current", keys, provider, registry, nil, time.Hour, 8, false)
-	legacyStore, _ := NewEncryptedStore(backend, legacy)
+	legacy, err := newPersistentBranchKMSKeyring("current", keys, provider, registry, nil, time.Hour, 8, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyStore, err := NewEncryptedStore(backend, legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
 	value := secretDocument(t, "item", map[string]string{"agentapi.proxy/settings-name": "alice"}, "secret")
 	if _, err := legacyStore.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "item", Value: value}); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := parseEnvelope(backend.records[recordKey(KindSecret, "ns", "item")].Value)
+	before, err := parseEnvelope(backend.records[recordKey(KindSecret, "ns", "item")].Value)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	scoped, _ := newPersistentBranchKMSKeyring("current", keys, provider, registry, nil, time.Hour, 8, true)
+	scoped, err := newPersistentBranchKMSKeyring("current", keys, provider, registry, nil, time.Hour, 8, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := RewrapAll(ctx, backend, scoped, "ns", false)
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +200,10 @@ func TestScopedBranchKMSKeyringRewrapsLegacyWithoutChangingCiphertext(t *testing
 	if result.Rewrapped != 1 {
 		t.Fatalf("rewrapped = %d, want 1", result.Rewrapped)
 	}
-	after, _ := parseEnvelope(backend.records[recordKey(KindSecret, "ns", "item")].Value)
+	after, err := parseEnvelope(backend.records[recordKey(KindSecret, "ns", "item")].Value)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(before.Ciphertext, after.Ciphertext) || !bytes.Equal(before.Nonce, after.Nonce) {
 		t.Fatal("rewrap changed value ciphertext")
 	}
@@ -257,9 +285,14 @@ func TestCloudProviderUsesSamePersistentBranchArchitecture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := keyring.GenerateDataKey(context.Background(), Record{Kind: KindSecret, Namespace: "ns", Key: "key"}); err != nil {
+	plaintext, wrapped, err := keyring.GenerateDataKey(context.Background(), Record{Kind: KindSecret, Namespace: "ns", Key: "key"})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if len(plaintext) == 0 || len(wrapped) == 0 {
+		t.Fatal("generated branch data key is empty")
+	}
+	clear(plaintext)
 	record, err := registry.GetActiveBranchKey(context.Background(), "cloud-kms", "current", "")
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +322,11 @@ func TestLibSQLBranchKeyRegistryPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close reopened branch key store: %v", err)
+		}
+	})
 	got, err := store.GetActiveBranchKey(ctx, want.Provider, want.KeyID, want.Scope)
 	if err != nil {
 		t.Fatal(err)
@@ -306,13 +343,20 @@ func TestLibSQLBranchKeyRegistryMigratesLegacySchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`CREATE TABLE agentapi_kv_branch_keys (
+	createResult, err := db.Exec(`CREATE TABLE agentapi_kv_branch_keys (
 provider TEXT NOT NULL, key_id TEXT NOT NULL, generation INTEGER NOT NULL,
 kms_key_ref TEXT NOT NULL, wrapped_key BLOB NOT NULL, status TEXT NOT NULL,
 created_at TEXT NOT NULL, PRIMARY KEY (provider, key_id, generation))`)
+	if err == nil && createResult == nil {
+		err = errors.New("legacy branch key table creation returned no result")
+	}
 	if err == nil {
-		_, err = db.Exec(`INSERT INTO agentapi_kv_branch_keys VALUES
+		var insertResult sql.Result
+		insertResult, err = db.Exec(`INSERT INTO agentapi_kv_branch_keys VALUES
 ('aws-kms','current',1,'arn:legacy',X'01','active','2026-01-01T00:00:00Z')`)
+		if err == nil && insertResult == nil {
+			err = errors.New("legacy branch key insert returned no result")
+		}
 	}
 	if closeErr := db.Close(); err == nil {
 		err = closeErr
@@ -325,7 +369,11 @@ created_at TEXT NOT NULL, PRIMARY KEY (provider, key_id, generation))`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close migrated branch key store: %v", err)
+		}
+	})
 	legacy, err := store.GetActiveBranchKey(ctx, "aws-kms", "current", "")
 	if err != nil || legacy.Generation != 1 {
 		t.Fatalf("legacy record after migration = %#v, err=%v", legacy, err)

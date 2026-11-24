@@ -13,10 +13,10 @@ import (
 
 func TestEncryptionServiceFactory_Create_Noop(t *testing.T) {
 	// 環境変数をクリア
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID")
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_REGION")
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY_FILE")
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID", "")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_REGION", "")
+	t.Setenv("AGENTAPI_ENCRYPTION_KEY_FILE", "")
+	t.Setenv("AGENTAPI_ENCRYPTION_KEY", "")
 
 	factory := NewEncryptionServiceFactory("")
 
@@ -35,17 +35,17 @@ func TestEncryptionServiceFactory_Create_Noop(t *testing.T) {
 
 func TestEncryptionServiceFactory_Create_Local(t *testing.T) {
 	// 環境変数をクリア
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID")
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_REGION")
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY_FILE")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID", "")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_REGION", "")
+	t.Setenv("AGENTAPI_ENCRYPTION_KEY_FILE", "")
 
 	// テスト用のキーを環境変数に設定
 	testKey := make([]byte, 32)
-	_, err := rand.Read(testKey)
+	bytesRead, err := rand.Read(testKey)
 	require.NoError(t, err)
+	require.Len(t, testKey[:bytesRead], len(testKey))
 	keyB64 := base64.StdEncoding.EncodeToString(testKey)
-	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64))
-	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
+	t.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64)
 
 	factory := NewEncryptionServiceFactory("")
 
@@ -64,21 +64,21 @@ func TestEncryptionServiceFactory_Create_Local(t *testing.T) {
 
 func TestEncryptionServiceFactory_Create_LocalFromFile(t *testing.T) {
 	// 環境変数をクリア
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID")
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_REGION")
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID", "")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_REGION", "")
+	t.Setenv("AGENTAPI_ENCRYPTION_KEY", "")
 
 	// テスト用のキーファイルを作成
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "encryption.key")
 	testKey := make([]byte, 32)
-	_, err := rand.Read(testKey)
+	bytesRead, err := rand.Read(testKey)
 	require.NoError(t, err)
+	require.Len(t, testKey[:bytesRead], len(testKey))
 	err = os.WriteFile(keyPath, testKey, 0600)
 	require.NoError(t, err)
 
-	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY_FILE", keyPath))
-	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY_FILE") }()
+	t.Setenv("AGENTAPI_ENCRYPTION_KEY_FILE", keyPath)
 
 	factory := NewEncryptionServiceFactory("")
 
@@ -97,20 +97,16 @@ func TestEncryptionServiceFactory_Create_LocalFromFile(t *testing.T) {
 
 func TestEncryptionServiceFactory_Create_KMS_FallbackToLocal(t *testing.T) {
 	// KMS の設定（実際には使えないので Local にフォールバック）
-	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID", "arn:aws:kms:us-east-1:123456789012:key/test"))
-	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KMS_REGION", "us-east-1"))
-	defer func() {
-		_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID")
-		_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_REGION")
-	}()
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID", "arn:aws:kms:us-east-1:123456789012:key/test")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_REGION", "us-east-1")
 
 	// Local の設定
 	testKey := make([]byte, 32)
-	_, err := rand.Read(testKey)
+	bytesRead, err := rand.Read(testKey)
 	require.NoError(t, err)
+	require.Len(t, testKey[:bytesRead], len(testKey))
 	keyB64 := base64.StdEncoding.EncodeToString(testKey)
-	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64))
-	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
+	t.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64)
 
 	factory := NewEncryptionServiceFactory("")
 
@@ -128,12 +124,11 @@ func TestEncryptionServiceFactory_Create_KMS_FallbackToLocal(t *testing.T) {
 
 func TestEncryptionServiceFactory_Create_InvalidLocal_FallbackToNoop(t *testing.T) {
 	// 環境変数をクリア
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID")
-	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KMS_REGION")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID", "")
+	t.Setenv("AGENTAPI_ENCRYPTION_KMS_REGION", "")
 
 	// 不正なキーを設定（サイズが違う）
-	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", "invalid-key"))
-	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
+	t.Setenv("AGENTAPI_ENCRYPTION_KEY", "invalid-key")
 
 	factory := NewEncryptionServiceFactory("")
 

@@ -3,7 +3,9 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -32,8 +34,7 @@ func NewLibSQLSessionCountRepository(ctx context.Context, databaseURL, authToken
 	db.SetMaxOpenConns(8)
 	r := &LibSQLSessionCountRepository{db: db}
 	if err := r.initialize(ctx); err != nil {
-		_ = db.Close()
-		return nil, err
+		return nil, errors.Join(err, db.Close())
 	}
 	return r, nil
 }
@@ -54,8 +55,12 @@ ON agentapi_session_status_events(pool, occurred_at)`,
 ON agentapi_session_status_events(session_id, occurred_at)`,
 	}
 	for _, statement := range statements {
-		if _, err := r.db.ExecContext(ctx, statement); err != nil {
+		result, err := r.db.ExecContext(ctx, statement)
+		if err != nil {
 			return fmt.Errorf("initialize session count schema: %w", err)
+		}
+		if result == nil {
+			return errors.New("initialize session count schema returned no result")
 		}
 	}
 	return nil
@@ -66,17 +71,28 @@ func (r *LibSQLSessionCountRepository) SaveEvent(ctx context.Context, event enti
 	if err != nil {
 		return fmt.Errorf("begin session status event: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_count_dimensions
-(pool,principal_id) VALUES (?,?)`, event.Pool, event.PrincipalID); err != nil {
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			log.Printf("rollback session status event: %v", err)
+		}
+	}()
+	dimensionResult, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_count_dimensions
+(pool,principal_id) VALUES (?,?)`, event.Pool, event.PrincipalID)
+	if err != nil {
 		return fmt.Errorf("save session count dimension: %w", err)
 	}
-	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_status_events
+	if dimensionResult == nil {
+		return errors.New("save session count dimension returned no result")
+	}
+	eventResult, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_status_events
 (event_id,occurred_at,session_id,pool,scope,principal_id,status) VALUES (?,?,?,?,?,?,?)`,
 		event.EventID, event.OccurredAt.UTC().Format(time.RFC3339Nano), event.SessionID,
 		event.Pool, event.Scope, event.PrincipalID, event.Status)
 	if err != nil {
 		return fmt.Errorf("save session status event: %w", err)
+	}
+	if eventResult == nil {
+		return errors.New("save session status event returned no result")
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit session status event: %w", err)
@@ -112,7 +128,7 @@ FROM selected ORDER BY session_id,occurred_at,event_id`
 	if err != nil {
 		return nil, fmt.Errorf("list session runtime events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer closeUsageRows(rows)
 	events := []entities.SessionStatusUsageEvent{}
 	for rows.Next() {
 		var event entities.SessionStatusUsageEvent

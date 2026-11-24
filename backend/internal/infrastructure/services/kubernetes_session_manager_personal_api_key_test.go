@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	fixtureassert "github.com/stretchr/testify/assert"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -139,7 +140,7 @@ func TestBuildSessionSettings_ExistingPersonalAPIKeyNotReloaded(t *testing.T) {
 
 	repo := newFakePersonalAPIKeyRepo()
 	existing := entities.NewPersonalAPIKey("existing-user", "existing-key-abc")
-	_ = repo.Save(context.Background(), existing)
+	fixtureassert.NoError(t, repo.Save(context.Background(), existing))
 
 	loader := &fakePersonalAPIKeyLoader{}
 

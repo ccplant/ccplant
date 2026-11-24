@@ -124,7 +124,7 @@ func (m *SessionManager) startSessionResponse(ctx context.Context, apiURL string
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer utils.SafeCloseResponseBody(resp.Body)
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("session creation API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
@@ -291,7 +291,7 @@ func (m *SessionManager) do(ctx context.Context, method, path string, input, out
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { utils.SafeCloseResponseBody(resp.Body) }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(resp.Body)
 		return &HTTPStatusError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}

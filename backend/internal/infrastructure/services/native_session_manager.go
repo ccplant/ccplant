@@ -1,27 +1,21 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 // NativeSessionManager runs one agent-provisioner process per session on the host.
@@ -125,7 +119,7 @@ func (m *NativeSessionManager) CreateSession(ctx context.Context, id string, req
 	return m.CreateSessionDirect(ctx, id, req, webhookPayload)
 }
 
-func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string, req *entities.RunServerRequest, _ []byte) (entities.Session, error) {
+func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string, req *entities.RunServerRequest, _ []byte) (returnSession entities.Session, returnErr error) {
 	if req == nil {
 		return nil, errors.New("native session requires allocation metadata")
 	}
@@ -139,149 +133,26 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 	}
 	m.mu.Unlock()
 
-	root := filepath.Join(m.stateDir, "sessions", id)
+	paths, err := prepareNativeSessionDirectories(m.stateDir, id)
+	if err != nil {
+		return nil, err
+	}
 	created := false
 	defer func() {
 		if !created {
-			_ = os.RemoveAll(root)
+			returnErr = errors.Join(returnErr, paths.cleanup())
 		}
 	}()
-	home := filepath.Join(root, "home")
-	workdir := filepath.Join(root, "workdir")
-	runtimeDir := filepath.Join(root, "runtime")
-	buildDir := filepath.Join(root, "build")
-	tmpDir := filepath.Join(root, "tmp")
-	for _, dir := range []string{home, workdir, runtimeDir, buildDir, tmpDir} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, fmt.Errorf("create session directory %s: %w", dir, err)
-		}
-	}
-	herdrRuntimeDir := nativeHerdrRuntimeDir(id)
-	if err := os.MkdirAll(herdrRuntimeDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create native herdr runtime directory: %w", err)
-	}
-	if err := os.Chmod(herdrRuntimeDir, 0o700); err != nil {
-		return nil, fmt.Errorf("secure native herdr runtime directory: %w", err)
-	}
-	defer func() {
-		if !created {
-			_ = os.RemoveAll(herdrRuntimeDir)
-		}
-	}()
-	agentPort, err := reserveTCPPort()
+	ports, err := reserveNativeSessionPorts()
 	if err != nil {
 		return nil, err
 	}
-	provisionerPort, err := reserveTCPPort()
+	session, err := m.launchNativeSession(id, req, ports, paths)
 	if err != nil {
-		return nil, err
-	}
-
-	now := time.Now().UTC()
-	sessionCtx, cancel := context.WithCancel(context.Background())
-	s := &NativeSession{
-		id: id, request: req, rootDir: root, agentPort: agentPort,
-		provisionerPort: provisionerPort, startedAt: now, updatedAt: now,
-		lastMessageAt: now, status: "creating", description: req.InitialMessage, cancel: cancel,
-	}
-	provisionReq := &ProvisionRequest{
-		RequestID: id + "-provision-1", SessionID: id, Type: provisionRequestType,
-		Settings: req.ProvisionSettings, Status: "pending", UpdatedAt: now,
-	}
-
-	logPath := filepath.Join(runtimeDir, "provisioner.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("open provisioner log: %w", err)
-	}
-	cmd, err := m.newProvisionerCommand(sessionCtx, root, runtimeDir, provisionerPort)
-	if err != nil {
-		_ = logFile.Close()
-		cancel()
-		return nil, err
-	}
-	cmd.Dir = workdir
-	cmd.Env = nativeProvisionerEnvironment(os.Environ(),
-		"HOME="+home,
-		// herdr-core uses XDG_RUNTIME_DIR for its Unix socket. Native session
-		// homes can be deeply nested enough to exceed sockaddr_un's path limit.
-		"XDG_RUNTIME_DIR="+herdrRuntimeDir,
-		"TMPDIR="+tmpDir,
-		"CFFIXED_USER_HOME="+home,
-		"AGENTAPI_NATIVE_SESSION_ROOT="+root,
-		"AGENTAPI_BUILD_DIR="+buildDir,
-		"CCPLANT_BINARY_PATH="+m.binaryPath,
-		"AGENTAPI_SESSION_ID="+id,
-		"AGENTAPI_PORT="+strconv.Itoa(agentPort),
-		"PROVISIONER_PROXY_URL="+m.proxyURL,
-		"PROVISIONER_TOKEN="+deriveSessionControlToken(m.provisionerToken, id),
-		"SESSION_CONTROL_TOKEN="+deriveSessionControlToken(m.provisionerToken, id),
-		"PROVISIONER_UPSTREAM_AUTH_TOKEN="+m.upstreamAuthToken,
-		"POD_NAME=native-"+id,
-		"POD_NAMESPACE=native",
-		"PROVISIONER_PRE_SCRIPT=true",
-	)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	m.mu.Lock()
-	m.sessions[id] = s
-	m.provisionRequests[id] = provisionReq
-	m.mu.Unlock()
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		cancel()
-		m.mu.Lock()
-		delete(m.sessions, id)
-		delete(m.provisionRequests, id)
-		m.mu.Unlock()
-		return nil, fmt.Errorf("start agent-provisioner: %w", err)
-	}
-	s.cmd = cmd
-	s.pid = cmd.Process.Pid
-	if err := m.persistSession(s); err != nil {
-		s.mu.Lock()
-		s.status = "terminating"
-		s.mu.Unlock()
-		cancel()
-		_ = terminateNativeProcessGroup(cmd.Process.Pid, root)
-		m.mu.Lock()
-		delete(m.sessions, id)
-		delete(m.provisionRequests, id)
-		m.mu.Unlock()
 		return nil, err
 	}
 	created = true
-	go func() {
-		err := cmd.Wait()
-		_ = logFile.Close()
-		s.mu.Lock()
-		cleanup := s.status != "stopped" && s.status != "terminating"
-		if cleanup {
-			s.status = "error"
-			if err != nil {
-				s.statusMessage = err.Error()
-			}
-		}
-		s.updatedAt = time.Now().UTC()
-		s.mu.Unlock()
-		if !cleanup {
-			return
-		}
-		m.mu.Lock()
-		delete(m.provisionRequests, id)
-		m.mu.Unlock()
-		if err := cleanupNativeSessionDirs(root); err != nil {
-			s.mu.Lock()
-			s.statusMessage = "session cleanup failed: " + err.Error()
-			s.updatedAt = time.Now().UTC()
-			s.mu.Unlock()
-			_ = m.persistSession(s)
-		}
-	}()
-	return s, nil
+	return session, nil
 }
 
 func validNativeSessionID(id string) bool {
@@ -295,7 +166,7 @@ func nativeHerdrRuntimeDir(id string) string {
 func nativeProvisionerEnvironment(base []string, values ...string) []string {
 	overrides := make(map[string]struct{}, len(values)+3)
 	for _, value := range values {
-		if key, _, ok := strings.Cut(value, "="); ok {
+		if key, ok := nativeEnvironmentKey(value); ok {
 			overrides[key] = struct{}{}
 		}
 	}
@@ -304,7 +175,7 @@ func nativeProvisionerEnvironment(base []string, values ...string) []string {
 	}
 	env := make([]string, 0, len(base)+len(values))
 	for _, value := range base {
-		key, _, ok := strings.Cut(value, "=")
+		key, ok := nativeEnvironmentKey(value)
 		if ok {
 			if _, overridden := overrides[key]; overridden {
 				continue
@@ -315,13 +186,24 @@ func nativeProvisionerEnvironment(base []string, values ...string) []string {
 	return append(env, values...)
 }
 
+func nativeEnvironmentKey(value string) (string, bool) {
+	separator := strings.IndexByte(value, '=')
+	if separator < 0 {
+		return "", false
+	}
+	return value[:separator], true
+}
+
 func reserveTCPPort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, fmt.Errorf("reserve TCP port: %w", err)
 	}
-	defer func() { _ = ln.Close() }()
-	return ln.Addr().(*net.TCPAddr).Port, nil
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		return 0, fmt.Errorf("close reserved TCP port: %w", err)
+	}
+	return port, nil
 }
 
 func (m *NativeSessionManager) ValidateProvisionerToken(token string) bool {
@@ -387,444 +269,9 @@ func (m *NativeSessionManager) UpdateProvisionRequestStatus(_ context.Context, s
 		}
 		s.updatedAt = time.Now().UTC()
 		s.mu.Unlock()
-		_ = m.persistSession(s)
-	}
-	return nil
-}
-
-func (m *NativeSessionManager) GetSession(id string) entities.Session {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	session, ok := m.sessions[id]
-	if !ok || session == nil {
-		return nil
-	}
-	return session
-}
-
-func (m *NativeSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := make([]entities.Session, 0, len(m.sessions))
-	for _, s := range m.sessions {
-		if filter.UserID != "" && s.UserID() != filter.UserID {
-			continue
-		}
-		if filter.Scope != "" && s.Scope() != filter.Scope {
-			continue
-		}
-		if filter.TeamID != "" && s.TeamID() != filter.TeamID {
-			continue
-		}
-		if filter.Status != "" && s.Status() != filter.Status {
-			continue
-		}
-		result = append(result, s)
-	}
-	return result
-}
-
-// ActiveSessionCount returns the number of native workloads that have not
-// reached a terminal state. Finished sessions may remain available for
-// inspection until they are explicitly deleted, but must not be reported as
-// active in manager heartbeats.
-func (m *NativeSessionManager) ActiveSessionCount() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	count := 0
-	for _, s := range m.sessions {
-		if s != nil && nativeSessionStatusActive(s.Status()) {
-			count++
-		}
-	}
-	return count
-}
-
-func nativeSessionStatusActive(status string) bool {
-	switch strings.ToLower(status) {
-	case "error", "failed", "exited", "stopped", "terminated":
-		return false
-	default:
-		return true
-	}
-}
-
-func (m *NativeSessionManager) DeleteSession(id string) error {
-	m.mu.Lock()
-	s := m.sessions[id]
-	if s == nil {
-		m.mu.Unlock()
-		return nil
-	}
-	rel, pathErr := filepath.Rel(filepath.Join(m.stateDir, "sessions"), s.rootDir)
-	if pathErr != nil || rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		m.mu.Unlock()
-		return fmt.Errorf("unsafe session state path for %s", id)
-	}
-	s.mu.Lock()
-	if s.deleteDone != nil {
-		done := s.deleteDone
-		s.mu.Unlock()
-		m.mu.Unlock()
-		<-done
-		s.mu.RLock()
-		err := s.deleteErr
-		s.mu.RUnlock()
-		return err
-	}
-	s.deleteDone = make(chan struct{})
-	s.deleteErr = nil
-	done := s.deleteDone
-	s.status = "terminating"
-	s.updatedAt = time.Now().UTC()
-	pid := s.pid
-	cancel := s.cancel
-	s.mu.Unlock()
-	delete(m.provisionRequests, id)
-	m.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	err := terminateNativeProcessGroup(pid, s.rootDir)
-	if err == nil {
-		m.mu.Lock()
-		if m.sessions[id] == s {
-			delete(m.sessions, id)
-		}
-		m.mu.Unlock()
-	}
-	s.mu.Lock()
-	s.deleteErr = err
-	if err != nil {
-		s.status = "stopped"
-		s.statusMessage = "session cleanup failed: " + err.Error()
-		s.updatedAt = time.Now().UTC()
-	}
-	close(done)
-	if err != nil {
-		s.deleteDone = nil
-	}
-	s.mu.Unlock()
-	if err != nil {
-		_ = m.persistSession(s)
-	}
-	return err
-}
-
-func terminateNativeProcessGroup(pid int, root string) error {
-	if strings.TrimSpace(root) == "" || filepath.Clean(root) == string(filepath.Separator) {
-		return errors.New("unsafe session state path")
-	}
-	if pid > 0 {
-		if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-			return fmt.Errorf("terminate process group: %w", err)
-		}
-		deadline := time.Now().Add(10 * time.Second)
-		for time.Now().Before(deadline) {
-			if syscall.Kill(-pid, 0) != nil {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-		if syscall.Kill(-pid, 0) == nil {
-			if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-				return fmt.Errorf("kill process group: %w", err)
-			}
-			deadline = time.Now().Add(2 * time.Second)
-			for time.Now().Before(deadline) && syscall.Kill(-pid, 0) == nil {
-				time.Sleep(25 * time.Millisecond)
-			}
-			if syscall.Kill(-pid, 0) == nil {
-				return errors.New("process group still exists after SIGKILL")
-			}
-		}
-	}
-	return cleanupNativeSessionDirs(root)
-}
-
-func cleanupNativeSessionDirs(root string) error {
-	stateErr := os.RemoveAll(root)
-	herdrErr := os.RemoveAll(nativeHerdrRuntimeDir(filepath.Base(root)))
-	if stateErr != nil {
-		stateErr = fmt.Errorf("remove session state: %w", stateErr)
-	}
-	if herdrErr != nil {
-		herdrErr = fmt.Errorf("remove session herdr runtime: %w", herdrErr)
-	}
-	return errors.Join(stateErr, herdrErr)
-}
-
-func (m *NativeSessionManager) SendMessage(ctx context.Context, id, message string) error {
-	s := m.nativeSession(id)
-	if s == nil {
-		return fmt.Errorf("session %s not found", id)
-	}
-	path := "/message"
-	payload, _ := json.Marshal(map[string]string{"content": message, "type": "user"})
-	if s.request != nil && strings.HasSuffix(s.request.AgentType, "-acp") {
-		acpSessionID, err := m.getACPSessionID(ctx, s)
-		if err != nil {
+		if err := m.persistSession(s); err != nil {
 			return err
 		}
-		path = "/rpc"
-		payload, _ = json.Marshal(map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      time.Now().UnixNano(),
-			"method":  "session/prompt",
-			"params": map[string]interface{}{
-				"sessionId": acpSessionID,
-				"prompt":    []map[string]string{{"type": "text", "text": message}},
-			},
-		})
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+s.Addr()+path, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("message returned %d: %s", resp.StatusCode, body)
-	}
-	s.mu.Lock()
-	s.lastMessageAt, s.updatedAt = time.Now().UTC(), time.Now().UTC()
-	s.mu.Unlock()
-	_ = m.persistSession(s)
-	return nil
-}
-
-func (m *NativeSessionManager) getACPSessionID(ctx context.Context, s *NativeSession) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+s.Addr()+"/session", nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("ACP session returned HTTP %d", resp.StatusCode)
-	}
-	var result struct {
-		SessionID string `json:"sessionId"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-	if result.SessionID == "" {
-		return "", errors.New("ACP session ID is empty")
-	}
-	return result.SessionID, nil
-}
-
-func (m *NativeSessionManager) StopAgent(ctx context.Context, id string) error {
-	s := m.nativeSession(id)
-	if s == nil {
-		return fmt.Errorf("session %s not found", id)
-	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+s.Addr()+"/stop", nil)
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("stop returned HTTP %d", resp.StatusCode)
 	}
 	return nil
-}
-
-func (m *NativeSessionManager) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
-	s := m.nativeSession(id)
-	if s == nil {
-		return nil, fmt.Errorf("session %s not found", id)
-	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+s.Addr()+"/messages", nil)
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("messages returned HTTP %d", resp.StatusCode)
-	}
-	var result struct {
-		Messages []portrepos.Message `json:"messages"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return result.Messages, nil
-}
-
-func (m *NativeSessionManager) Shutdown(_ time.Duration) error {
-	m.mu.RLock()
-	ids := make([]string, 0, len(m.sessions))
-	for id := range m.sessions {
-		ids = append(ids, id)
-	}
-	m.mu.RUnlock()
-	for _, id := range ids {
-		_ = m.DeleteSession(id)
-	}
-	return nil
-}
-
-func (m *NativeSessionManager) nativeSession(id string) *NativeSession {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.sessions[id]
-}
-
-func (m *NativeSessionManager) persistSession(s *NativeSession) error {
-	s.mu.RLock()
-	state := nativeSessionState{ID: s.id, Request: s.request, RootDir: s.rootDir, AgentPort: s.agentPort,
-		ProvisionerPort: s.provisionerPort, PID: s.pid, StartedAt: s.startedAt, UpdatedAt: s.updatedAt,
-		LastMessageAt: s.lastMessageAt, Status: s.status, StatusMessage: s.statusMessage, Description: s.description,
-		FilesystemSandbox: m.filesystemSandbox}
-	s.mu.RUnlock()
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal native session state: %w", err)
-	}
-	path := filepath.Join(s.rootDir, "runtime", "state.json")
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".state-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}
-
-func (m *NativeSessionManager) restoreSessions() error {
-	entries, err := os.ReadDir(filepath.Join(m.stateDir, "sessions"))
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		sessionDir := filepath.Join(m.stateDir, "sessions", entry.Name())
-		path := filepath.Join(sessionDir, "runtime", "state.json")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			_ = os.RemoveAll(sessionDir)
-			continue
-		}
-		var state nativeSessionState
-		if json.Unmarshal(data, &state) != nil || state.ID == "" || state.PID <= 0 {
-			_ = os.RemoveAll(sessionDir)
-			continue
-		}
-		if filepath.Clean(state.RootDir) != filepath.Clean(sessionDir) {
-			continue
-		}
-		if state.FilesystemSandbox != m.filesystemSandbox {
-			continue
-		}
-		if state.Status == "terminating" || state.Status == "stopped" {
-			if syscall.Kill(state.PID, 0) == nil && nativeProcessMatchesSession(state.PID, state.RootDir) {
-				_ = terminateNativeProcessGroup(state.PID, sessionDir)
-			} else {
-				_ = os.RemoveAll(sessionDir)
-			}
-			continue
-		}
-		if err := syscall.Kill(state.PID, 0); err != nil || !nativeProcessMatchesSession(state.PID, state.RootDir) {
-			_ = os.RemoveAll(sessionDir)
-			continue
-		}
-		if state.Status == "running" && !nativeAgentHealthy(state.AgentPort) {
-			continue
-		}
-		_, cancel := context.WithCancel(context.Background())
-		m.sessions[state.ID] = &NativeSession{id: state.ID, request: state.Request, rootDir: state.RootDir,
-			agentPort: state.AgentPort, provisionerPort: state.ProvisionerPort, pid: state.PID,
-			startedAt: state.StartedAt, updatedAt: state.UpdatedAt, lastMessageAt: state.LastMessageAt,
-			status: state.Status, statusMessage: state.StatusMessage, description: state.Description, cancel: cancel}
-	}
-	return nil
-}
-
-func nativeProcessMatchesSession(pid int, root string) bool {
-	needle := "AGENTAPI_NATIVE_SESSION_ROOT=" + root
-	if runtime.GOOS == "linux" {
-		data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "environ"))
-		return err == nil && bytes.Contains(data, []byte(needle))
-	}
-	if runtime.GOOS == "darwin" {
-		data, err := exec.Command("ps", "eww", "-p", strconv.Itoa(pid), "-o", "command=").Output()
-		return err == nil && bytes.Contains(data, []byte(needle))
-	}
-	return false
-}
-
-func nativeAgentHealthy(port int) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) + "/status")
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
-}
-
-func (s *NativeSession) ID() string { return s.id }
-func (s *NativeSession) Addr() string {
-	return net.JoinHostPort("127.0.0.1", strconv.Itoa(s.agentPort))
-}
-func (s *NativeSession) UserID() string { return s.request.UserID }
-func (s *NativeSession) Scope() entities.ResourceScope {
-	if s.request.Scope == "" {
-		return entities.ScopeUser
-	}
-	return s.request.Scope
-}
-func (s *NativeSession) TeamID() string          { return s.request.TeamID }
-func (s *NativeSession) Tags() map[string]string { return s.request.Tags }
-func (s *NativeSession) Status() string          { s.mu.RLock(); defer s.mu.RUnlock(); return s.status }
-func (s *NativeSession) StartedAt() time.Time    { return s.startedAt }
-func (s *NativeSession) UpdatedAt() time.Time    { s.mu.RLock(); defer s.mu.RUnlock(); return s.updatedAt }
-func (s *NativeSession) LastMessageAt() time.Time {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastMessageAt
-}
-func (s *NativeSession) Description() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.description
-}
-func (s *NativeSession) StatusMessage() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.statusMessage
-}
-func (s *NativeSession) Cancel() {
-	if s.cancel != nil {
-		s.cancel()
-	}
 }

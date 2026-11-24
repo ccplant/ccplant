@@ -16,13 +16,31 @@ type failingStore struct {
 	deleteErr error
 }
 
+func requireReplicatedStore(t *testing.T, primary, secondary Store, mode ReplicationMode) *ReplicatedStore {
+	t.Helper()
+	store, err := NewReplicatedStore(primary, secondary, mode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
 func TestReplicatedStoreMutationWaitsForRecordLock(t *testing.T) {
 	ctx := context.Background()
 	primary, secondary := newMemoryStore(), newMemoryStore()
 	record := Record{Kind: KindConfigMap, Namespace: "ns", Key: "key", Value: []byte("value")}
-	primaryRecord, _ := primary.Create(ctx, record)
-	_, _ = secondary.Create(ctx, record)
-	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+	primaryRecord, err := primary.Create(ctx, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryRecord, err := secondary.Create(ctx, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondaryRecord.Key != record.Key {
+		t.Fatalf("secondary record key = %q, want %q", secondaryRecord.Key, record.Key)
+	}
+	store := requireReplicatedStore(t, primary, secondary, ReplicationModeRollback)
 
 	locked := make(chan struct{})
 	release := make(chan struct{})
@@ -146,7 +164,7 @@ func TestReplicatedStoreMirrorsPrimaryCanonicalValue(t *testing.T) {
 	ctx := context.Background()
 	primary := &normalizingStore{memoryStore: newMemoryStore()}
 	secondary := newMemoryStore()
-	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+	store := requireReplicatedStore(t, primary, secondary, ReplicationModeRollback)
 	created, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "key", Value: []byte("value")})
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +181,7 @@ func TestReplicatedStoreMirrorsPrimaryCanonicalValue(t *testing.T) {
 func TestReplicatedStoreCreateRollsBackPrimary(t *testing.T) {
 	primary := newMemoryStore()
 	secondary := &failingStore{memoryStore: newMemoryStore(), createErr: errors.New("secondary unavailable")}
-	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+	store := requireReplicatedStore(t, primary, secondary, ReplicationModeRollback)
 	_, err := store.Create(context.Background(), Record{Kind: KindSecret, Namespace: "ns", Key: "key"})
 	if err == nil {
 		t.Fatal("Create() succeeded, want error")
@@ -178,15 +196,27 @@ func TestReplicatedStoreUpdateRollsBackPrimary(t *testing.T) {
 	primary := newMemoryStore()
 	secondaryMemory := newMemoryStore()
 	original := Record{Kind: KindConfigMap, Namespace: "ns", Key: "key", Value: []byte("old")}
-	created, _ := primary.Create(ctx, original)
-	_, _ = secondaryMemory.Create(ctx, original)
+	created, err := primary.Create(ctx, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryRecord, err := secondaryMemory.Create(ctx, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondaryRecord.Key != original.Key {
+		t.Fatalf("secondary record key = %q, want %q", secondaryRecord.Key, original.Key)
+	}
 	secondary := &failingStore{memoryStore: secondaryMemory, updateErr: errors.New("secondary unavailable")}
-	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+	store := requireReplicatedStore(t, primary, secondary, ReplicationModeRollback)
 	created.Value = []byte("new")
 	if _, err := store.Update(ctx, created); err == nil {
 		t.Fatal("Update() succeeded, want error")
 	}
-	got, _ := primary.Get(ctx, original.Kind, original.Namespace, original.Key)
+	got, err := primary.Get(ctx, original.Kind, original.Namespace, original.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(got.Value) != "old" || got.Version != 3 {
 		t.Fatalf("primary rollback = %+v, want old value at version 3", got)
 	}
@@ -195,8 +225,11 @@ func TestReplicatedStoreUpdateRollsBackPrimary(t *testing.T) {
 func TestReplicatedStoreUpdateRepairsMissingSecondary(t *testing.T) {
 	ctx := context.Background()
 	primary, secondary := newMemoryStore(), newMemoryStore()
-	created, _ := primary.Create(ctx, Record{Kind: KindConfigMap, Namespace: "ns", Key: "key", Value: []byte("old")})
-	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+	created, err := primary.Create(ctx, Record{Kind: KindConfigMap, Namespace: "ns", Key: "key", Value: []byte("old")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := requireReplicatedStore(t, primary, secondary, ReplicationModeRollback)
 	created.Value = []byte("new")
 	if _, err := store.Update(ctx, created); err != nil {
 		t.Fatal(err)
@@ -210,7 +243,7 @@ func TestReplicatedStoreUpdateRepairsMissingSecondary(t *testing.T) {
 func TestReplicatedStoreBestEffortKeepsPrimary(t *testing.T) {
 	primary := newMemoryStore()
 	secondary := &failingStore{memoryStore: newMemoryStore(), createErr: errors.New("secondary unavailable")}
-	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeBestEffort)
+	store := requireReplicatedStore(t, primary, secondary, ReplicationModeBestEffort)
 	if _, err := store.Create(context.Background(), Record{Kind: KindSecret, Namespace: "ns", Key: "key"}); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +256,7 @@ func TestReplicatedStoreReportsInDoubtWhenRollbackFails(t *testing.T) {
 	primaryMemory := newMemoryStore()
 	primary := &failingStore{memoryStore: primaryMemory, deleteErr: errors.New("rollback unavailable")}
 	secondary := &failingStore{memoryStore: newMemoryStore(), createErr: errors.New("secondary unavailable")}
-	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+	store := requireReplicatedStore(t, primary, secondary, ReplicationModeRollback)
 	_, err := store.Create(context.Background(), Record{Kind: KindSecret, Namespace: "ns", Key: "key"})
 	if err == nil || !strings.Contains(err.Error(), "acquire replication lock") {
 		t.Fatalf("Create() error = %v, want lock acquisition failure", err)
