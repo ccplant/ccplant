@@ -41,7 +41,7 @@ func TestControlWorkerExecutesCodexDeviceAuthCommand(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	worker := NewControlWorker(upstream.URL, "connection-token", "", local.URL, "test-instance", secret)
+	worker := NewControlWorker(ControlWorkerConfig{UpstreamURL: upstream.URL, ConnectionToken: "connection-token", LocalURL: local.URL, InstanceID: "test-instance", LocalHMACSecret: secret})
 	body, err := json.Marshal(codexauth.WorkloadRequest{
 		AttemptID:   "cda-0123456789abcdef",
 		CallbackURL: "https://api.example.internal/internal/codex-device-auth",
@@ -57,7 +57,9 @@ func TestControlWorkerExecutesCodexDeviceAuthCommand(t *testing.T) {
 		Headers:  map[string][]string{"Content-Type": {"application/json"}},
 		Deadline: time.Now().Add(30 * time.Second), CreatedAt: time.Now().UTC(),
 	}
-	worker.executeCommand(context.Background(), command)
+	if err := worker.executeCommand(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(manager.started) != 1 {
 		t.Fatalf("started workloads = %d, want 1; frames = %#v", len(manager.started), frames)
@@ -87,19 +89,25 @@ func TestControlWorkerCancelsCodexDeviceAuthCommand(t *testing.T) {
 		var payload struct {
 			Frames []core.ResponseFrame `json:"frames"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode frames: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		frames = append(frames, payload.Frames...)
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer upstream.Close()
 
-	worker := NewControlWorker(upstream.URL, "connection-token", "", local.URL, "test-instance", secret)
+	worker := NewControlWorker(ControlWorkerConfig{UpstreamURL: upstream.URL, ConnectionToken: "connection-token", LocalURL: local.URL, InstanceID: "test-instance", LocalHMACSecret: secret})
 	command := core.Command{
 		ID: "cmd-2", ManagerID: "manager-1", SessionID: "cda-0123456789abcdef",
 		Method: http.MethodDelete, Path: "/api/v1/codex-device-auth/cda-0123456789abcdef",
 		Deadline: time.Now().Add(30 * time.Second), CreatedAt: time.Now().UTC(),
 	}
-	worker.executeCommand(context.Background(), command)
+	if err := worker.executeCommand(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(manager.cancelled) != 1 || manager.cancelled[0] != "cda-0123456789abcdef" {
 		t.Fatalf("cancelled = %#v", manager.cancelled)

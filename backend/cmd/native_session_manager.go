@@ -136,7 +136,7 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 	defer cancel()
 	worker := sessionmanager.NewRunnerWorker(manager, o.upstreamURL, o.managerID, o.connectionToken)
 	go worker.Start(ctx)
-	controlWorker := sessionmanager.NewControlWorker(o.upstreamURL, o.connectionToken, o.upstreamAuthToken, localURL, o.managerID, o.connectionToken)
+	controlWorker := sessionmanager.NewControlWorker(sessionmanager.ControlWorkerConfig{UpstreamURL: o.upstreamURL, ConnectionToken: o.connectionToken, UpstreamAuth: o.upstreamAuthToken, LocalURL: localURL, InstanceID: o.managerID, LocalHMACSecret: o.connectionToken})
 	go controlWorker.Start(ctx)
 	go func() {
 		<-ctx.Done()
