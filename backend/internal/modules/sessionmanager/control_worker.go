@@ -184,6 +184,8 @@ func (w *ControlWorker) localCommandRequest(commandCtx context.Context, command 
 	if req.Header == nil {
 		req.Header = make(http.Header)
 	}
+	req.Header.Set("X-ESM-Control-Instance", w.instanceID)
+	req.Header.Set("X-ESM-Control-Command-ID", command.ID)
 	// The local ESM endpoint retains its HMAC middleware as defense in depth.
 	ts := hmacutil.NowTimestamp()
 	msg := hmacutil.BuildMessage(req.Method, req.URL.RequestURI(), ts, command.Body)
