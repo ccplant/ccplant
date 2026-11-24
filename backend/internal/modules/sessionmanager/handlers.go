@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -283,6 +284,7 @@ func (h *Handlers) SuspendSession(c echo.Context) error {
 	}
 	if suspender, ok := h.sessionManager.(parentSuspender); ok {
 		if err := suspender.SuspendSessionWithSettings(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+			log.Printf("[SESSION_MANAGER] suspend failed instance=%s control_instance=%s command_id=%s session=%s error=%v", os.Getenv("HOSTNAME"), c.Request().Header.Get("X-ESM-Control-Instance"), c.Request().Header.Get("X-ESM-Control-Command-ID"), c.Param("sessionId"), err)
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 		}
 		return c.NoContent(http.StatusNoContent)

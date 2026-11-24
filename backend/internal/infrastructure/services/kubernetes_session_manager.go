@@ -2597,7 +2597,7 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 			return session
 		}
 		if errors.IsNotFound(err) && m.config != nil && m.config.SessionManager.RunnerPool != "" {
-			log.Printf("[K8S_SESSION] Runner service missing for session=%s namespace=%s local_manager=%s", id, m.namespace, sanitizeLabelValue(m.config.SessionManager.ID))
+			log.Printf("[K8S_SESSION] Runner service missing for session=%s namespace=%s local_manager=%s instance=%s", id, m.namespace, sanitizeLabelValue(m.config.SessionManager.ID), os.Getenv("HOSTNAME"))
 		}
 		return nil
 	}
