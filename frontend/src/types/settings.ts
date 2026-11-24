@@ -261,200 +261,111 @@ export interface SettingsFormData {
   mcpServers: MCPServerConfig[]
 }
 
+const trimRecord = (values?: Record<string, string>): Record<string, string> | undefined => {
+  if (!values) return undefined
+  const trimmed = Object.entries(values).reduce<Record<string, string>>((result, [key, value]) => {
+    if (key.trim() && value.trim()) result[key.trim()] = value.trim()
+    return result
+  }, {})
+  return Object.keys(trimmed).length > 0 ? trimmed : undefined
+}
+
+const trimRecordKeys = (values: Record<string, string>): Record<string, string> | undefined => {
+  const trimmed = Object.entries(values).reduce<Record<string, string>>((result, [key, value]) => {
+    if (key.trim()) result[key.trim()] = value.trim()
+    return result
+  }, {})
+  return Object.keys(trimmed).length > 0 ? trimmed : undefined
+}
+
+const prepareBedrock = (source: BedrockConfig): BedrockConfig => ({
+  enabled: source.enabled,
+  ...(source.model?.trim() ? { model: source.model.trim() } : {}),
+  ...(source.access_key_id?.trim() ? { access_key_id: source.access_key_id.trim() } : {}),
+  ...(source.secret_access_key?.trim() ? { secret_access_key: source.secret_access_key.trim() } : {}),
+})
+
+const prepareMCPServer = (server: APIMCPServerConfig): APIMCPServerConfig => {
+  const prepared: APIMCPServerConfig = { type: server.type }
+  if (server.type === 'stdio') {
+    const args = server.args?.filter(value => value.trim())
+    if (server.command?.trim()) prepared.command = server.command.trim()
+    if (args?.length) prepared.args = args
+  } else {
+    if (server.url?.trim()) prepared.url = server.url.trim()
+    const headers = trimRecord(server.headers)
+    if (headers) prepared.headers = headers
+  }
+  const env = trimRecord(server.env)
+  if (env) prepared.env = env
+  return prepared
+}
+
+const prepareMCPServers = (servers: Record<string, APIMCPServerConfig>): Record<string, APIMCPServerConfig> | undefined => {
+  const prepared = Object.entries(servers).reduce<Record<string, APIMCPServerConfig>>((result, [name, server]) => {
+    if (name.trim() && server.type) result[name.trim()] = prepareMCPServer(server)
+    return result
+  }, {})
+  return Object.keys(prepared).length > 0 ? prepared : undefined
+}
+
+const prepareMarketplaces = (marketplaces: Record<string, MarketplaceConfig>): Record<string, MarketplaceConfig> =>
+  Object.entries(marketplaces).reduce<Record<string, MarketplaceConfig>>((result, [name, marketplace]) => {
+    if (name.trim() && marketplace.url?.trim()) result[name.trim()] = { url: marketplace.url.trim() }
+    return result
+  }, {})
+
+const copyConnectionSettings = (source: SettingsData, target: SettingsData): void => {
+  for (const field of ['codex_connection', 'claude_connection'] as const) {
+    const value = source[field]
+    if (!value) continue
+    const { has_api_key: ignored, ...connection } = value
+    void ignored
+    target[field] = connection
+  }
+}
+
+const copyOptionalSessionSettings = (source: SettingsData, target: SettingsData): void => {
+  if (source.preferred_team_id !== undefined) target.preferred_team_id = source.preferred_team_id
+  if (source.github_app_installation_id !== undefined) target.github_app_installation_id = source.github_app_installation_id.trim()
+  if (source.github_repositories !== undefined) target.github_repositories = source.github_repositories.map(value => value.trim()).filter(Boolean)
+  if (source.slack_user_id !== undefined) target.slack_user_id = source.slack_user_id
+  if (source.notification_channels !== undefined) target.notification_channels = source.notification_channels
+  if (source.default_session_profile_id !== undefined) target.default_session_profile_id = source.default_session_profile_id
+  if (source.enabled_team_session_profile_ids !== undefined) target.enabled_team_session_profile_ids = source.enabled_team_session_profile_ids
+  if (source.auto_suspend !== undefined) target.auto_suspend = source.auto_suspend
+}
+
+const copyExternalManagers = (source: SettingsData, target: SettingsData): void => {
+  if (source.external_session_managers === undefined) return
+  target.external_session_managers = source.external_session_managers.map(({ id, instance_id, name, labels }) => ({
+    id,
+    instance_id,
+    name,
+    labels,
+  }))
+}
+
 // 保存前に空の値を除外した設定データを作成
 export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
   const prepared: SettingsData = {}
-
-  // Bedrock 設定の処理
-  if (data.bedrock) {
-    const bedrock: Partial<BedrockConfig> = {}
-    // enabled は常に含める（false も有効な値）
-    bedrock.enabled = data.bedrock.enabled
-    // オプションフィールドは空でなければ含める
-    if (data.bedrock.model?.trim()) {
-      bedrock.model = data.bedrock.model.trim()
-    }
-    if (data.bedrock.access_key_id?.trim()) {
-      bedrock.access_key_id = data.bedrock.access_key_id.trim()
-    }
-    // secret_access_key は空でなければ含める
-    if (data.bedrock.secret_access_key?.trim()) {
-      bedrock.secret_access_key = data.bedrock.secret_access_key.trim()
-    }
-    // enabled がある場合は bedrock を含める
-    if (bedrock.enabled !== undefined) {
-      prepared.bedrock = bedrock as BedrockConfig
-    }
-  }
-
-  // MCP Servers 設定の処理
+  if (data.bedrock) prepared.bedrock = prepareBedrock(data.bedrock)
   if (data.mcp_servers) {
-    const mcpServers: Record<string, APIMCPServerConfig> = {}
-    for (const [name, server] of Object.entries(data.mcp_servers)) {
-      if (name.trim() && server.type) {
-        const cleanServer: APIMCPServerConfig = { type: server.type }
-
-        // タイプ別フィールドの処理
-        if (server.type === 'stdio') {
-          if (server.command?.trim()) {
-            cleanServer.command = server.command.trim()
-          }
-          if (server.args && server.args.length > 0) {
-            const filteredArgs = server.args.filter(a => a.trim())
-            if (filteredArgs.length > 0) {
-              cleanServer.args = filteredArgs
-            }
-          }
-        } else {
-          // http または sse
-          if (server.url?.trim()) {
-            cleanServer.url = server.url.trim()
-          }
-          if (server.headers && Object.keys(server.headers).length > 0) {
-            // 空のキーや値を除外
-            const cleanHeaders: Record<string, string> = {}
-            for (const [key, value] of Object.entries(server.headers)) {
-              if (key.trim() && value.trim()) {
-                cleanHeaders[key.trim()] = value.trim()
-              }
-            }
-            if (Object.keys(cleanHeaders).length > 0) {
-              cleanServer.headers = cleanHeaders
-            }
-          }
-        }
-
-        // 環境変数（共通）
-        if (server.env && Object.keys(server.env).length > 0) {
-          // 空のキーや値を除外
-          const cleanEnv: Record<string, string> = {}
-          for (const [key, value] of Object.entries(server.env)) {
-            if (key.trim() && value.trim()) {
-              cleanEnv[key.trim()] = value.trim()
-            }
-          }
-          if (Object.keys(cleanEnv).length > 0) {
-            cleanServer.env = cleanEnv
-          }
-        }
-
-        mcpServers[name.trim()] = cleanServer
-      }
-    }
-    if (Object.keys(mcpServers).length > 0) {
-      prepared.mcp_servers = mcpServers
-    }
+    const servers = prepareMCPServers(data.mcp_servers)
+    if (servers) prepared.mcp_servers = servers
   }
-
-  // Marketplaces 設定の処理
-  // data.marketplaces が存在する場合は、空でも送信する（削除を反映するため）
-  if (data.marketplaces !== undefined) {
-    const marketplaces: Record<string, MarketplaceConfig> = {}
-    for (const [name, marketplace] of Object.entries(data.marketplaces)) {
-      if (name.trim() && marketplace.url?.trim()) {
-        marketplaces[name.trim()] = {
-          url: marketplace.url.trim()
-        }
-      }
-    }
-    // 空のオブジェクトでも送信（サーバー側で削除を反映するため）
-    prepared.marketplaces = marketplaces
-  }
-
-  // enabled_plugins の処理 ("plugin@marketplace" 形式)
-  // data.enabled_plugins が存在する場合は、空でも送信する（削除を反映するため）
-  if (data.enabled_plugins !== undefined) {
-    const filteredPlugins = data.enabled_plugins
-      .map(p => p.trim())
-      .filter(p => p)
-    // 空の配列でも送信（サーバー側で削除を反映するため）
-    prepared.enabled_plugins = filteredPlugins
-  }
-
-  if (data.skills !== undefined) {
-    prepared.skills = [...new Set(data.skills.map(skill => skill.trim()).filter(Boolean))]
-  }
-
-  // Claude Code OAuth Token の処理
-  // 空文字列でも送信する（トークンの削除を反映するため）
-  if (data.claude_code_oauth_token !== undefined) {
-    prepared.claude_code_oauth_token = data.claude_code_oauth_token
-  }
-
-  for (const field of ['codex_connection', 'claude_connection'] as const) {
- if (data[field]) { const { has_api_key: _hasKey, ...connection } = data[field]; void _hasKey; prepared[field] = connection }
- }
-
- // Auth Mode の処理
-  if (data.auth_mode) {
-    prepared.auth_mode = data.auth_mode
-  }
-
-  // Environment Variables の処理
-  // data.env_vars が存在する場合は送信する
-  // 空文字列の値はバックエンドでの削除を意味する（キーを送信しないと自動保持される）
+  if (data.marketplaces !== undefined) prepared.marketplaces = prepareMarketplaces(data.marketplaces)
+  if (data.enabled_plugins !== undefined) prepared.enabled_plugins = data.enabled_plugins.map(value => value.trim()).filter(Boolean)
+  if (data.skills !== undefined) prepared.skills = [...new Set(data.skills.map(value => value.trim()).filter(Boolean))]
+  if (data.claude_code_oauth_token !== undefined) prepared.claude_code_oauth_token = data.claude_code_oauth_token
+  if (data.auth_mode) prepared.auth_mode = data.auth_mode
   if (data.env_vars !== undefined) {
-    const envVars: Record<string, string> = {}
-    for (const [key, value] of Object.entries(data.env_vars)) {
-      if (key.trim()) {
-        // 空文字列はバックエンドへの削除指示として送信する（value.trim()チェックを除去）
-        envVars[key.trim()] = value.trim()
-      }
-    }
-    if (Object.keys(envVars).length > 0) {
-      prepared.env_vars = envVars
-    }
+    const envVars = trimRecordKeys(data.env_vars)
+    if (envVars) prepared.env_vars = envVars
   }
-
-  // Preferred Team ID の処理
-  // undefined の場合はフィールドを送信しない（バックエンドが auto-select ロジックを適用する）
-  // 空文字列の場合は明示的にクリア（全チームマージに戻す）
-  if (data.preferred_team_id !== undefined) {
-    prepared.preferred_team_id = data.preferred_team_id
-  }
-
-  if (data.github_app_installation_id !== undefined) {
-    prepared.github_app_installation_id = data.github_app_installation_id.trim()
-  }
-  if (data.github_repositories !== undefined) {
-    prepared.github_repositories = data.github_repositories.map(value => value.trim()).filter(Boolean)
-  }
-
-  // Slack User ID の処理
-  // undefined の場合はフィールドを送信しない
-  // 空文字列の場合は送信する（Slack 購読を削除するため）
-  if (data.slack_user_id !== undefined) {
-    prepared.slack_user_id = data.slack_user_id
-  }
-
-  // Notification Channels の処理
-  // undefined の場合はフィールドを送信しない
-  if (data.notification_channels !== undefined) {
-    prepared.notification_channels = data.notification_channels
-  }
-
-  // External session managers の処理
-  if (data.external_session_managers !== undefined) {
-    prepared.external_session_managers = data.external_session_managers.map((manager) => ({
-      id: manager.id,
-      instance_id: manager.instance_id,
-      name: manager.name,
-      labels: manager.labels,
-    }))
-  }
-
-  if (data.default_session_profile_id !== undefined) {
-    prepared.default_session_profile_id = data.default_session_profile_id
-  }
-
-  if (data.enabled_team_session_profile_ids !== undefined) {
-    prepared.enabled_team_session_profile_ids = data.enabled_team_session_profile_ids
-  }
-
-  if (data.auto_suspend !== undefined) {
-    prepared.auto_suspend = data.auto_suspend
-  }
-
+  copyConnectionSettings(data, prepared)
+  copyOptionalSessionSettings(data, prepared)
+  copyExternalManagers(data, prepared)
   return prepared
 }
 

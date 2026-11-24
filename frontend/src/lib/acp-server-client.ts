@@ -260,6 +260,127 @@ function acpPlanToMarkdown(entries: NonNullable<ACPSessionUpdate['entries']>): s
   return md;
 }
 
+interface ACPEventStreamState {
+  streamingMsgId: number | null;
+  streamingThoughtId: number | null;
+  streamingUserMsgId: number | null;
+  nextId: () => number;
+}
+
+function handleAgentMessage(update: ACPSessionUpdate, now: string, callbacks: ACPServerEventCallbacks, state: ACPEventStreamState): void {
+  const text = acpExtractText(update.content);
+  const image = acpExtractImage(update.content);
+  if (!text && !image) return;
+  if (state.streamingMsgId !== null) {
+    if (text) callbacks.onChunk?.(state.streamingMsgId, text);
+    if (image) callbacks.onImageChunk?.(state.streamingMsgId, image);
+    return;
+  }
+  state.streamingMsgId = state.nextId();
+  callbacks.onMessage({ id: state.streamingMsgId, role: 'agent', content: text, images: image ? [image] : undefined, time: now, type: 'normal' });
+}
+
+function handleAgentThought(update: ACPSessionUpdate, now: string, callbacks: ACPServerEventCallbacks, state: ACPEventStreamState): void {
+  const thought = acpExtractText(update.content);
+  if (!thought) return;
+  if (state.streamingThoughtId !== null) {
+    callbacks.onThoughtChunk?.(state.streamingThoughtId, thought);
+    return;
+  }
+  state.streamingThoughtId = state.nextId();
+  callbacks.onMessage({ id: state.streamingThoughtId, role: 'agent', content: '', thought, time: now, type: 'normal' });
+}
+
+function handleToolCall(update: ACPSessionUpdate, now: string, callbacks: ACPServerEventCallbacks, state: ACPEventStreamState): void {
+  state.streamingMsgId = null;
+  state.streamingThoughtId = null;
+  callbacks.onMessage({
+    id: state.nextId(),
+    role: 'agent',
+    content: JSON.stringify({
+      type: 'tool_use',
+      name: acpToolNameFromRawInput(update.rawInput) || acpToolDisplayName(update.kind, update.title),
+      id: update.toolCallId,
+      input: update.rawInput ?? {},
+      ...(update.title != null ? { title: update.title } : {}),
+      ...(update.locations != null ? { locations: update.locations } : {}),
+    }),
+    time: now,
+    type: 'normal',
+    toolUseId: update.toolCallId,
+  });
+}
+
+function handleToolCallUpdate(update: ACPSessionUpdate, now: string, callbacks: ACPServerEventCallbacks, state: ACPEventStreamState): void {
+  const isSuccess = update.status === 'completed' || update.status === 'success';
+  const isError = update.status === 'failed' || update.status === 'error';
+  const isRunning = update.status === 'running' || update.status === 'in_progress';
+  if (update.status && !isSuccess && !isError && !isRunning) {
+    callbacks.onToolInputUpdate?.(update.toolCallId!, update.rawInput, update.title, update.locations);
+    return;
+  }
+  if (isRunning) return;
+  callbacks.onToolUpdate?.(update.toolCallId!, isError ? 'error' : 'success');
+  const images = extractACPToolImages(update.content);
+  callbacks.onMessage({
+    id: state.nextId(),
+    role: 'tool_result',
+    content: extractACPToolContent(update.content) || extractRawOutputText(update.rawOutput),
+    images: images.length > 0 ? images : undefined,
+    time: now,
+    type: 'normal',
+    parentToolUseId: update.toolCallId,
+    status: isError ? 'error' : 'success',
+  });
+}
+
+function handleUserMessage(update: ACPSessionUpdate, now: string, callbacks: ACPServerEventCallbacks, state: ACPEventStreamState): void {
+  const text = acpExtractText(update.content);
+  const image = acpExtractImage(update.content);
+  if (!text && !image) return;
+  if (image && state.streamingUserMsgId !== null) {
+    callbacks.onImageChunk?.(state.streamingUserMsgId, image);
+    return;
+  }
+  state.streamingUserMsgId = state.nextId();
+  callbacks.onMessage({ id: state.streamingUserMsgId, role: 'user', content: text, images: image ? [image] : undefined, time: now, type: 'normal' });
+}
+
+function handleSessionUpdate(update: ACPSessionUpdate, now: string, callbacks: ACPServerEventCallbacks, state: ACPEventStreamState): void {
+  switch (update.sessionUpdate) {
+    case 'agent_message_chunk': handleAgentMessage(update, now, callbacks, state); break;
+    case 'agent_thought_chunk': handleAgentThought(update, now, callbacks, state); break;
+    case 'tool_call': handleToolCall(update, now, callbacks, state); break;
+    case 'tool_call_update': handleToolCallUpdate(update, now, callbacks, state); break;
+    case 'plan':
+      state.streamingMsgId = null;
+      state.streamingThoughtId = null;
+      if (update.entries?.length) callbacks.onMessage({ id: state.nextId(), role: 'agent', content: acpPlanToMarkdown(update.entries), time: now, type: 'plan' });
+      break;
+    case 'user_message_chunk': handleUserMessage(update, now, callbacks, state); break;
+    case 'session_info_update': if (update.title) callbacks.onTitleUpdate?.(update.title); break;
+    case 'current_mode_update': if (update.mode) callbacks.onModeUpdate?.(update.mode); break;
+    case 'config_option_update': if (Array.isArray(update.configOptions)) callbacks.onConfigOptionsUpdate?.(update.configOptions); break;
+    case 'agent_turn_end': state.streamingMsgId = null; state.streamingThoughtId = null; break;
+  }
+}
+
+function handlePermissionRequest(msg: JSONRPCResponse, callbacks: ACPServerEventCallbacks): void {
+  const params = msg.params as ACPPermissionParams;
+  if (!params || !callbacks.onPermission) return;
+  const action: PendingAction = {
+    type: 'answer_question',
+    tool_use_id: params.toolCall?.toolCallId ?? '',
+    content: { questions: [{
+      question: 'Permission required',
+      header: 'Permission Required',
+      options: (params.options ?? []).map(option => ({ label: option.name || option.optionId, description: option.description ?? '' })),
+      multiSelect: false,
+    }] },
+  };
+  callbacks.onPermission(action, typeof msg.id === 'number' ? msg.id : parseInt(String(msg.id ?? '0'), 10));
+}
+
 // ─── ACP Server Client ────────────────────────────────────────────────────────
 
 export class ACPServerClient {
@@ -434,9 +555,12 @@ export class ACPServerClient {
     let localIdCounter = Date.now();
     const nextId = () => localIdCounter++;
 
-    let streamingMsgId: number | null = null;
-    let streamingThoughtId: number | null = null;
-    let streamingUserMsgId: number | null = null;
+    const streamState: ACPEventStreamState = {
+      streamingMsgId: null,
+      streamingThoughtId: null,
+      streamingUserMsgId: null,
+      nextId,
+    };
     let lastEventId = initialLastEventId;
 
     const dispatchEvent = (data: string) => {
@@ -447,179 +571,12 @@ export class ACPServerClient {
           const acpParams = msg.params as { sessionId: string; update: ACPSessionUpdate; time?: string };
           const update = acpParams?.update;
           if (!update) return;
-          const now = acpParams?.time || new Date().toISOString();
-
-          switch (update.sessionUpdate) {
-            case 'agent_message_chunk': {
-              const text = acpExtractText(update.content);
-              const image = acpExtractImage(update.content);
-              if (!text && !image) return;
-              if (streamingMsgId === null) {
-                streamingMsgId = nextId();
-                callbacks.onMessage({
-                  id: streamingMsgId,
-                  role: 'agent',
-                  content: text,
-                  images: image ? [image] : undefined,
-                  time: now,
-                  type: 'normal',
-                });
-              } else {
-                if (text) callbacks.onChunk?.(streamingMsgId, text);
-                if (image) callbacks.onImageChunk?.(streamingMsgId, image);
-              }
-              break;
-            }
-
-            case 'agent_thought_chunk': {
-              const thought = acpExtractText(update.content);
-              if (!thought) return;
-              if (streamingThoughtId === null) {
-                streamingThoughtId = nextId();
-                callbacks.onMessage({ id: streamingThoughtId, role: 'agent', content: '', thought, time: now, type: 'normal' });
-              } else {
-                callbacks.onThoughtChunk?.(streamingThoughtId, thought);
-              }
-              break;
-            }
-
-            case 'tool_call': {
-              streamingMsgId = null;
-              streamingThoughtId = null;
-              const toolObj = {
-                type: 'tool_use',
-                name: acpToolNameFromRawInput(update.rawInput) || acpToolDisplayName(update.kind, update.title),
-                id: update.toolCallId,
-                input: update.rawInput ?? {},
-                ...(update.title != null ? { title: update.title } : {}),
-                ...(update.locations != null ? { locations: update.locations } : {}),
-              };
-              callbacks.onMessage({
-                id: nextId(),
-                role: 'agent',
-                content: JSON.stringify(toolObj),
-                time: now,
-                type: 'normal',
-                toolUseId: update.toolCallId,
-              });
-              break;
-            }
-
-            case 'tool_call_update': {
-              const isSuccess = update.status === 'completed' || update.status === 'success';
-              const isError = update.status === 'failed' || update.status === 'error';
-              const isRunning = update.status === 'running' || update.status === 'in_progress';
-
-              if (update.status && !isSuccess && !isError && !isRunning) {
-                callbacks.onToolInputUpdate?.(update.toolCallId!, update.rawInput, update.title, update.locations);
-                return;
-              }
-
-              if (isRunning) return;
-
-              callbacks.onToolUpdate?.(update.toolCallId!, isError ? 'error' : 'success');
-
-              const acpText = extractACPToolContent(update.content);
-              const images = extractACPToolImages(update.content);
-              const resultContent = acpText || extractRawOutputText(update.rawOutput);
-              callbacks.onMessage({
-                id: nextId(),
-                role: 'tool_result',
-                content: resultContent,
-                images: images.length > 0 ? images : undefined,
-                time: now,
-                type: 'normal',
-                parentToolUseId: update.toolCallId,
-                status: isError ? 'error' : 'success',
-              });
-              break;
-            }
-
-            case 'plan': {
-              streamingMsgId = null;
-              streamingThoughtId = null;
-              if (!update.entries || update.entries.length === 0) return;
-              callbacks.onMessage({
-                id: nextId(),
-                role: 'agent',
-                content: acpPlanToMarkdown(update.entries),
-                time: now,
-                type: 'plan',
-              });
-              break;
-            }
-
-            case 'user_message_chunk': {
-              const text = acpExtractText(update.content);
-              const image = acpExtractImage(update.content);
-              if (!text && !image) return;
-              if (image && streamingUserMsgId !== null) {
-                callbacks.onImageChunk?.(streamingUserMsgId, image);
-              } else {
-                streamingUserMsgId = nextId();
-                callbacks.onMessage({
-                  id: streamingUserMsgId,
-                  role: 'user',
-                  content: text,
-                  images: image ? [image] : undefined,
-                  time: now,
-                  type: 'normal',
-                });
-              }
-              break;
-            }
-
-            case 'session_info_update': {
-              if (update.title) callbacks.onTitleUpdate?.(update.title);
-              break;
-            }
-
-            case 'current_mode_update': {
-              if (update.mode) callbacks.onModeUpdate?.(update.mode);
-              break;
-            }
-
-            case 'config_option_update': {
-              if (update.configOptions && Array.isArray(update.configOptions)) {
-                callbacks.onConfigOptionsUpdate?.(update.configOptions);
-              }
-              break;
-            }
-
-            case 'agent_turn_end': {
-              streamingMsgId = null;
-              streamingThoughtId = null;
-              break;
-            }
-
-            default:
-              break;
-          }
+          handleSessionUpdate(update, acpParams?.time || new Date().toISOString(), callbacks, streamState);
           return;
         }
 
         if (msg.method === 'session/request_permission' && msg.id != null) {
-          const permParams = msg.params as ACPPermissionParams;
-          if (!permParams || !callbacks.onPermission) return;
-
-          const pendingAction: PendingAction = {
-            type: 'answer_question',
-            tool_use_id: permParams.toolCall?.toolCallId ?? '',
-            content: {
-              questions: [{
-                question: 'Permission required',
-                header: 'Permission Required',
-                options: (permParams.options ?? []).map(o => ({
-                  label: o.name || o.optionId,
-                  description: o.description ?? '',
-                })),
-                multiSelect: false,
-              }],
-            },
-          };
-
-          const rpcId = typeof msg.id === 'number' ? msg.id : parseInt(String(msg.id ?? '0'), 10);
-          callbacks.onPermission(pendingAction, rpcId);
+          handlePermissionRequest(msg, callbacks);
           return;
         }
 
@@ -629,16 +586,16 @@ export class ACPServerClient {
         if (msg.result != null && msg.id != null) {
           const stopReason = (msg.result as { stopReason?: unknown })?.stopReason;
           if (typeof stopReason === 'string' && stopReason.length > 0) {
-            streamingMsgId = null;
-            streamingThoughtId = null;
+            streamState.streamingMsgId = null;
+            streamState.streamingThoughtId = null;
           }
           return;
         }
 
         // ── Error on session/prompt ────────────────────────────────────────
         if (msg.error && msg.id != null) {
-          streamingMsgId = null;
-          streamingThoughtId = null;
+          streamState.streamingMsgId = null;
+          streamState.streamingThoughtId = null;
           callbacks.onError?.(new Error(msg.error.message));
           return;
         }

@@ -1,7 +1,73 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Window } from 'happy-dom'
 
-import { getEnterKeyBehavior, loadFullGlobalSettings, setEnterKeyBehavior } from '../settings'
+import { getEnterKeyBehavior, loadFullGlobalSettings, prepareSettingsForSave, setEnterKeyBehavior } from '../settings'
+
+describe('settings API payload preparation', () => {
+  it('normalizes nested values and omits empty secrets', () => {
+    expect(prepareSettingsForSave({
+      bedrock: {
+        enabled: false,
+        model: ' model-id ',
+        access_key_id: ' ',
+      },
+      mcp_servers: {
+        ' server ': {
+          type: 'http',
+          url: ' https://example.test/mcp ',
+          headers: { ' Authorization ': ' Bearer token ', empty: ' ' },
+          env: { ' TOKEN ': ' value ', empty: '' },
+        },
+        ' ': { type: 'stdio', command: 'ignored' },
+      },
+    })).toEqual({
+      bedrock: { enabled: false, model: 'model-id' },
+      mcp_servers: {
+        server: {
+          type: 'http',
+          url: 'https://example.test/mcp',
+          headers: { Authorization: 'Bearer token' },
+          env: { TOKEN: 'value' },
+        },
+      },
+    })
+  })
+
+  it('preserves empty environment values as deletion instructions', () => {
+    expect(prepareSettingsForSave({
+      env_vars: { ' KEEP ': ' value ', ' REMOVE ': '', ' ': 'ignored' },
+    })).toEqual({
+      env_vars: { KEEP: 'value', REMOVE: '' },
+    })
+  })
+
+  it('preserves explicit empty collections and removes response-only fields', () => {
+    expect(prepareSettingsForSave({
+      marketplaces: {},
+      enabled_plugins: [],
+      skills: [' owner/skill ', 'owner/skill', ''],
+      codex_connection: { mode: 'oauth', has_api_key: true },
+      external_session_managers: [{
+        id: 'manager-1',
+        name: 'Manager',
+        labels: { region: 'local' },
+        has_connection_token: true,
+        version: '1.0.0',
+      }],
+    })).toEqual({
+      marketplaces: {},
+      enabled_plugins: [],
+      skills: ['owner/skill'],
+      codex_connection: { mode: 'oauth' },
+      external_session_managers: [{
+        id: 'manager-1',
+        instance_id: undefined,
+        name: 'Manager',
+        labels: { region: 'local' },
+      }],
+    })
+  })
+})
 
 const testWindow = new Window()
 Object.defineProperty(globalThis, 'window', { value: testWindow, configurable: true })

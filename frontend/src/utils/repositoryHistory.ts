@@ -1,6 +1,10 @@
 const REPOSITORY_HISTORY_KEY = 'agentapi-repository-history';
 const MAX_HISTORY_SIZE = 10;
 
+function reportRepositoryHistoryError(operation: string, error: unknown): void {
+  console.warn(`[repository-history] ${operation} failed`, error);
+}
+
 export interface RepositoryHistoryItem {
   repository: string;
   lastUsed: Date;
@@ -17,7 +21,8 @@ export class RepositoryHistory {
         repository: item.repository,
         lastUsed: new Date(item.lastUsed)
       }));
-    } catch {
+    } catch (error) {
+      reportRepositoryHistoryError('load', error);
       return [];
     }
   }
@@ -43,8 +48,8 @@ export class RepositoryHistory {
     
     try {
       localStorage.setItem(REPOSITORY_HISTORY_KEY, JSON.stringify(trimmed));
-    } catch {
-      // ストレージエラーを無視
+    } catch (error) {
+      reportRepositoryHistoryError('save', error);
     }
   }
 
@@ -60,8 +65,8 @@ export class RepositoryHistory {
   static clearHistory(): void {
     try {
       localStorage.removeItem(REPOSITORY_HISTORY_KEY);
-    } catch {
-      // ストレージエラーを無視
+    } catch (error) {
+      reportRepositoryHistoryError('clear', error);
     }
   }
 }
