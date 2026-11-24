@@ -23,31 +23,32 @@ type MockNotificationPresenter struct {
 	sendResponse   *notification.SendNotificationResponse
 	createSubResp  *notification.CreateSubscriptionResponse
 	deleteSubResp  *notification.DeleteSubscriptionResponse
+	encodeErr      error
 }
 
 func (m *MockNotificationPresenter) PresentSendNotification(w http.ResponseWriter, response *notification.SendNotificationResponse) {
 	m.sendResponse = response
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	m.encodeErr = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (m *MockNotificationPresenter) PresentCreateSubscription(w http.ResponseWriter, response *notification.CreateSubscriptionResponse) {
 	m.createSubResp = response
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	m.encodeErr = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (m *MockNotificationPresenter) PresentDeleteSubscription(w http.ResponseWriter, response *notification.DeleteSubscriptionResponse) {
 	m.deleteSubResp = response
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	m.encodeErr = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (m *MockNotificationPresenter) PresentError(w http.ResponseWriter, message string, statusCode int) {
 	m.lastError = message
 	m.lastStatusCode = statusCode
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+	m.encodeErr = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 // MockNotificationRepository implements NotificationRepository for testing
@@ -244,7 +245,8 @@ func TestNotificationController_SendNotification_Unauthorized(t *testing.T) {
 		Title: "Test Title",
 		Body:  "Test Body",
 	}
-	body, _ := json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
+	assert.NoError(t, err)
 
 	// Request without userID in context
 	req := httptest.NewRequest(http.MethodPost, "/notifications", bytes.NewReader(body))
@@ -301,7 +303,8 @@ func TestNotificationController_CreateSubscription_Unauthorized(t *testing.T) {
 		Type:     "webpush",
 		Endpoint: "https://push.example.com",
 	}
-	body, _ := json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
+	assert.NoError(t, err)
 
 	// Request without userID in context
 	req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewReader(body))

@@ -10,9 +10,12 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	testassert "github.com/stretchr/testify/assert"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+
 	corev1 "k8s.io/api/core/v1"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -23,7 +26,7 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/integrations":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"integrations": []map[string]any{
 					{
 						"id":                         "takutakahashi.google",
@@ -37,7 +40,7 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 						"scopes":                     []map[string]any{},
 					},
 				},
-			})
+			}))
 		case "/oauth/takutakahashi/google/authorization-url":
 			if r.Method != http.MethodPost {
 				t.Fatalf("method = %s, want POST", r.Method)
@@ -51,10 +54,10 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 			if req.RedirectURI != "https://app.example.com/api/oauth/google/callback" {
 				t.Fatalf("redirect_uri = %q", req.RedirectURI)
 			}
-			_ = json.NewEncoder(w).Encode(IntegrationAuthorizationURLResponse{
+			testassert.NoError(t, json.NewEncoder(w).Encode(IntegrationAuthorizationURLResponse{
 				CredentialID:     "takutakahashi.google",
 				AuthorizationURL: "https://accounts.google.com/o/oauth2/v2/auth?scope=calendar",
-			})
+			}))
 		default:
 			http.NotFound(w, r)
 		}
@@ -105,7 +108,7 @@ func TestCreateAuthorizationURLAddsScopeIDsToFallbackStartURL(t *testing.T) {
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/integrations":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"integrations": []map[string]any{
 					{
 						"id":            "takutakahashi.google",
@@ -118,7 +121,7 @@ func TestCreateAuthorizationURLAddsScopeIDsToFallbackStartURL(t *testing.T) {
 						"scopes":        []map[string]any{},
 					},
 				},
-			})
+			}))
 		case "/oauth/google/start":
 			if r.Method != http.MethodGet {
 				t.Fatalf("method = %s, want GET", r.Method)
@@ -169,7 +172,7 @@ func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/integrations":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"integrations": []map[string]any{
 					{
 						"id":                         "takutakahashi.todoist",
@@ -183,17 +186,17 @@ func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
 						"scopes":                     []map[string]any{},
 					},
 				},
-			})
+			}))
 		case "/oauth/takutakahashi/todoist/revoke":
 			if r.Method != http.MethodPost {
 				t.Fatalf("method = %s, want POST", r.Method)
 			}
 			gotUserToken = r.Header.Get("X-Scia-User-Token")
 			revoked = true
-			_ = json.NewEncoder(w).Encode(IntegrationRevokeResponse{
+			testassert.NoError(t, json.NewEncoder(w).Encode(IntegrationRevokeResponse{
 				Revoked:      true,
 				CredentialID: "takutakahashi.todoist",
-			})
+			}))
 		default:
 			http.NotFound(w, r)
 		}
@@ -316,7 +319,7 @@ func TestGetIntegrationsMarksConnectedPerCredentialToken(t *testing.T) {
 		case "/_scia/healthz":
 			w.WriteHeader(http.StatusOK)
 		case "/api/integrations":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			testassert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"integrations": []map[string]any{
 					{
 						"id":                         "alice.google",
@@ -341,7 +344,7 @@ func TestGetIntegrationsMarksConnectedPerCredentialToken(t *testing.T) {
 						"scopes":                     []map[string]any{},
 					},
 				},
-			})
+			}))
 		default:
 			http.NotFound(w, r)
 		}

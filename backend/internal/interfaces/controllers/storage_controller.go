@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -124,11 +123,10 @@ func (c *StorageController) Create(ctx echo.Context) error {
 }
 
 func (c *StorageController) Get(ctx echo.Context) error {
-	storage, user, err := c.authorizedStorage(ctx)
+	storage, err := c.authorizedStorage(ctx)
 	if err != nil {
 		return err
 	}
-	_ = user
 	return ctx.JSON(http.StatusOK, storageResponse(storage))
 }
 
@@ -171,7 +169,7 @@ func (c *StorageController) List(ctx echo.Context) error {
 }
 
 func (c *StorageController) Update(ctx echo.Context) error {
-	storage, _, err := c.authorizedStorage(ctx)
+	storage, err := c.authorizedStorage(ctx)
 	if err != nil {
 		return err
 	}
@@ -202,7 +200,7 @@ func (c *StorageController) Update(ctx echo.Context) error {
 }
 
 func (c *StorageController) Delete(ctx echo.Context) error {
-	storage, _, err := c.authorizedStorage(ctx)
+	storage, err := c.authorizedStorage(ctx)
 	if err != nil {
 		return err
 	}
@@ -213,7 +211,7 @@ func (c *StorageController) Delete(ctx echo.Context) error {
 }
 
 func (c *StorageController) ListFiles(ctx echo.Context) error {
-	storage, _, err := c.authorizedStorage(ctx)
+	storage, err := c.authorizedStorage(ctx)
 	if err != nil {
 		return err
 	}
@@ -235,7 +233,7 @@ func (c *StorageController) ListFiles(ctx echo.Context) error {
 }
 
 func (c *StorageController) PutFile(ctx echo.Context) error {
-	storage, _, err := c.authorizedStorage(ctx)
+	storage, err := c.authorizedStorage(ctx)
 	if err != nil {
 		return err
 	}
@@ -278,7 +276,7 @@ func (c *StorageController) PutFile(ctx echo.Context) error {
 }
 
 func (c *StorageController) GetFile(ctx echo.Context) error {
-	storage, _, err := c.authorizedStorage(ctx)
+	storage, err := c.authorizedStorage(ctx)
 	if err != nil {
 		return err
 	}
@@ -297,7 +295,11 @@ func (c *StorageController) GetFile(ctx echo.Context) error {
 	if getErr != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to load file content")
 	}
-	defer func() { _ = body.Close() }()
+	defer func() {
+		if closeErr := body.Close(); closeErr != nil {
+			return
+		}
+	}()
 	ctx.Response().Header().Set("ETag", `"sha256:`+file.Digest+`"`)
 	ctx.Response().Header().Set("X-Storage-Revision", strconv.FormatInt(file.Revision, 10))
 	ctx.Response().Header().Set(echo.HeaderContentType, "application/octet-stream")
@@ -307,7 +309,7 @@ func (c *StorageController) GetFile(ctx echo.Context) error {
 }
 
 func (c *StorageController) DeleteFile(ctx echo.Context) error {
-	storage, _, err := c.authorizedStorage(ctx)
+	storage, err := c.authorizedStorage(ctx)
 	if err != nil {
 		return err
 	}
@@ -338,7 +340,10 @@ func (c *StorageController) commitFile(ctx echo.Context, storageID string, file 
 		storage.ApplyFiles([]entities.StorageFile{file})
 		updateErr := c.repo.Update(ctx.Request().Context(), storage)
 		if updateErr == nil {
-			committed, _ := storage.File(file.Path)
+			committed, found := storage.File(file.Path)
+			if !found {
+				return entities.StorageFile{}, echo.NewHTTPError(http.StatusInternalServerError, "committed storage file is missing")
+			}
 			return committed, nil
 		}
 		if !k8serrors.IsConflict(updateErr) {
@@ -348,84 +353,21 @@ func (c *StorageController) commitFile(ctx echo.Context, storageID string, file 
 	return entities.StorageFile{}, echo.NewHTTPError(http.StatusConflict, "storage is too busy; retry the write")
 }
 
-func (c *StorageController) authorizedStorage(ctx echo.Context) (*entities.Storage, *entities.User, error) {
+func (c *StorageController) authorizedStorage(ctx echo.Context) (*entities.Storage, error) {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
-		return nil, nil, echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 	storage, err := c.repo.GetByID(ctx.Request().Context(), ctx.Param("id"))
 	if err != nil {
 		var notFound entities.ErrStorageNotFound
 		if errors.As(err, &notFound) {
-			return nil, nil, echo.NewHTTPError(http.StatusNotFound, "Storage not found")
+			return nil, echo.NewHTTPError(http.StatusNotFound, "Storage not found")
 		}
-		return nil, nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to get storage")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to get storage")
 	}
 	if !storageUserCanAccess(user, storage) {
-		return nil, nil, echo.NewHTTPError(http.StatusForbidden, "Access denied")
+		return nil, echo.NewHTTPError(http.StatusForbidden, "Access denied")
 	}
-	return storage, user, nil
-}
-
-func storageResponse(storage *entities.Storage) *StorageResponse {
-	count := 0
-	for _, file := range storage.Files() {
-		if !file.Deleted {
-			count++
-		}
-	}
-	return &StorageResponse{
-		ID: storage.ID(), Name: storage.Name(), Description: storage.Description(),
-		OwnerID: storage.OwnerID(), Scope: string(storage.Scope()), TeamID: storage.TeamID(),
-		Kind: storage.Kind(), Pool: storage.Pool(), Provider: storage.Provider(), Size: storage.Size(),
-		State: storage.State(), Revision: storage.Revision(), FileCount: count,
-		CreatedAt: storage.CreatedAt(), UpdatedAt: storage.UpdatedAt(),
-	}
-}
-
-func storageFileResponse(file entities.StorageFile) *StorageFileResponse {
-	return &StorageFileResponse{
-		Path: file.Path, Digest: file.Digest, Size: file.Size, Mode: file.Mode,
-		Deleted: file.Deleted, Revision: file.Revision, UpdatedAt: file.UpdatedAt,
-	}
-}
-
-func storageUserCanAccess(user *entities.User, storage *entities.Storage) bool {
-	switch storage.Scope() {
-	case entities.ScopeUser:
-		return storage.OwnerID() == string(user.ID())
-	case entities.ScopeTeam:
-		return storageUserInTeam(user, storage.TeamID())
-	default:
-		return false
-	}
-}
-
-func storageUserInTeam(user *entities.User, teamID string) bool {
-	if user == nil || teamID == "" {
-		return false
-	}
-	if user.UserType() == entities.UserTypeServiceAccount {
-		return user.TeamID() == teamID
-	}
-	return user.IsMemberOfTeam(teamID)
-}
-
-func storageUserTeamIDs(user *entities.User) []string {
-	if user.UserType() == entities.UserTypeServiceAccount {
-		if user.TeamID() == "" {
-			return nil
-		}
-		return []string{user.TeamID()}
-	}
-	github := user.GitHubInfo()
-	if github == nil {
-		return nil
-	}
-	teams := github.Teams()
-	result := make([]string, 0, len(teams))
-	for _, team := range teams {
-		result = append(result, fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug))
-	}
-	return result
+	return storage, nil
 }

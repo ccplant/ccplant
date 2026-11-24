@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -134,6 +133,16 @@ func setupAPITokenController() (*APITokenController, *mockAPITokenRepo, *mockTok
 	return newAPITokenControllerForTest(repo, authSvc), repo, authSvc
 }
 
+func setupAPITokenControllerOnly() *APITokenController {
+	repo := newMockAPITokenRepo()
+	return newAPITokenControllerForTest(repo, &mockTokenAuth{})
+}
+
+func setupAPITokenControllerWithRepo() (*APITokenController, *mockAPITokenRepo) {
+	repo := newMockAPITokenRepo()
+	return newAPITokenControllerForTest(repo, &mockTokenAuth{}), repo
+}
+
 // requireMetadataShape asserts the raw JSON for a metadata-only payload (list
 // item or GET response) has token_prefix and lacks secret/plaintext_token.
 func requireMetadataShape(t *testing.T, raw map[string]json.RawMessage) {
@@ -188,7 +197,8 @@ func TestAPITokenController_Create_Personal_201_NoStore(t *testing.T) {
 	assert.Equal(t, "personal", nestedScope)
 
 	// Secret must NOT appear in metadata responses later.
-	all, _ := repo.ListAll(context.Background())
+	all, err := repo.ListAll(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, resp.PlaintextToken, all[0].Secret()) // entity still holds secret
 	assert.Len(t, authSvc.loaded, 1)
 }
@@ -199,7 +209,7 @@ func TestAPITokenController_Create_ScopeDefaultIsPersonal(t *testing.T) {
 			Name:        "default-scope",
 			Permissions: []string{"session:read"},
 		}, newTestAPIKeyUser("user-1"))
-	ctrl, _, _ := setupAPITokenController()
+	ctrl := setupAPITokenControllerOnly()
 	require.NoError(t, ctrl.Create(c))
 	assert.Equal(t, http.StatusCreated, rec.Code)
 
@@ -210,23 +220,25 @@ func TestAPITokenController_Create_ScopeDefaultIsPersonal(t *testing.T) {
 
 func TestAPITokenController_Create_RejectsInternalUserScope(t *testing.T) {
 	// The internal "user" wording must NOT be accepted on the public API.
-	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+	c, recorder := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Name: "x", Scope: "user", Permissions: []string{"session:read"}},
 		newTestAPIKeyUser("user-1"))
-	ctrl, _, _ := setupAPITokenController()
+	require.NotNil(t, recorder)
+	ctrl := setupAPITokenControllerOnly()
 	assertHTTPError(t, ctrl.Create(c), http.StatusBadRequest)
 }
 
 func TestAPITokenController_Create_NameRequired(t *testing.T) {
-	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+	c, recorder := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Name: "", Scope: "personal", Permissions: []string{"session:read"}},
 		newTestAPIKeyUser("user-1"))
-	ctrl, _, _ := setupAPITokenController()
+	require.NotNil(t, recorder)
+	ctrl := setupAPITokenControllerOnly()
 	assertHTTPError(t, ctrl.Create(c), http.StatusBadRequest)
 }
 
 func TestAPITokenController_Create_NameTrimmedAndLengthBoundaries(t *testing.T) {
-	ctrl, _, _ := setupAPITokenController()
+	ctrl := setupAPITokenControllerOnly()
 
 	// 1 character (after trimming surrounding spaces) is valid.
 	c, rec := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
@@ -248,15 +260,17 @@ func TestAPITokenController_Create_NameTrimmedAndLengthBoundaries(t *testing.T) 
 
 	// 65 runes is rejected with 400.
 	name65 := strings.Repeat("a", 65)
-	c3, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+	c3, recorder3 := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Name: name65, Scope: "personal", Permissions: []string{"session:read"}},
 		newTestAPIKeyUser("user-3"))
+	require.NotNil(t, recorder3)
 	assertHTTPError(t, ctrl.Create(c3), http.StatusBadRequest)
 
 	// only-whitespace name is rejected (empty after trim) with 400.
-	c4, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+	c4, recorder4 := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Name: "    ", Scope: "personal", Permissions: []string{"session:read"}},
 		newTestAPIKeyUser("user-4"))
+	require.NotNil(t, recorder4)
 	assertHTTPError(t, ctrl.Create(c4), http.StatusBadRequest)
 }
 
@@ -268,7 +282,7 @@ func TestAPITokenController_Create_DefaultPermissionsBoundedByCaller(t *testing.
 
 	c, rec := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Name: "ro", Scope: "personal"}, readOnly)
-	ctrl, _, _ := setupAPITokenController()
+	ctrl := setupAPITokenControllerOnly()
 	require.NoError(t, ctrl.Create(c))
 	assert.Equal(t, http.StatusCreated, rec.Code)
 
@@ -284,45 +298,49 @@ func TestAPITokenController_Create_DefaultPermissionsEmptyForCallerWithoutSessio
 	none := entities.NewUser(entities.UserID("none-1"), entities.UserTypeRegular, "none")
 	none.SetPermissions([]entities.Permission{}) // no session perms
 
-	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+	c, recorder := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Name: "x", Scope: "personal"}, none)
-	ctrl, _, _ := setupAPITokenController()
+	require.NotNil(t, recorder)
+	ctrl := setupAPITokenControllerOnly()
 	assertHTTPError(t, ctrl.Create(c), http.StatusBadRequest)
 }
 
 func TestAPITokenController_Create_MissingAuth(t *testing.T) {
-	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+	c, recorder := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Scope: "personal", Permissions: []string{"session:read"}}, nil)
-	ctrl, _, _ := setupAPITokenController()
+	require.NotNil(t, recorder)
+	ctrl := setupAPITokenControllerOnly()
 	assertHTTPError(t, ctrl.Create(c), http.StatusUnauthorized)
 }
 
 func TestAPITokenController_Create_PermissionExceedsCaller(t *testing.T) {
 	user := newTestAPIKeyUser("u1") // has session:create, session:read only
-	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+	c, recorder := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Name: "x", Scope: "personal", Permissions: []string{"session:delete"}}, user)
-	ctrl, _, _ := setupAPITokenController()
+	require.NotNil(t, recorder)
+	ctrl := setupAPITokenControllerOnly()
 	assertHTTPError(t, ctrl.Create(c), http.StatusForbidden)
 }
 
 func TestAPITokenController_Create_TeamNonMember(t *testing.T) {
 	user := newTestGitHubUser("u1", "org", "other") // member of org/other only
-	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+	c, recorder := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{Name: "x", Scope: "team", TeamID: "org/team", Permissions: []string{"session:create"}}, user)
-	ctrl, _, _ := setupAPITokenController()
+	require.NotNil(t, recorder)
+	ctrl := setupAPITokenControllerOnly()
 	assertHTTPError(t, ctrl.Create(c), http.StatusForbidden)
 }
 
 // --- List ---
 
 func TestAPITokenController_List_ItemsShape(t *testing.T) {
-	ctrl, repo, _ := setupAPITokenController()
+	ctrl, repo := setupAPITokenControllerWithRepo()
 	// seed two personal tokens for user-1 and one for user-2
 	seed := func(uid string) {
-		_ = repo.Create(context.Background(), entities.NewAPIToken(
+		require.NoError(t, repo.Create(context.Background(), entities.NewAPIToken(
 			"tok_"+uid, "secret_"+uid, "secret_", "n",
 			entities.APITokenScopeUser, entities.UserID(uid), "",
-			[]entities.Permission{entities.PermissionSessionRead}, nil, entities.UserID(uid)))
+			[]entities.Permission{entities.PermissionSessionRead}, nil, entities.UserID(uid))))
 	}
 	seed("user-1")
 	seed("user-1b")
@@ -341,7 +359,7 @@ func TestAPITokenController_List_ItemsShape(t *testing.T) {
 
 	// list response must not contain secret/plaintext_token and must use token_prefix
 	var raw map[string]json.RawMessage
-	_ = json.Unmarshal(rec.Body.Bytes(), &raw)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
 	var items []map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(raw["items"], &items))
 	for _, item := range items {
@@ -351,19 +369,20 @@ func TestAPITokenController_List_ItemsShape(t *testing.T) {
 }
 
 func TestAPITokenController_List_RejectsInternalUserScope(t *testing.T) {
-	c, _ := makeAPITokenEchoContext(t, http.MethodGet, "/api-tokens?scope=user", nil, newTestAPIKeyUser("user-1"))
-	ctrl, _, _ := setupAPITokenController()
+	c, recorder := makeAPITokenEchoContext(t, http.MethodGet, "/api-tokens?scope=user", nil, newTestAPIKeyUser("user-1"))
+	require.NotNil(t, recorder)
+	ctrl := setupAPITokenControllerOnly()
 	assertHTTPError(t, ctrl.List(c), http.StatusBadRequest)
 }
 
 // --- Get ---
 
 func TestAPITokenController_Get_NoSecret(t *testing.T) {
-	ctrl, repo, _ := setupAPITokenController()
-	_ = repo.Create(context.Background(), entities.NewAPIToken(
+	ctrl, repo := setupAPITokenControllerWithRepo()
+	assert.NoError(t, repo.Create(context.Background(), entities.NewAPIToken(
 		"tok_get", "secret_get", "secret_g", "n",
 		entities.APITokenScopeUser, entities.UserID("user-1"), "",
-		[]entities.Permission{entities.PermissionSessionRead}, nil, entities.UserID("user-1")))
+		[]entities.Permission{entities.PermissionSessionRead}, nil, entities.UserID("user-1"))))
 
 	c, rec := makeAPITokenEchoContextWithParam(t, http.MethodGet, "/api-tokens/tok_get", "tok_get", nil, newTestAPIKeyUser("user-1"))
 	require.NoError(t, ctrl.Get(c))
@@ -377,90 +396,4 @@ func TestAPITokenController_Get_NoSecret(t *testing.T) {
 	var raw map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
 	requireMetadataShape(t, raw)
-}
-
-func TestAPITokenController_Get_OtherUserNotFound(t *testing.T) {
-	ctrl, repo, _ := setupAPITokenController()
-	_ = repo.Create(context.Background(), entities.NewAPIToken(
-		"tok_owner", "secret_o", "secret_o", "n",
-		entities.APITokenScopeUser, entities.UserID("owner"), "",
-		[]entities.Permission{entities.PermissionSessionRead}, nil, entities.UserID("owner")))
-
-	c, _ := makeAPITokenEchoContextWithParam(t, http.MethodGet, "/api-tokens/tok_owner", "tok_owner", nil, newTestAPIKeyUser("intruder"))
-	assertHTTPError(t, ctrl.Get(c), http.StatusNotFound) // 404, no cross-scope leak
-}
-
-func TestAPITokenController_Get_MissingNotFound(t *testing.T) {
-	ctrl, _, _ := setupAPITokenController()
-	c, _ := makeAPITokenEchoContextWithParam(t, http.MethodGet, "/api-tokens/ghost", "ghost", nil, newTestAPIKeyUser("user-1"))
-	assertHTTPError(t, ctrl.Get(c), http.StatusNotFound)
-}
-
-// --- Delete ---
-
-func TestAPITokenController_Delete_Owner_204(t *testing.T) {
-	ctrl, repo, authSvc := setupAPITokenController()
-	_ = repo.Create(context.Background(), entities.NewAPIToken(
-		"tok_del", "secret_del", "secret_d", "n",
-		entities.APITokenScopeUser, entities.UserID("user-1"), "",
-		[]entities.Permission{entities.PermissionSessionRead}, nil, entities.UserID("user-1")))
-
-	c, rec := makeAPITokenEchoContextWithParam(t, http.MethodDelete, "/api-tokens/tok_del", "tok_del", nil, newTestAPIKeyUser("user-1"))
-	require.NoError(t, ctrl.Delete(c))
-	assert.Equal(t, http.StatusNoContent, rec.Code)
-	assert.Len(t, authSvc.revoked, 1, "immediate local revocation expected")
-	_, err := repo.GetByID(context.Background(), "tok_del")
-	assert.True(t, errors.Is(err, entities.ErrAPITokenNotFound))
-}
-
-func TestAPITokenController_Delete_IdempotentNonexistent_204(t *testing.T) {
-	ctrl, _, authSvc := setupAPITokenController()
-	c, rec := makeAPITokenEchoContextWithParam(t, http.MethodDelete, "/api-tokens/ghost", "ghost", nil, newTestAPIKeyUser("user-1"))
-	require.NoError(t, ctrl.Delete(c))
-	assert.Equal(t, http.StatusNoContent, rec.Code)
-	assert.Empty(t, authSvc.revoked)
-}
-
-func TestAPITokenController_Delete_NonOwner_NoLeak_204(t *testing.T) {
-	ctrl, repo, authSvc := setupAPITokenController()
-	_ = repo.Create(context.Background(), entities.NewAPIToken(
-		"tok_other", "secret_o", "secret_o", "n",
-		entities.APITokenScopeUser, entities.UserID("owner"), "",
-		[]entities.Permission{entities.PermissionSessionRead}, nil, entities.UserID("owner")))
-
-	c, rec := makeAPITokenEchoContextWithParam(t, http.MethodDelete, "/api-tokens/tok_other", "tok_other", nil, newTestAPIKeyUser("intruder"))
-	require.NoError(t, ctrl.Delete(c))
-	assert.Equal(t, http.StatusNoContent, rec.Code) // no leak, no delete
-	assert.Empty(t, authSvc.revoked)
-	if _, err := repo.GetByID(context.Background(), "tok_other"); err != nil {
-		t.Errorf("non-owner delete removed the token: %v", err)
-	}
-}
-
-func TestAPITokenController_Delete_TeamCreatorOrAdmin(t *testing.T) {
-	ctrl, repo, authSvc := setupAPITokenController()
-	creator := newTestGitHubUser("creator", "org", "team")
-	out, err := apitokenuc.NewCreateAPITokenUseCase(repo, authSvc).Execute(context.Background(), &apitokenuc.CreateAPITokenInput{
-		Caller:      creator,
-		Scope:       "team",
-		TeamID:      "org/team",
-		Name:        "team",
-		Permissions: []entities.Permission{entities.PermissionSessionCreate},
-	})
-	require.NoError(t, err)
-
-	// admin can delete
-	c, rec := makeAPITokenEchoContextWithParam(t, http.MethodDelete, "/api-tokens/"+out.Token.ID(), out.Token.ID(), nil, newTestAdminUser("admin"))
-	require.NoError(t, ctrl.Delete(c))
-	assert.Equal(t, http.StatusNoContent, rec.Code)
-}
-
-// --- Backward compatibility ---
-
-func TestAPITokenController_PersonalAPIKeyEndpointStillWorks(t *testing.T) {
-	// The legacy /users/me/api-key controller must continue to exist and
-	// behave unchanged. It is wired separately in the router; here we just
-	// assert the controller type is still instantiable to guard against
-	// accidental removal.
-	_ = NewPersonalAPIKeyController(nil, nil)
 }

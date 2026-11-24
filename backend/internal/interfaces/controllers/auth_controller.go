@@ -3,10 +3,11 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/auth"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
-	"net/http"
 )
 
 // AuthController handles HTTP requests for authentication operations
