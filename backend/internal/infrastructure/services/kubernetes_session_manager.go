@@ -7549,6 +7549,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	for k, v := range req.Environment {
 		env[k] = v
 	}
+	brokerConfigured := env["AGENTAPI_GITHUB_BROKER_URL"] != "" && env["AGENTAPI_GITHUB_BROKER_TOKEN"] != ""
+	if brokerConfigured {
+		stripDirectGitHubCredentials(env)
+		log.Printf("[GITHUB_BROKER] Removed direct GitHub credentials from provision settings for session %s", session.id)
+	}
 
 	if req.AgentType == "pi" {
 		ensurePiSettingsEnv(env)
@@ -7663,7 +7668,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// GitHub config
-	if req.GithubToken != "" {
+	if brokerConfigured {
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			settings.Github = &sessionsettings.GithubConfig{ConfigSecretName: m.k8sConfig.GitHubConfigSecretName}
+		}
+	} else if req.GithubToken != "" {
 		settings.Github = &sessionsettings.GithubConfig{
 			Token:            req.GithubToken,
 			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
@@ -8071,6 +8080,16 @@ func (m *KubernetesSessionManager) setTeamGitHubInstallationToken(
 
 	env["GITHUB_TOKEN"] = token
 	log.Printf("[K8S_SESSION] Added GitHub App installation token to session settings for team %s", req.TeamID)
+}
+
+func stripDirectGitHubCredentials(env map[string]string) {
+	for _, name := range []string{
+		"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+		"GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID",
+		"GITHUB_APP_PEM", "GITHUB_APP_PEM_PATH", "REPOSITORY_RESTRICTION",
+	} {
+		delete(env, name)
+	}
 }
 
 func buildPiConfig(connection *modelprovider.Connection) sessionsettings.PiConfig {
