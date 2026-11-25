@@ -173,6 +173,47 @@ func TestConfigureGitHubTokenBrokerUsesSessionHome(t *testing.T) {
 	}
 }
 
+func TestConfigureGitHubTokenBrokerRemovesDirectCredentials(t *testing.T) {
+	directCredentials := []string{
+		"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+		"GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID",
+		"GITHUB_APP_PEM", "GITHUB_APP_PEM_PATH", "REPOSITORY_RESTRICTION",
+	}
+	settings := &SessionSettings{Env: map[string]string{
+		"HOME":                         t.TempDir(),
+		"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN": "lease-token",
+		"GITHUB_API":                   "https://git.example.test/api/v3",
+		"GITHUB_URL":                   "https://git.example.test",
+		"GH_HOST":                      "git.example.test",
+	}}
+	for _, name := range directCredentials {
+		settings.Env[name] = "stale-direct-credential"
+		t.Setenv(name, "stale-direct-credential")
+	}
+
+	if err := configureGitHubTokenBroker(settings); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range directCredentials {
+		if _, ok := settings.Env[name]; ok {
+			t.Errorf("direct credential %s remains in session settings", name)
+		}
+		if _, ok := os.LookupEnv(name); ok {
+			t.Errorf("direct credential %s remains in process environment", name)
+		}
+	}
+	for name, want := range map[string]string{
+		"GITHUB_API": "https://git.example.test/api/v3",
+		"GITHUB_URL": "https://git.example.test",
+		"GH_HOST":    "git.example.test",
+	} {
+		if got := settings.Env[name]; got != want {
+			t.Errorf("routing environment %s = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestSetupSettingsConfiguresGitHubBrokerWithoutPreloadedRepositories(t *testing.T) {
 	settings := &SessionSettings{Env: map[string]string{
 		"AGENTAPI_GITHUB_BROKER_URL": "https://broker.example.test/credentials",
