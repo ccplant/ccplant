@@ -22,7 +22,6 @@ import (
 )
 
 const defaultExecutorSocket = "/run/ccplant-executor/executor.sock"
-const executorManagedFilePathsEnv = "CCPLANT_EXECUTOR_MANAGED_FILE_PATHS"
 
 var ExecutorServerCmd = &cobra.Command{
 	Use:   "executor-server",
@@ -212,11 +211,7 @@ func runExecutorClient(args []string) error {
 	if err != nil {
 		return err
 	}
-	files, err := readExecutorManagedFiles(os.Getenv(executorManagedFilePathsEnv))
-	if err != nil {
-		return err
-	}
-	request := executorproxy.Request{Args: append([]string{"bash"}, args...), Cwd: cwd, Env: os.Environ(), Files: files}
+	request := executorproxy.Request{Args: append([]string{"bash"}, args...), Cwd: cwd, Env: filterExecutorEnvironment(os.Environ())}
 	if err := executorproxy.WriteJSON(conn, request); err != nil {
 		return err
 	}
@@ -273,6 +268,34 @@ func runExecutorClient(args []string) error {
 			return nil
 		}
 	}
+}
+
+// filterExecutorEnvironment prevents credentials held by the agent process from
+// crossing the executor boundary. Configuration values such as regions and
+// ordinary build flags remain available; credential-like names fail closed.
+func filterExecutorEnvironment(env []string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok || executorEnvironmentIsSensitive(name) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+func executorEnvironmentIsSensitive(name string) bool {
+	upper := strings.ToUpper(name)
+	for _, fragment := range []string{
+		"ACCESS_KEY", "API_KEY", "AUTH_TOKEN", "AUTHORIZATION", "BEARER", "COOKIE",
+		"CREDENTIAL", "OAUTH", "PASSWORD", "PRIVATE_KEY", "SECRET", "SESSION_TOKEN", "TOKEN",
+	} {
+		if strings.Contains(upper, fragment) {
+			return true
+		}
+	}
+	return upper == "AUTH"
 }
 
 func readExecutorManagedFiles(encodedPaths string) ([]executorproxy.ManagedFile, error) {

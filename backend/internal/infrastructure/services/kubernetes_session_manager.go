@@ -4236,6 +4236,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	if executorEnabled {
 		volumes = append(volumes,
 			corev1.Volume{Name: "executor-socket", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			corev1.Volume{Name: "executor-private-home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			corev1.Volume{Name: "herdr-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			corev1.Volume{Name: "agent-local-sockets", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		)
@@ -4251,17 +4252,41 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 				Name: "agent-local-sockets", MountPath: filepath.Dir(provisionerSocketPath),
 			}},
 		})
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "prepare-executor-private-home",
+			Image:           m.k8sConfig.Image,
+			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+			Command: []string{"/bin/sh", "-ec",
+				"mkdir -p /executor-home/codex /executor-home/claude /executor-home/docker /executor-home/gcloud /executor-home/ccplant && : > /executor-home/claude.json && chown -R 999:999 /executor-home && chmod 000 /executor-home/claude.json"},
+			SecurityContext: &corev1.SecurityContext{RunAsUser: &rootUID, RunAsNonRoot: &falseVal},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name: "executor-private-home", MountPath: "/executor-home",
+			}},
+		})
+		// The executor only mounts the repository subdirectory, so make sure the
+		// subPath exists before kubelet starts the native sidecar.  Keeping the
+		// rest of workdir out of the executor prevents it from reaching persisted
+		// agent state under .agentapi/persistent-home.
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "prepare-executor-workspace",
+			Image:           m.k8sConfig.Image,
+			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+			Command:         []string{"/bin/sh", "-ec", "mkdir -p /home/agentapi/workdir/repo && chown 999:999 /home/agentapi/workdir/repo"},
+			SecurityContext: &corev1.SecurityContext{RunAsUser: &rootUID, RunAsNonRoot: &falseVal},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name: "workdir", MountPath: "/home/agentapi/workdir",
+			}},
+		})
 	}
 
 	// Run the executor as a native sidecar so kubelet restarts it independently
 	// after failures such as OOM kills, even for ephemeral Pods whose Pod-level
 	// restart policy remains Never.
 	if executorEnabled {
-		executorMounts := m.buildMainContainerVolumeMounts(session, req)
+		executorMounts := m.buildExecutorVolumeMounts()
 		executorMounts = append(executorMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
 			corev1.VolumeMount{Name: "herdr-runtime", MountPath: defaultHerdrRuntimePath},
-			corev1.VolumeMount{Name: "agent-local-sockets", MountPath: filepath.Dir(provisionerSocketPath)},
 			corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true},
 		)
 		restartAlways := corev1.ContainerRestartPolicyAlways
@@ -6693,6 +6718,21 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// buildExecutorVolumeMounts returns the deliberately small filesystem view used
+// by model-generated shell commands. Agent configuration, credentials, Docker
+// auth, session settings, and persisted agent homes remain main-container-only.
+func (m *KubernetesSessionManager) buildExecutorVolumeMounts() []corev1.VolumeMount {
+	return []corev1.VolumeMount{
+		{Name: "workdir", MountPath: "/home/agentapi/workdir/repo", SubPath: "repo"},
+		{Name: "executor-private-home", MountPath: "/home/agentapi/.codex", SubPath: "codex"},
+		{Name: "executor-private-home", MountPath: "/home/agentapi/.claude", SubPath: "claude"},
+		{Name: "executor-private-home", MountPath: "/home/agentapi/.claude.json", SubPath: "claude.json", ReadOnly: true},
+		{Name: "executor-private-home", MountPath: "/home/agentapi/.docker", SubPath: "docker"},
+		{Name: "executor-private-home", MountPath: "/home/agentapi/.config/gcloud", SubPath: "gcloud"},
+		{Name: "executor-private-home", MountPath: "/home/agentapi/.ccplant", SubPath: "ccplant"},
+	}
 }
 
 // buildMainContainerVolumeMounts builds the volume mounts for the main container

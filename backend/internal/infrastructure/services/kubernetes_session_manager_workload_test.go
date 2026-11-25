@@ -371,8 +371,8 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 	if !hasMount(main.VolumeMounts, "agent-local-sockets", filepath.Dir(provisionerSocketPath), "") {
 		t.Fatalf("agent mounts = %#v, want shared local sockets", main.VolumeMounts)
 	}
-	if !hasMount(executor.VolumeMounts, "agent-local-sockets", filepath.Dir(provisionerSocketPath), "") {
-		t.Fatalf("executor mounts = %#v, want shared local sockets", executor.VolumeMounts)
+	if hasMount(executor.VolumeMounts, "agent-local-sockets", filepath.Dir(provisionerSocketPath), "") {
+		t.Fatalf("executor mounts = %#v, must not expose provisioner sockets", executor.VolumeMounts)
 	}
 	prepareSockets := findContainerByName(deployment.Spec.Template.Spec.InitContainers, "prepare-agent-local-sockets")
 	if prepareSockets == nil {
@@ -387,8 +387,33 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 	if !hasMount(main.VolumeMounts, "dot-docker", "/home/agentapi/.docker", "") {
 		t.Fatalf("agent mounts = %#v, want shared Docker config", main.VolumeMounts)
 	}
-	if !hasMount(executor.VolumeMounts, "dot-docker", "/home/agentapi/.docker", "") {
-		t.Fatalf("executor mounts = %#v, want shared Docker config", executor.VolumeMounts)
+	if hasMount(executor.VolumeMounts, "dot-docker", "/home/agentapi/.docker", "") {
+		t.Fatalf("executor mounts = %#v, must not expose Docker credentials", executor.VolumeMounts)
+	}
+	if !hasMount(executor.VolumeMounts, "workdir", "/home/agentapi/workdir/repo", "repo") {
+		t.Fatalf("executor mounts = %#v, want repository-only workdir mount", executor.VolumeMounts)
+	}
+	for path, subPath := range map[string]string{
+		"/home/agentapi/.codex":         "codex",
+		"/home/agentapi/.claude":        "claude",
+		"/home/agentapi/.claude.json":   "claude.json",
+		"/home/agentapi/.docker":        "docker",
+		"/home/agentapi/.config/gcloud": "gcloud",
+		"/home/agentapi/.ccplant":       "ccplant",
+	} {
+		if !hasMount(executor.VolumeMounts, "executor-private-home", path, subPath) {
+			t.Fatalf("executor mounts = %#v, want private overlay for %s", executor.VolumeMounts, path)
+		}
+	}
+	for _, privatePath := range []string{
+		"/session-settings",
+		"/notification-subscriptions-source",
+	} {
+		for _, mount := range executor.VolumeMounts {
+			if mount.MountPath == privatePath {
+				t.Fatalf("executor mount %s exposes agent-private data: %#v", privatePath, mount)
+			}
+		}
 	}
 }
 

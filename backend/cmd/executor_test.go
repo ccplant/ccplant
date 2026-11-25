@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -81,6 +82,26 @@ func TestExecutorClientBasename(t *testing.T) {
 	}
 	if _, ok := ExecutorClientArgsForBasename([]string{"ccplant", "server"}); ok {
 		t.Fatal("ccplant must not dispatch as a shell")
+	}
+}
+
+func TestFilterExecutorEnvironmentRemovesCredentials(t *testing.T) {
+	input := []string{
+		"PATH=/usr/bin",
+		"AWS_REGION=ap-northeast-1",
+		"AWS_ACCESS_KEY_ID=access",
+		"AWS_SECRET_ACCESS_KEY=secret",
+		"AWS_SESSION_TOKEN=session",
+		"ANTHROPIC_API_KEY=anthropic",
+		"MCP_GITHUB_TOKEN=github",
+		"DATABASE_PASSWORD=password",
+		"GIT_AUTHOR_NAME=Agent",
+		"NORMAL_BUILD_FLAG=value",
+	}
+	want := []string{"PATH=/usr/bin", "AWS_REGION=ap-northeast-1", "GIT_AUTHOR_NAME=Agent", "NORMAL_BUILD_FLAG=value"}
+	got := filterExecutorEnvironment(input)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("filterExecutorEnvironment() = %#v, want %#v", got, want)
 	}
 }
 
