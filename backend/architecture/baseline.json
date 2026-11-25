@@ -1,0 +1,672 @@
+{
+  "version": "2",
+  "score": 55,
+  "scoreLowerBound": 32,
+  "scoreUpperBound": 73,
+  "nominalScore": 66,
+  "evaluatedPoints": 58.7,
+  "confidence": 0.587,
+  "analysisCoverage": 1,
+  "gate": "fail",
+  "files": 400,
+  "generatedFiles": 0,
+  "historyGeneratedExcluded": 0,
+  "edges": 666,
+  "components": [
+    {
+      "name": "boundaries",
+      "score": 24,
+      "max": 30,
+      "detail": "9/47 observed dependency pairs violate policy across 23 import edges; policy mode observational",
+      "confidence": 0,
+      "evaluatedPoints": 0
+    },
+    {
+      "name": "acyclicity",
+      "score": 7,
+      "max": 20,
+      "detail": "8/12 active modules participate in 2 strongly connected components",
+      "confidence": 1,
+      "evaluatedPoints": 20
+    },
+    {
+      "name": "public-contract",
+      "score": 10,
+      "max": 10,
+      "detail": "0 modules declare non-empty public paths covering 0/47 inbound module relationships",
+      "confidence": 0,
+      "evaluatedPoints": 0
+    },
+    {
+      "name": "coupling",
+      "score": 14,
+      "max": 15,
+      "detail": "2/11 modules exceed fan-out 5; 0/11 exceed stability-weighted load 5.0; composition roots exempt",
+      "confidence": 1,
+      "evaluatedPoints": 15
+    },
+    {
+      "name": "cohesion",
+      "score": 1,
+      "max": 10,
+      "detail": "663/666 dependency-edge weight is evaluable; single-package modules excluded",
+      "confidence": 0.995,
+      "evaluatedPoints": 9.95
+    },
+    {
+      "name": "module-coverage",
+      "score": 10,
+      "max": 10,
+      "detail": "0 unassigned files",
+      "confidence": 1,
+      "evaluatedPoints": 10
+    },
+    {
+      "name": "change-locality",
+      "score": 0,
+      "max": 5,
+      "detail": "evaluated 9/12 modules and 646 changes; 0 changes meet the 80% locality target",
+      "confidence": 0.75,
+      "evaluatedPoints": 3.75
+    }
+  ],
+  "violations": [
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "infrastructure",
+      "fromFile": "internal/interfaces/controllers/admin_settings_controller.go",
+      "toFile": "internal/infrastructure/kvstore/authorization.go",
+      "line": 16,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "runtime",
+      "fromFile": "internal/interfaces/controllers/admin_settings_controller.go",
+      "toFile": "internal/runtimeconfig/provider.go",
+      "line": 17,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "infrastructure",
+      "fromFile": "internal/interfaces/controllers/provisioner_controller.go",
+      "toFile": "internal/infrastructure/services/api_token_bootstrap.go",
+      "line": 20,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "infrastructure",
+      "fromFile": "internal/interfaces/controllers/sandbox_policy_controller.go",
+      "toFile": "internal/infrastructure/repositories/hash.go",
+      "line": 11,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "infrastructure",
+      "fromFile": "internal/interfaces/controllers/session_context_template_controller.go",
+      "toFile": "internal/infrastructure/services/api_token_bootstrap.go",
+      "line": 17,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "infrastructure",
+      "fromFile": "internal/interfaces/controllers/session_controller.go",
+      "toFile": "internal/infrastructure/services/api_token_bootstrap.go",
+      "line": 27,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "infrastructure",
+      "fromFile": "internal/interfaces/controllers/session_runtime_controller.go",
+      "toFile": "internal/infrastructure/esmcontrol/codex_device_auth.go",
+      "line": 19,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/esmcontrol"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "infrastructure",
+      "fromFile": "internal/interfaces/controllers/storage_controller.go",
+      "toFile": "internal/infrastructure/services/api_token_bootstrap.go",
+      "line": 20,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "interfaces",
+      "toModule": "app",
+      "fromFile": "internal/interfaces/mcp/handler.go",
+      "toFile": "internal/app/auth.go",
+      "line": 12,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/app"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "runtime",
+      "toModule": "infrastructure",
+      "fromFile": "internal/runtimeconfig/provider.go",
+      "toFile": "internal/infrastructure/kvstore/authorization.go",
+      "line": 11,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "domain",
+      "fromFile": "pkg/auth/authz_context.go",
+      "toFile": "internal/domain/entities/api_token.go",
+      "line": 4,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "domain",
+      "fromFile": "pkg/auth/middleware.go",
+      "toFile": "internal/domain/entities/api_token.go",
+      "line": 15,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "infrastructure",
+      "fromFile": "pkg/auth/middleware.go",
+      "toFile": "internal/infrastructure/ratelimit/ratelimit.go",
+      "line": 16,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/ratelimit"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "usecases",
+      "fromFile": "pkg/auth/middleware.go",
+      "toFile": "internal/usecases/ports/services/auth_service.go",
+      "line": 17,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "domain",
+      "fromFile": "pkg/client/client.go",
+      "toFile": "internal/domain/entities/api_token.go",
+      "line": 15,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "domain",
+      "fromFile": "pkg/executiontoken/execution_token.go",
+      "toFile": "internal/domain/entities/api_token.go",
+      "line": 12,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "domain",
+      "fromFile": "pkg/notification/service.go",
+      "toFile": "internal/domain/entities/api_token.go",
+      "line": 10,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "core",
+      "fromFile": "pkg/provisioner/direct_runtime_client.go",
+      "toFile": "internal/core/esmcontrol/types.go",
+      "line": 22,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "domain",
+      "fromFile": "pkg/slackbot_cleanup/worker.go",
+      "toFile": "internal/domain/entities/api_token.go",
+      "line": 9,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "modules",
+      "fromFile": "pkg/slackbot_cleanup/worker.go",
+      "toFile": "internal/modules/schedule/cron.go",
+      "line": 10,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "usecases",
+      "fromFile": "pkg/slackbot_cleanup/worker.go",
+      "toFile": "internal/usecases/ports/repositories/api_token_repository.go",
+      "line": 11,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "modules",
+      "fromFile": "pkg/stock_inventory/worker.go",
+      "toFile": "internal/modules/schedule/cron.go",
+      "line": 9,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
+    },
+    {
+      "kind": "forbidden-dependency",
+      "fromModule": "packages",
+      "toModule": "domain",
+      "fromFile": "pkg/usagecollector/collector.go",
+      "toFile": "internal/domain/entities/api_token.go",
+      "line": 13,
+      "import": "github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+    }
+  ],
+  "cycles": [
+    [
+      "app",
+      "interfaces"
+    ],
+    [
+      "core",
+      "domain",
+      "infrastructure",
+      "modules",
+      "packages",
+      "usecases"
+    ]
+  ],
+  "cycleDiagnostics": [
+    {
+      "modules": 2,
+      "dependencyPairs": 2,
+      "breakCandidates": [
+        {
+          "module": "app",
+          "inbound": 1,
+          "outbound": 1,
+          "remainingCycleModules": 0,
+          "reduction": 2
+        },
+        {
+          "module": "interfaces",
+          "inbound": 1,
+          "outbound": 1,
+          "remainingCycleModules": 0,
+          "reduction": 2
+        }
+      ]
+    },
+    {
+      "modules": 6,
+      "dependencyPairs": 20,
+      "breakCandidates": [
+        {
+          "module": "packages",
+          "inbound": 5,
+          "outbound": 5,
+          "remainingCycleModules": 2,
+          "reduction": 4
+        },
+        {
+          "module": "infrastructure",
+          "inbound": 2,
+          "outbound": 5,
+          "remainingCycleModules": 5,
+          "reduction": 1
+        },
+        {
+          "module": "modules",
+          "inbound": 2,
+          "outbound": 5,
+          "remainingCycleModules": 5,
+          "reduction": 1
+        },
+        {
+          "module": "domain",
+          "inbound": 5,
+          "outbound": 1,
+          "remainingCycleModules": 5,
+          "reduction": 1
+        },
+        {
+          "module": "core",
+          "inbound": 3,
+          "outbound": 2,
+          "remainingCycleModules": 5,
+          "reduction": 1
+        }
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "name": "commands",
+      "files": 46,
+      "units": 2,
+      "fanIn": 0,
+      "fanOut": 8,
+      "couplingLoad": 3.291,
+      "instability": 1,
+      "internalEdges": 1,
+      "externalEdges": 69,
+      "cohesion": 0.014,
+      "cohesionEvaluated": true,
+      "changeCoupling": 0.462,
+      "changeCommits": 65,
+      "changeEvaluated": true,
+      "containedChanges": 17,
+      "changeLocality": 0.262,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 0,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "app",
+      "files": 9,
+      "units": 2,
+      "fanIn": 2,
+      "fanOut": 9,
+      "couplingLoad": 3.259,
+      "instability": 0.818,
+      "internalEdges": 1,
+      "externalEdges": 80,
+      "cohesion": 0.012,
+      "cohesionEvaluated": true,
+      "changePartners": [
+        "infrastructure",
+        "interfaces",
+        "packages"
+      ],
+      "changeCoupling": 0.779,
+      "changeCommits": 77,
+      "changeEvaluated": true,
+      "containedChanges": 4,
+      "changeLocality": 0.052,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 3,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "core",
+      "files": 14,
+      "units": 8,
+      "fanIn": 6,
+      "fanOut": 2,
+      "couplingLoad": 0.468,
+      "instability": 0.25,
+      "internalEdges": 0,
+      "externalEdges": 7,
+      "cohesion": 0,
+      "cohesionEvaluated": true,
+      "changePartners": [
+        "app",
+        "infrastructure",
+        "interfaces"
+      ],
+      "changeCoupling": 0.833,
+      "changeCommits": 18,
+      "changeEvaluated": true,
+      "containedChanges": 0,
+      "changeLocality": 0,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 52,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "domain",
+      "files": 26,
+      "units": 2,
+      "fanIn": 8,
+      "fanOut": 1,
+      "couplingLoad": 0.357,
+      "instability": 0.111,
+      "internalEdges": 0,
+      "externalEdges": 5,
+      "cohesion": 0,
+      "cohesionEvaluated": true,
+      "changePartners": [
+        "app",
+        "infrastructure",
+        "interfaces",
+        "packages",
+        "usecases"
+      ],
+      "changeCoupling": 0.892,
+      "changeCommits": 37,
+      "changeEvaluated": true,
+      "containedChanges": 0,
+      "changeLocality": 0,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 156,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "usecases",
+      "files": 35,
+      "units": 11,
+      "fanIn": 5,
+      "fanOut": 2,
+      "couplingLoad": 0.468,
+      "instability": 0.286,
+      "internalEdges": 12,
+      "externalEdges": 39,
+      "cohesion": 0.235,
+      "cohesionEvaluated": true,
+      "changePartners": [
+        "app",
+        "domain",
+        "infrastructure",
+        "interfaces",
+        "packages"
+      ],
+      "changeCoupling": 0.943,
+      "changeCommits": 35,
+      "changeEvaluated": true,
+      "containedChanges": 0,
+      "changeLocality": 0,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 117,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "interfaces",
+      "files": 56,
+      "units": 3,
+      "fanIn": 2,
+      "fanOut": 8,
+      "couplingLoad": 3.277,
+      "instability": 0.8,
+      "internalEdges": 2,
+      "externalEdges": 182,
+      "cohesion": 0.011,
+      "cohesionEvaluated": true,
+      "changePartners": [
+        "app",
+        "infrastructure"
+      ],
+      "changeCoupling": 0.636,
+      "changeCommits": 118,
+      "changeEvaluated": true,
+      "containedChanges": 16,
+      "changeLocality": 0.136,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 8,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "infrastructure",
+      "files": 93,
+      "units": 10,
+      "fanIn": 6,
+      "fanOut": 5,
+      "couplingLoad": 1.504,
+      "instability": 0.455,
+      "internalEdges": 13,
+      "externalEdges": 135,
+      "cohesion": 0.088,
+      "cohesionEvaluated": true,
+      "changePartners": [
+        "interfaces"
+      ],
+      "changeCoupling": 0.56,
+      "changeCommits": 134,
+      "changeEvaluated": true,
+      "containedChanges": 29,
+      "changeLocality": 0.216,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 41,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "modules",
+      "files": 30,
+      "units": 7,
+      "fanIn": 5,
+      "fanOut": 5,
+      "couplingLoad": 1.459,
+      "instability": 0.5,
+      "internalEdges": 4,
+      "externalEdges": 62,
+      "cohesion": 0.061,
+      "cohesionEvaluated": true,
+      "changePartners": [
+        "infrastructure",
+        "interfaces"
+      ],
+      "changeCoupling": 0.61,
+      "changeCommits": 41,
+      "changeEvaluated": true,
+      "containedChanges": 6,
+      "changeLocality": 0.146,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 19,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "runtime",
+      "files": 1,
+      "units": 1,
+      "fanIn": 2,
+      "fanOut": 2,
+      "couplingLoad": 0.812,
+      "instability": 0.5,
+      "internalEdges": 0,
+      "externalEdges": 3,
+      "cohesion": 1,
+      "cohesionEvaluated": false,
+      "changeCoupling": 0,
+      "changeCommits": 3,
+      "changeEvaluated": false,
+      "containedChanges": 0,
+      "changeLocality": 0,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 3,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "updater",
+      "files": 1,
+      "units": 1,
+      "fanIn": 1,
+      "fanOut": 0,
+      "couplingLoad": 0,
+      "instability": 0,
+      "internalEdges": 0,
+      "externalEdges": 0,
+      "cohesion": 1,
+      "cohesionEvaluated": false,
+      "changeCoupling": 0,
+      "changeCommits": 1,
+      "changeEvaluated": false,
+      "containedChanges": 0,
+      "changeLocality": 0,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 1,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "packages",
+      "files": 84,
+      "units": 31,
+      "fanIn": 9,
+      "fanOut": 5,
+      "couplingLoad": 1.602,
+      "instability": 0.357,
+      "internalEdges": 38,
+      "externalEdges": 13,
+      "cohesion": 0.745,
+      "cohesionEvaluated": true,
+      "changeCoupling": 0.471,
+      "changeCommits": 121,
+      "changeEvaluated": true,
+      "containedChanges": 37,
+      "changeLocality": 0.306,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 194,
+      "privateInboundViolations": 0
+    },
+    {
+      "name": "misc",
+      "files": 5,
+      "units": 5,
+      "fanIn": 1,
+      "fanOut": 0,
+      "couplingLoad": 0,
+      "instability": 0,
+      "internalEdges": 0,
+      "externalEdges": 0,
+      "cohesion": 1,
+      "cohesionEvaluated": false,
+      "changeCoupling": 0,
+      "changeCommits": 2,
+      "changeEvaluated": false,
+      "containedChanges": 0,
+      "changeLocality": 0,
+      "publicFiles": 0,
+      "publicUnits": 0,
+      "publicSymbols": 0,
+      "publicInboundEdges": 1,
+      "privateInboundViolations": 0
+    }
+  ]
+}
