@@ -290,3 +290,12 @@ func TestProfileTeamSettingsAccess(t *testing.T) {
 	cfg.SetSettingsTeamID("org/team")
 	require.Error(t, validateProfileSettingsTeam(user, p, cfg))
 }
+
+func TestValidateSessionProfileConfigPolicyYAML(t *testing.T) {
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetPolicyYAML("version: v1\nresources:\n  sessions:\n    read: true\n")
+	require.NoError(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetPolicyYAML("version: v1\nresources:\n  sessions:\n    execute: true\n")
+	require.ErrorContains(t, validateSessionProfileConfig(cfg), "invalid policy.yaml")
+}

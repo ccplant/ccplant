@@ -78,6 +78,7 @@ type sessionProfileConfigJSON struct {
 	Repositories           []entities.ProfileRepository `json:"repositories,omitempty"`
 	MCPServers             map[string]*mcpServerJSON    `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
+	PolicyYAML             string                       `json:"policy_yaml,omitempty"`
 }
 
 // KubernetesSessionProfileRepository implements SessionProfileRepository using Kubernetes Secrets
@@ -394,6 +395,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetSkills(pj.Config.Skills)
 	cfg.SetPiPackages(pj.Config.PiPackages)
 	cfg.SetSessionState(pj.Config.SessionState)
+	cfg.SetPolicyYAML(pj.Config.PolicyYAML)
 	cfg.SetProfileFiles(pj.Config.Files)
 	cfg.SetProfileRepositories(pj.Config.Repositories)
 	if pj.Config.MCPServers != nil {
@@ -459,6 +461,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			Repositories:           cfg.ProfileRepositories(),
 			MCPServers:             mcpServers,
 			SessionState:           cfg.SessionState(),
+			PolicyYAML:             cfg.PolicyYAML(),
 		},
 		CreatedAt: profile.CreatedAt(),
 		UpdatedAt: profile.UpdatedAt(),

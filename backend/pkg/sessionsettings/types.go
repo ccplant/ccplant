@@ -248,6 +248,8 @@ type SessionSettings struct {
 	// ParentRuntime configures the Session Pod's outbound reverse-RPC connection
 	// to the parent proxy. It is populated only for externally allocated sessions.
 	ParentRuntime *ParentRuntimeConfig `yaml:"parent_runtime,omitempty" json:"parent_runtime,omitempty"`
+	// PolicyYAML is the validated policy.yaml supplied by the selected session profile.
+	PolicyYAML string `yaml:"policy_yaml,omitempty" json:"policy_yaml,omitempty"`
 }
 
 // ParentRuntimeConfig is the per-session bootstrap material used by the

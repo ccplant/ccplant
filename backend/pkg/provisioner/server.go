@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/agentpolicy"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -66,6 +67,7 @@ type Server struct {
 	brokerURL       string
 	brokerKey       string
 	brokerSessionID string
+	brokerPolicy    *agentpolicy.Policy
 
 	mu                     sync.RWMutex
 	status                 Status
@@ -257,13 +259,13 @@ func (s *Server) ConfigureCLIBroker(parentURL, sessionID string) {
 
 func (s *Server) handleCLIBroker(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
-	parentURL, apiKey, sessionID := s.brokerURL, s.brokerKey, s.brokerSessionID
+	parentURL, apiKey, sessionID, policy := s.brokerURL, s.brokerKey, s.brokerSessionID, s.brokerPolicy
 	s.mu.RUnlock()
 	if parentURL == "" || apiKey == "" || sessionID == "" {
 		http.Error(w, "CLI broker is not ready", http.StatusServiceUnavailable)
 		return
 	}
-	if !allowedCLIBrokerRequest(r, sessionID) {
+	if !allowedCLIBrokerRequest(r, sessionID, policy) {
 		http.Error(w, "CLI broker request is not allowed", http.StatusForbidden)
 		return
 	}
@@ -308,12 +310,19 @@ func (s *Server) handleCLIBroker(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func allowedCLIBrokerRequest(r *http.Request, sessionID string) bool {
+func allowedCLIBrokerRequest(r *http.Request, sessionID string, policy *agentpolicy.Policy) bool {
 	path := r.URL.Path
-	if path == "/notifications/send" {
+	if path == "/internal/usage-events" {
 		return r.Method == http.MethodPost
 	}
-	if path == "/internal/usage-events" {
+	if policy != nil {
+		if path == "/"+url.PathEscape(sessionID)+"/message" {
+			return r.Method == http.MethodPost && policy.Allows("sessions", "update")
+		}
+		resource, action, ok := agentpolicy.RequestOperation(r)
+		return ok && policy.Allows(resource, action)
+	}
+	if path == "/notifications/send" {
 		return r.Method == http.MethodPost
 	}
 	escapedID := url.PathEscape(sessionID)

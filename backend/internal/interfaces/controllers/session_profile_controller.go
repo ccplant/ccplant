@@ -14,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/agentpolicy"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -65,6 +66,7 @@ type SessionProfileConfigRequest struct {
 	Repositories           []entities.ProfileRepository `json:"repositories,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
+	PolicyYAML             string                       `json:"policy_yaml,omitempty"`
 }
 
 // CreateSessionProfileRequest is the request body for creating a session profile
@@ -134,6 +136,7 @@ type SessionProfileConfigResponse struct {
 	Repositories           []entities.ProfileRepository `json:"repositories,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
+	PolicyYAML             string                       `json:"policy_yaml,omitempty"`
 }
 
 // PreviewSessionProfileRequest is the request body for POST /session-profiles/preview
@@ -516,6 +519,9 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 }
 
 func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
+	if _, err := agentpolicy.Parse(config.PolicyYAML()); err != nil {
+		return err
+	}
 	if err := sessionsettings.ValidateCommandWrapperTemplate(config.CommandWrapperTemplate()); err != nil {
 		return err
 	}
@@ -731,6 +737,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetSkills(req.Skills)
 	cfg.SetPiPackages(req.PiPackages)
 	cfg.SetSessionState(req.SessionState)
+	cfg.SetPolicyYAML(req.PolicyYAML)
 	if req.Files != nil {
 		cfg.SetProfileFiles(req.Files)
 	}
@@ -801,6 +808,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			Repositories:           cfg.ProfileRepositories(),
 			MCPServers:             mcpServers,
 			SessionState:           cfg.SessionState(),
+			PolicyYAML:             cfg.PolicyYAML(),
 		},
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt: p.UpdatedAt().Format(time.RFC3339),

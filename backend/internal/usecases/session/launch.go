@@ -61,6 +61,7 @@ type LaunchRequest struct {
 	ProfileGitHubRepositories []string
 	ProfileCommandWrapper     string
 	ProfileSystemPrompt       string
+	ProfilePolicyYAML         string
 	ResolvedSessionProfileID  string
 	Storages                  []entities.ResolvedStorageAttachment
 
@@ -278,6 +279,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		ProfileSkills:            append([]string(nil), req.ProfileSkills...),
 		ProfileCommandWrapper:    req.ProfileCommandWrapper,
 		ProfileSystemPrompt:      req.ProfileSystemPrompt,
+		ProfilePolicyYAML:        req.ProfilePolicyYAML,
 		ResolvedSessionProfileID: req.ResolvedSessionProfileID,
 		Storages:                 append([]entities.ResolvedStorageAttachment(nil), req.Storages...),
 	}
@@ -529,6 +531,9 @@ func mergeProfileConfigSources(base, override entities.SessionProfileConfig) ent
 	if local.SessionState() == nil {
 		local.SetSessionState(base.SessionState())
 	}
+	if local.PolicyYAML() == "" {
+		local.SetPolicyYAML(base.PolicyYAML())
+	}
 	local.SetSkills(unionProfileStrings(base.Skills(), local.Skills()))
 	local.SetPiPackages(unionProfileStrings(base.PiPackages(), local.PiPackages()))
 	return local
@@ -582,6 +587,7 @@ func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]st
 func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchRequest) {
 	req.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
 	req.ProfileSystemPrompt = cfg.SystemPrompt()
+	req.ProfilePolicyYAML = cfg.PolicyYAML()
 	if cfg.SettingsTeamID() != "" {
 		req.SettingsTeamID = cfg.SettingsTeamID()
 	}

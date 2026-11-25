@@ -1535,6 +1535,7 @@ func (s *Server) createLocalSession(ctx context.Context, route sessionrunnercore
 		ProfileMCPServers: startReq.ProfileMCPServers, ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 		ProfileSkills: startReq.ProfileSkills, ProfileCommandWrapper: startReq.ProfileCommandWrapper,
 		ProfileSystemPrompt: startReq.ProfileSystemPrompt,
+		ProfilePolicyYAML:   startReq.ProfilePolicyYAML,
 		Storages:            startReq.ResolvedStorages,
 	})
 	if err != nil {
@@ -2199,6 +2200,7 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		ProfileSkills:            startReq.ProfileSkills,
 		ProfileCommandWrapper:    startReq.ProfileCommandWrapper,
 		ProfileSystemPrompt:      startReq.ProfileSystemPrompt,
+		ProfilePolicyYAML:        startReq.ProfilePolicyYAML,
 		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 		Storages:                 append([]entities.ResolvedStorageAttachment(nil), startReq.ResolvedStorages...),
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/agentpolicy"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -74,5 +75,30 @@ func TestConfigureCLIBrokerForClaimedStockSessionUsesPublicSessionID(t *testing.
 	}
 	if server.brokerKey != "personal-key" {
 		t.Fatal("broker key was not captured")
+	}
+}
+
+func TestCLIBrokerPolicyControlsResourceActions(t *testing.T) {
+	server := NewWithSocket("", "")
+	server.ConfigureCLIBroker("https://example.invalid", "session-1")
+	server.brokerKey = "personal-key"
+	server.brokerPolicy = &agentpolicy.Policy{Version: agentpolicy.Version, Resources: map[string]agentpolicy.Actions{
+		"schedules": {Read: true},
+		"sessions":  {Update: true},
+	}}
+
+	for _, tt := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		{http.MethodGet, "/schedules", true},
+		{http.MethodPost, "/schedules", false},
+		{http.MethodPost, "/session-1/message", true},
+		{http.MethodPost, "/session-2/message", false},
+		{http.MethodPost, "/internal/usage-events", true},
+	} {
+		if got := allowedCLIBrokerRequest(httptest.NewRequest(tt.method, tt.path, nil), "session-1", server.brokerPolicy); got != tt.allowed {
+			t.Errorf("%s %s allowed = %v, want %v", tt.method, tt.path, got, tt.allowed)
+		}
 	}
 }
