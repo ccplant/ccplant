@@ -141,6 +141,20 @@ func configureGitHubTokenBroker(settings *SessionSettings) error {
 	if brokerURL == "" || brokerToken == "" {
 		return fmt.Errorf("broker URL and token must both be configured")
 	}
+	// A broker lease is the authoritative credential for this session. Remove
+	// inherited direct credentials so a pre-warmed runner cannot fall back to a
+	// deleted built-in GitHub App or a stale token before invoking the broker
+	// wrappers. Keep GITHUB_API, GITHUB_URL, and GH_HOST for host routing.
+	for _, name := range []string{
+		"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+		"GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID",
+		"GITHUB_APP_PEM", "GITHUB_APP_PEM_PATH", "REPOSITORY_RESTRICTION",
+	} {
+		delete(settings.Env, name)
+		if err := os.Unsetenv(name); err != nil {
+			return fmt.Errorf("unset direct GitHub credential %s: %w", name, err)
+		}
+	}
 	log.Printf("[GITHUB_BROKER] Configuring broker-backed GitHub authentication for host %s", githubHostForLog(settings.Env))
 	homeDir := strings.TrimSpace(settings.Env["HOME"])
 	if homeDir == "" {
