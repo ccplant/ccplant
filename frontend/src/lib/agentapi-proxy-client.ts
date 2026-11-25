@@ -2229,11 +2229,12 @@ export class AgentAPIProxyClient {
    * Delete credentials
    * DELETE /credentials/{name}
    */
-  async deleteCredentials(name: string): Promise<void> {
+  async deleteCredentials(name: string, type?: string): Promise<void> {
     if (this.debug) {
       console.log(`[AgentAPIProxy] Deleting credentials: ${name}`);
     }
-    await this.makeRequest<void>(`/credentials/${encodeURIComponent(name)}`, {
+    const query = type ? `?type=${encodeURIComponent(type)}` : '';
+    await this.makeRequest<void>(`/credentials/${encodeURIComponent(name)}${query}`, {
       method: 'DELETE',
     });
   }
@@ -2298,6 +2299,10 @@ export class AgentAPIProxyClient {
 
   async submitAntigravityAuthInput(attemptId: string, input: string): Promise<void> {
     await this.makeRequest<void>(`/antigravity/auth/${encodeURIComponent(attemptId)}/input`, { method: 'POST', body: JSON.stringify({ input }) });
+  }
+
+  async selectAntigravitySubscription(attemptId: string, subscriptionIndex: number): Promise<void> {
+    await this.makeRequest<void>(`/antigravity/auth/${encodeURIComponent(attemptId)}/input`, { method: 'POST', body: JSON.stringify({ subscription_index: subscriptionIndex }) });
   }
 
   async cancelAntigravityAuth(attemptId: string): Promise<void> {

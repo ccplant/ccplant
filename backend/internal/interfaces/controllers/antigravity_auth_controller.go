@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,7 +40,8 @@ type AntigravityAuthResponse struct {
 }
 
 type antigravityAuthInputRequest struct {
-	Input string `json:"input"`
+	Input             string `json:"input"`
+	SubscriptionIndex *int   `json:"subscription_index"`
 }
 type antigravityAuthInputResponse struct {
 	Input   string `json:"input"`
@@ -128,7 +130,7 @@ func (c *AntigravityAuthController) SubmitInput(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Antigravity authentication attempt not found")
 	}
 	var request antigravityAuthInputRequest
-	if err := bindLimitedJSON(ctx, &request); err != nil || strings.TrimSpace(request.Input) == "" || len(request.Input) > 8192 {
+	if err := bindLimitedJSON(ctx, &request); err != nil || !validAntigravityInput(request) {
 		return echo.NewHTTPError(http.StatusBadRequest, "Input is required")
 	}
 	attempt.mu.Lock()
@@ -136,13 +138,32 @@ func (c *AntigravityAuthController) SubmitInput(ctx echo.Context) error {
 		attempt.mu.Unlock()
 		return ctx.NoContent(http.StatusConflict)
 	}
-	attempt.Input = strings.TrimSpace(request.Input)
+	if request.SubscriptionIndex != nil {
+		attempt.Input = fmt.Sprintf("%s%d", antigravitySubscriptionPrefix, *request.SubscriptionIndex)
+	} else {
+		attempt.Input = strings.TrimSpace(request.Input)
+	}
 	attempt.InputVersion++
+	inputVersion := attempt.InputVersion
+	inputKind := "authentication_response"
+	if request.SubscriptionIndex != nil {
+		inputKind = "subscription"
+	}
 	attempt.mu.Unlock()
 	if err := c.persistAttempt(ctx.Request().Context(), attempt); err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to submit authentication input")
 	}
+	log.Printf("[ANTIGRAVITY_AUTH] Stored input attempt=%s version=%d kind=%s", attempt.ID, inputVersion, inputKind)
 	return ctx.NoContent(http.StatusNoContent)
+}
+
+const antigravitySubscriptionPrefix = "\x00subscription:"
+
+func validAntigravityInput(request antigravityAuthInputRequest) bool {
+	if request.SubscriptionIndex != nil {
+		return strings.TrimSpace(request.Input) == "" && *request.SubscriptionIndex >= 0 && *request.SubscriptionIndex <= 100
+	}
+	return strings.TrimSpace(request.Input) != "" && len(request.Input) <= 8192
 }
 
 func (c *AntigravityAuthController) WorkerInput(ctx echo.Context) error {
@@ -153,6 +174,14 @@ func (c *AntigravityAuthController) WorkerInput(ctx echo.Context) error {
 	attempt.mu.RLock()
 	response := antigravityAuthInputResponse{Input: attempt.Input, Version: attempt.InputVersion}
 	attempt.mu.RUnlock()
+	after, _ := strconv.ParseInt(ctx.QueryParam("after"), 10, 64)
+	if response.Version > after {
+		inputKind := "authentication_response"
+		if strings.HasPrefix(response.Input, antigravitySubscriptionPrefix) {
+			inputKind = "subscription"
+		}
+		log.Printf("[ANTIGRAVITY_AUTH] Worker fetched input attempt=%s after=%d version=%d kind=%s", attempt.ID, after, response.Version, inputKind)
+	}
 	return ctx.JSON(http.StatusOK, response)
 }
 
@@ -203,6 +232,14 @@ func (c *AntigravityAuthController) ReportResult(ctx echo.Context) error {
 		} else {
 			go func() { _ = c.launcher.CancelCodexDeviceAuth(context.Background(), attempt.ID) }()
 		}
+		return ctx.NoContent(http.StatusNoContent)
+	}
+	attempt.mu.RLock()
+	subscriptionSelected := strings.HasPrefix(attempt.Input, antigravitySubscriptionPrefix)
+	attempt.mu.RUnlock()
+	if !subscriptionSelected {
+		c.finishAttemptWithError(attempt, codexauth.StatusFailed, "subscription_selection_required", "Select a Gemini Enterprise subscription before completing authentication")
+		log.Printf("[ANTIGRAVITY_AUTH] Rejected authorized result without an explicit subscription selection for attempt %s", attempt.ID)
 		return ctx.NoContent(http.StatusNoContent)
 	}
 	if len(result.AuthJSON) == 0 || len(result.AuthJSON) > maxAntigravityAuthBundleBytes || !validAntigravityBundle(result.AuthJSON) {
