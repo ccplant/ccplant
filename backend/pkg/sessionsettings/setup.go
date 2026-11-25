@@ -141,6 +141,7 @@ func configureGitHubTokenBroker(settings *SessionSettings) error {
 	if brokerURL == "" || brokerToken == "" {
 		return fmt.Errorf("broker URL and token must both be configured")
 	}
+	log.Printf("[GITHUB_BROKER] Configuring broker-backed GitHub authentication for host %s", githubHostForLog(settings.Env))
 	homeDir := strings.TrimSpace(settings.Env["HOME"])
 	if homeDir == "" {
 		var err error
@@ -162,8 +163,10 @@ while IFS='=' read -r key value; do
   [ "$key" = "path" ] && repository="${value%.git}"
 done
 if [ -n "$repository" ]; then
+	printf '%s\n' "[GITHUB_BROKER] Requesting git credential for repository=$repository" >&2
   response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
 else
+	printf '%s\n' "[GITHUB_BROKER] Requesting git credential for default repository" >&2
   response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
 fi
 token="$(printf '%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
@@ -202,7 +205,8 @@ else
 fi
 token="$(printf '%%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 [ -n "$token" ] || exit 1
-GH_TOKEN="$token" exec %q "$@"
+printf '%%s\n' "[GITHUB_BROKER] Invoking gh with broker credential host=${GH_HOST:-github.com} repository=${repository:-<default>}" >&2
+GH_TOKEN="$token" GH_ENTERPRISE_TOKEN="$token" exec %q "$@"
 `, realGH)
 		if err := os.WriteFile(wrapperPath, []byte(wrapper), 0700); err != nil {
 			return err
@@ -213,7 +217,20 @@ GH_TOKEN="$token" exec %q "$@"
 		}
 		settings.Env["PATH"] = binDir + string(os.PathListSeparator) + currentPath
 	}
+	log.Printf("[GITHUB_BROKER] Broker-backed GitHub authentication configured for host %s", githubHostForLog(settings.Env))
 	return nil
+}
+
+func githubHostForLog(env map[string]string) string {
+	if host := strings.TrimSpace(env["GH_HOST"]); host != "" {
+		return host
+	}
+	if apiURL := strings.TrimSpace(env["GITHUB_API"]); apiURL != "" {
+		host := strings.TrimPrefix(apiURL, "https://")
+		host = strings.TrimPrefix(host, "http://")
+		return strings.TrimSuffix(host, "/api/v3")
+	}
+	return "github.com"
 }
 
 // writePEM writes the GITHUB_APP_PEM value from Env to a file on disk.
