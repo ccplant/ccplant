@@ -1962,6 +1962,60 @@
         }
       }
     },
+    "/sessions/{sessionId}/logs": {
+      "get": {
+        "summary": "Read session Pod logs",
+        "description": "Returns recent workload Pod log lines for a session accessible to the authenticated user.",
+        "operationId": "getSessionLogs",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000,
+              "default": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pod log lines and source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["lines"],
+                  "properties": {
+                    "lines": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "source": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "403": { "description": "Session is not accessible to the caller" },
+          "404": { "description": "Session not found" },
+          "503": { "description": "Session manager control channel is offline" }
+        }
+      }
+    },
     "/sessions/{sessionId}/suspend": {
       "post": {
         "summary": "Suspend a session",
