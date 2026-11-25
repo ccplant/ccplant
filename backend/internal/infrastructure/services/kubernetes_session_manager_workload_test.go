@@ -393,9 +393,19 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 	if !hasMount(executor.VolumeMounts, "workdir", "/home/agentapi/workdir/repo", "repo") {
 		t.Fatalf("executor mounts = %#v, want repository-only workdir mount", executor.VolumeMounts)
 	}
+	for path, subPath := range map[string]string{
+		"/home/agentapi/.codex":         "codex",
+		"/home/agentapi/.claude":        "claude",
+		"/home/agentapi/.claude.json":   "claude.json",
+		"/home/agentapi/.docker":        "docker",
+		"/home/agentapi/.config/gcloud": "gcloud",
+		"/home/agentapi/.ccplant":       "ccplant",
+	} {
+		if !hasMount(executor.VolumeMounts, "executor-private-home", path, subPath) {
+			t.Fatalf("executor mounts = %#v, want private overlay for %s", executor.VolumeMounts, path)
+		}
+	}
 	for _, privatePath := range []string{
-		"/home/agentapi/.claude",
-		"/home/agentapi/.codex",
 		"/session-settings",
 		"/notification-subscriptions-source",
 	} {
