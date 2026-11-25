@@ -121,6 +121,7 @@ export default function SessionProfileEditor({
   const [commandWrapperTemplate, setCommandWrapperTemplate] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [systemPromptMode, setSystemPromptMode] = useState<'override' | 'append'>('override')
+  const [policyYaml, setPolicyYaml] = useState('')
   const [githubRepositories, setGitHubRepositories] = useState('')
   const [linkedConnections, setLinkedConnections] = useState<GitHubIdentity[]>([])
   const [connectionId, setConnectionId] = useState('')
@@ -236,6 +237,7 @@ export default function SessionProfileEditor({
       setCommandWrapperTemplate(cfg?.command_wrapper_template ?? '')
       setSystemPrompt(cfg?.system_prompt ?? '')
       setSystemPromptMode(cfg?.system_prompt_mode ?? 'override')
+      setPolicyYaml(cfg?.policy_yaml ?? '')
       setGitHubRepositories((cfg?.github_repositories ?? []).join('\n'))
       setConnectionId(cfg?.params?.connection_id ?? '')
 
@@ -319,6 +321,7 @@ export default function SessionProfileEditor({
       setCommandWrapperTemplate('')
       setSystemPrompt('')
       setSystemPromptMode('override')
+      setPolicyYaml('')
       setAvailableProfiles([])
       setDockerEnabled(false)
       setDockerRegistries([])
@@ -536,7 +539,7 @@ export default function SessionProfileEditor({
       }
       const extraConfig = { ...editingProfile?.config }
       const parsedPiPackages = piPackages.split('\n').map(value => value.trim()).filter(Boolean)
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'pi_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'pi_packages', 'files', 'repositories', 'command_wrapper_template', 'system_prompt', 'system_prompt_mode', 'session_state'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'pi_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'pi_packages', 'files', 'repositories', 'command_wrapper_template', 'system_prompt', 'system_prompt_mode', 'session_state', 'policy_yaml'] as const) delete extraConfig[key]
       const parsedGitHubRepositories = githubRepositories.split('\n').map(value => value.trim()).filter(Boolean)
       const config = {
         ...extraConfig,
@@ -562,6 +565,7 @@ export default function SessionProfileEditor({
         files: parsedProfileFiles,
         repositories: parsedProfileRepositories,
         session_state: sessionState,
+        ...(policyYaml.trim() ? { policy_yaml: policyYaml.trim() } : {}),
       }
 
       let savedProfile: SessionProfile
@@ -1231,6 +1235,22 @@ export default function SessionProfileEditor({
                   
             </div>}
             {active.slug === 'runtime' && <div className="space-y-5">
+              <div>
+                <label htmlFor="session-profile-policy-yaml" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  ccplant policy.yaml
+                </label>
+                <textarea
+                  id="session-profile-policy-yaml"
+                  value={policyYaml}
+                  onChange={e => { setPolicyYaml(e.target.value); setDirty(true) }}
+                  placeholder={'version: v1\nresources:\n  sessions:\n    read: true\n    update: true\n  notifications:\n    create: true'}
+                  rows={10}
+                  className="mt-1 w-full rounded-md border border-gray-300 bg-white p-2 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  セッション内の agent が ccplant に対して実行できる操作を resource ごとに create/read/update/delete で明示許可します。未記載の操作は拒否されます。
+                </p>
+              </div>
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <label htmlFor="session-profile-command-wrapper" className="block text-sm font-medium text-gray-700 dark:text-gray-300">

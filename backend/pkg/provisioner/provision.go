@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/agentpolicy"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionstate"
@@ -707,6 +708,12 @@ func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionS
 	defer s.mu.Unlock()
 	s.brokerKey = settings.Env["AGENTAPI_KEY"]
 	s.brokerSessionID = settings.Session.ID
+	policy, err := agentpolicy.Parse(settings.PolicyYAML)
+	if err != nil {
+		log.Printf("[PROVISIONER] Refusing invalid agent policy: %v", err)
+		policy = &agentpolicy.Policy{Version: agentpolicy.Version, Resources: map[string]agentpolicy.Actions{}}
+	}
+	s.brokerPolicy = policy
 	if endpoint := strings.TrimSpace(settings.Env["AGENTAPI_PROXY_ENDPOINT"]); endpoint != "" && !strings.HasPrefix(endpoint, "unix:") && !strings.HasPrefix(endpoint, "http+unix:") {
 		s.brokerURL = strings.TrimRight(endpoint, "/")
 	}

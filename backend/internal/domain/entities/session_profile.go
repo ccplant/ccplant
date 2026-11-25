@@ -60,6 +60,7 @@ type SessionProfileConfig struct {
 	repositories       []ProfileRepository
 	mcpServers         *MCPServersSettings
 	sessionState       *SessionStateConfig
+	policyYAML         string
 }
 
 // SessionStateConfig selects profile-owned Storage-backed state.
@@ -459,6 +460,9 @@ func (c *SessionProfileConfig) SetSessionState(value *SessionStateConfig) {
 	copyValue.Agents = copyStringSlice(value.Agents)
 	c.sessionState = &copyValue
 }
+
+func (c *SessionProfileConfig) PolicyYAML() string         { return c.policyYAML }
+func (c *SessionProfileConfig) SetPolicyYAML(value string) { c.policyYAML = value }
 
 // --- Error types ---
 

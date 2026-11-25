@@ -7764,6 +7764,7 @@ fi`,
 		}
 	}
 	settings.Startup.CommandWrapperTemplate = req.ProfileCommandWrapper
+	settings.PolicyYAML = req.ProfilePolicyYAML
 
 	// Slack integration: embed SlackParams so the provisioner can launch
 	// acp-posts as a subprocess. This enables stock sessions (which have no

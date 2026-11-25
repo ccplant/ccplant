@@ -69,6 +69,8 @@ export interface SessionProfileConfig {
   repositories?: ProfileRepository[];
   mcp_servers?: Record<string, APIMCPServerConfig>;
   session_state?: SessionStateConfig;
+  /** policy.yaml enforced for ccplant calls made by the session agent. */
+  policy_yaml?: string;
 }
 
 export type SessionStateComponent = 'agent_state' | 'workspace';

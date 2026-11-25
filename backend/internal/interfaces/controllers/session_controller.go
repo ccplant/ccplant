@@ -3318,6 +3318,7 @@ func applySessionProfile(
 		}
 		startReq.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
 		startReq.ProfileSystemPrompt = cfg.SystemPrompt()
+		startReq.ProfilePolicyYAML = cfg.PolicyYAML()
 		if profileFiles := cfg.ProfileFiles(); len(profileFiles) > 0 {
 			startReq.ProfileFiles = make([]sessionsettings.ManagedFile, len(profileFiles))
 			for i, file := range profileFiles {
