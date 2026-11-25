@@ -478,6 +478,8 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	}
 	brokerConfigured := false
 	useBroker := shouldUseGitHubBroker(startReq, repository)
+	log.Printf("[GITHUB_BROKER] Routing session %s scope=%s repository=%q use_broker=%t explicit_token=%t explicit_connection=%t resolver_available=%t",
+		sessionID, startReq.Scope, repository, useBroker, startReq.Params != nil && startReq.Params.GithubToken != "", startReq.Params != nil && startReq.Params.ConnectionID != "", c.githubTokenResolver != nil)
 	var allowedRepositories []string
 	if !useBroker && (startReq.Scope == entities.ScopeTeam || startReq.Scope == entities.ScopeUser) && repository == "" && (startReq.Params == nil || startReq.Params.GithubToken == "") && c.githubTokenResolver != nil {
 		allowedRepositories, err = c.githubRepositoriesForSession(ctx.Request().Context(), startReq, userID, authzCtx)
@@ -527,6 +529,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			lease, connectionID, matched, err = c.githubTokenResolver.IssueBrokerLeaseForRepositories(ctx.Request().Context(), sessionID, preferredConnectionID, repositoryOwner(repository), repository, allowedRepositories, brokerUser)
 		}
 		if err != nil {
+			log.Printf("[GITHUB_BROKER] Failed to issue lease for session %s repository=%q connection_id=%q: %v", sessionID, repository, connectionID, err)
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		if matched {
@@ -556,6 +559,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 				startReq.Params.GithubToken = ""
 			}
 			c.logSessionTokenRouting(sessionID, "team-broker", connectionID, "")
+			log.Printf("[GITHUB_BROKER] Issued lease for session %s repository=%q connection_id=%q", sessionID, repository, connectionID)
+		} else {
+			log.Printf("[GITHUB_BROKER] No eligible connection for session %s repository=%q requested_connection_id=%q resolved_connection_id=%q; falling back to direct authentication", sessionID, repository, preferredConnectionID, connectionID)
 		}
 	}
 	if !brokerConfigured && startReq.Params != nil && startReq.Params.ConnectionID != "" {
