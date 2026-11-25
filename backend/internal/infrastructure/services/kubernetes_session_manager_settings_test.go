@@ -683,6 +683,62 @@ func TestBuildSessionSettings_GitHubTokenExcludesInheritedAppCredentials(t *test
 	}
 }
 
+func TestBuildSessionSettings_BrokerExcludesDirectGitHubCredentials(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "github-auth", Namespace: "test-ns"},
+			Data: map[string][]byte{
+				"GITHUB_APP_ID":          []byte("12345"),
+				"GITHUB_APP_PEM":         []byte("stale-pem"),
+				"GITHUB_INSTALLATION_ID": []byte("67890"),
+				"GITHUB_TOKEN":           []byte("stale-token"),
+				"REPOSITORY_RESTRICTION": []byte("true"),
+			},
+		},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace:              "test-ns",
+		Image:                  "test-image:latest",
+		BasePort:               9000,
+		PVCEnabled:             boolPtrForTest(false),
+		GitHubSecretName:       "github-auth",
+		GitHubConfigSecretName: "github-config",
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.namespace = "test-ns"
+	req := &entities.RunServerRequest{UserID: "test-user", Environment: map[string]string{
+		"AGENTAPI_GITHUB_BROKER_URL":    "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN":  "lease-token",
+		"AGENTAPI_GITHUB_CONNECTION_ID": "connection-1",
+		"GITHUB_API":                    "https://git.example.test/api/v3",
+		"GITHUB_URL":                    "https://git.example.test",
+		"GH_HOST":                       "git.example.test",
+	}}
+	session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	for _, name := range []string{
+		"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+		"GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID",
+		"GITHUB_APP_PEM", "GITHUB_APP_PEM_PATH", "REPOSITORY_RESTRICTION",
+	} {
+		if _, ok := settings.Env[name]; ok {
+			t.Errorf("direct credential %s remains in brokered provision settings", name)
+		}
+	}
+	if got := settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"]; got != "lease-token" {
+		t.Errorf("broker token = %q, want lease-token", got)
+	}
+	if settings.Github == nil || settings.Github.SecretName != "" || settings.Github.ConfigSecretName != "github-config" {
+		t.Errorf("Github = %+v, want config-only github-config", settings.Github)
+	}
+}
+
 func TestBuildSessionSettings_LoadsGitHubConfigSecretWithoutAuthentication(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
