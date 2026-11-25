@@ -1123,6 +1123,19 @@ func (c *GitHubConnectionsController) resolveAccessTokenForPrincipal(ctx context
 	return "", errors.New("GitHub connection is not linked to this user")
 }
 
+func (c *GitHubConnectionsController) hasLinkedIdentity(ctx context.Context, principalID, connectionID string) (bool, error) {
+	identities, err := c.listIdentities(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, identity := range identities {
+		if identity.PrincipalID == principalID && identity.ConnectionID == connectionID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // IssueGitHubConnectionCredential returns a signed credential which binds the
 // OAuth token to its connection. Callers can safely carry this credential as a
 // bearer token without allowing its routing identifier to be changed.
@@ -2055,15 +2068,22 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx contex
 		return "", "", false, nil
 	}
 	principalID := ""
-	if user != nil && requestedConnectionID != "" {
+	if user != nil {
 		principal, principalErr := c.loadPrincipalForUser(ctx, user)
-		if principalErr != nil {
+		if principalErr == nil {
+			linked, linkedErr := c.hasLinkedIdentity(ctx, principal.ID, selected.ID)
+			if linkedErr != nil {
+				return "", selected.ID, true, linkedErr
+			}
+			if linked {
+				if _, tokenErr := c.resolveAccessTokenForPrincipal(ctx, principal.ID, selected.ID); tokenErr != nil {
+					return "", selected.ID, true, tokenErr
+				}
+				principalID = principal.ID
+			}
+		} else if requestedConnectionID != "" {
 			return "", selected.ID, true, errors.New("GitHub principal not found")
 		}
-		if _, tokenErr := c.resolveAccessTokenForPrincipal(ctx, principal.ID, selected.ID); tokenErr != nil {
-			return "", selected.ID, true, tokenErr
-		}
-		principalID = principal.ID
 	}
 	if principalID == "" && (selected.GitHubApp == nil || selected.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, selected.ID)) {
 		return "", selected.ID, false, nil

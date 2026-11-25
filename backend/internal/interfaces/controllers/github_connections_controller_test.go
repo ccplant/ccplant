@@ -272,7 +272,7 @@ func TestNormalizeRepositoryPatterns(t *testing.T) {
 	}
 }
 
-func TestBrokerCredentialsPreferLinkedPersonalConnectionToken(t *testing.T) {
+func TestBrokerCredentialsPreferAutomaticallySelectedLinkedPersonalConnectionToken(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
 	connection := githubConnection{ID: "personal-connection", Name: "Personal connection", Enabled: true, BaseURL: "https://github.example.com", APIURL: "https://api.github.example.com", Organizations: []string{"acme"}}
@@ -284,7 +284,7 @@ func TestBrokerCredentialsPreferLinkedPersonalConnectionToken(t *testing.T) {
 	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-personal", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "personal-token", nil)
 	require.NoError(t, err)
 
-	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "personal-session", connection.ID, "acme", "acme/repo", nil, user)
+	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "personal-session", "", "acme", "acme/repo", nil, user)
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Equal(t, connection.ID, connectionID)
