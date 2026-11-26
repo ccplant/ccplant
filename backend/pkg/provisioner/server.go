@@ -423,8 +423,11 @@ func (s *Server) handleOneTimeSecret(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil || !net.ParseIP(host).IsLoopback() {
+	// A Unix-domain listener is already restricted by the socket's 0600 mode and
+	// does not provide an IP:port RemoteAddr. Apply the loopback check only to
+	// the legacy TCP listener; otherwise every request through the preferred
+	// local socket is rejected as malformed.
+	if s.socketPath == "" && !isLoopbackRemoteAddr(r.RemoteAddr) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -467,6 +470,11 @@ func (s *Server) handleOneTimeSecret(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func isLoopbackRemoteAddr(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	return err == nil && net.ParseIP(host).IsLoopback()
 }
 
 func (s *Server) SetRestartSettingsHandler(handler func(*sessionsettings.SessionSettings)) {

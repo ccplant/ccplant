@@ -2,15 +2,20 @@ package provisioner
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestHandleOneTimeSecretProxiesWithRuntimeCredential(t *testing.T) {
+	t.Setenv("NETWORK_FILTER_CONTROL_SOCKET", "")
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/internal/session-control/public-session/secrets/secret-1", r.URL.Path)
 		require.Equal(t, "4", r.URL.Query().Get("generation"))
@@ -42,6 +47,7 @@ func TestHandleOneTimeSecretRejectsNonLoopback(t *testing.T) {
 }
 
 func TestHandleOneTimeSecretProxiesNextWithoutID(t *testing.T) {
+	t.Setenv("NETWORK_FILTER_CONTROL_SOCKET", "")
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/internal/session-control/public-session/secrets/next", r.URL.Path)
 		require.Equal(t, "4", r.URL.Query().Get("generation"))
@@ -58,4 +64,40 @@ func TestHandleOneTimeSecretProxiesNextWithoutID(t *testing.T) {
 	s.handleOneTimeSecret(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, `{"value":"next-value"}`, rec.Body.String())
+}
+
+func TestHandleOneTimeSecretAcceptsUnixSocketCaller(t *testing.T) {
+	t.Setenv("NETWORK_FILTER_CONTROL_SOCKET", "")
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/internal/session-control/public-session/secrets/next", r.URL.Path)
+		_, _ = w.Write([]byte(`{"value":"next-value"}`))
+	}))
+	defer parent.Close()
+
+	socketPath := filepath.Join(t.TempDir(), "provisioner.sock")
+	s := NewWithSocket(socketPath, "")
+	s.activeSettings = &sessionsettings.SessionSettings{ParentRuntime: &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: parent.URL, SessionID: "public-session", Token: "runtime-token", Generation: 4,
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Start(ctx) }()
+	defer func() {
+		cancel()
+		require.NoError(t, <-done)
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(socketPath)
+		return err == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+	}}}
+	req, err := http.NewRequest(http.MethodGet, "http://unix/one-time-secrets/next", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close() //nolint:errcheck
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
