@@ -122,7 +122,7 @@ export default function WebhookFormModal({
             model: t.session_config?.params?.model || '',
             credentialSource: t.session_config?.params?.credential_source || '',
             goTemplate: t.conditions.go_template || '',
-            environment: t.session_config?.environment || {},
+            environment: t.session_config?.environment || Object.fromEntries((t.session_config?.environment_keys ?? []).map(key => [key, ''])),
             tags: t.session_config?.tags || {},
             showAdvanced: false,
             sessionProfileId: t.session_config?.session_profile_id || '',
@@ -393,8 +393,9 @@ export default function WebhookFormModal({
         session_config.mount_payload = t.mountPayload
 
         // Add environment variables if present
-        if (Object.keys(t.environment).length > 0) {
-          session_config.environment = t.environment
+        const environment = Object.fromEntries(Object.entries(t.environment).filter(([key, value]) => key.trim() && value))
+        if (Object.keys(environment).length > 0) {
+          session_config.environment = environment
         }
 
         // Add tags if present

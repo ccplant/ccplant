@@ -103,8 +103,8 @@ export default function SessionProfileCard({
             {profile.config.params.agent_type}
           </span>
         )}
-        {profile.config?.environment && Object.keys(profile.config.environment).length > 0 && (
-          <span>環境変数: <strong className="text-gray-700 dark:text-gray-300">{Object.keys(profile.config.environment).length}</strong></span>
+        {((profile.config?.environment_keys?.length ?? 0) > 0 || (profile.config?.environment && Object.keys(profile.config.environment).length > 0)) && (
+          <span>環境変数: <strong className="text-gray-700 dark:text-gray-300">{profile.config?.environment_keys?.length ?? Object.keys(profile.config?.environment ?? {}).length}</strong></span>
         )}
         {profile.config?.tags && Object.keys(profile.config.tags).length > 0 && (
           <span>タグ: <strong className="text-gray-700 dark:text-gray-300">{Object.keys(profile.config.tags).length}</strong></span>

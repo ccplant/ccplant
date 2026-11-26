@@ -45,7 +45,7 @@ export interface SessionParams {
 // Session configuration for webhook triggers
 export interface WebhookSessionConfig {
   environment?: Record<string, string>;
-	environment_keys?: string[];
+  environment_keys?: string[];
   tags?: Record<string, string>;
   initial_message_template?: string;
   reuse_message_template?: string;
@@ -87,7 +87,7 @@ export interface Webhook {
   status: WebhookStatus;
   type: WebhookType;
   secret?: string;
-	has_secret?: boolean;
+  has_secret?: boolean;
   webhook_url?: string;
   signature_header?: string;
   signature_type?: WebhookSignatureType;
@@ -228,6 +228,6 @@ export interface TriggerWebhookResponse {
   dry_run: boolean;
   initial_message?: string;
   tags?: Record<string, string>;
-	environment_keys?: string[];
+  environment_keys?: string[];
   error?: string;
 }

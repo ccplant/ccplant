@@ -19,7 +19,7 @@ export interface SlackBotSessionConfig {
   reuse_message_template?: string;
   tags?: Record<string, string>;
   environment?: Record<string, string>;
-	environment_keys?: string[];
+  environment_keys?: string[];
   params?: SlackBotSessionParams;
   session_profile_id?: string;
 }
