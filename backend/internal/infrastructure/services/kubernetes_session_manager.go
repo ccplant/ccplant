@@ -4287,6 +4287,10 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		executorMounts = append(executorMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
 			corev1.VolumeMount{Name: "herdr-runtime", MountPath: defaultHerdrRuntimePath},
+			// The provisioner socket is the session-local authenticated CLI broker.
+			// Callers present no credential; the provisioner applies the in-memory
+			// session credential after enforcing the agent policy and session scope.
+			corev1.VolumeMount{Name: "agent-local-sockets", MountPath: filepath.Dir(agentSocketPath)},
 			corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true},
 		)
 		restartAlways := corev1.ContainerRestartPolicyAlways
@@ -4296,9 +4300,12 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			WorkingDir:      workingDir,
 			Command:         []string{"/usr/bin/tini"},
 			Args:            []string{"-g", "--", sessionCLIPath, "executor-server", "--socket", defaultExecutorSocketPath},
-			Env:             []corev1.EnvVar{{Name: "XDG_RUNTIME_DIR", Value: defaultHerdrRuntimePath}},
-			VolumeMounts:    executorMounts,
-			RestartPolicy:   &restartAlways,
+			Env: []corev1.EnvVar{
+				{Name: "XDG_RUNTIME_DIR", Value: defaultHerdrRuntimePath},
+				{Name: "AGENTAPI_LOCAL_SOCKET", Value: agentSocketPath},
+			},
+			VolumeMounts:  executorMounts,
+			RestartPolicy: &restartAlways,
 			Resources: buildResourceRequirements(
 				defaultIfEmpty(m.k8sConfig.ExecutorCPURequest, "10m"),
 				defaultIfEmpty(m.k8sConfig.ExecutorCPULimit, "2"),

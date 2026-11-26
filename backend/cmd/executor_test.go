@@ -94,11 +94,22 @@ func TestFilterExecutorEnvironmentRemovesCredentials(t *testing.T) {
 		"AWS_SESSION_TOKEN=session",
 		"ANTHROPIC_API_KEY=anthropic",
 		"MCP_GITHUB_TOKEN=github",
+		"AGENTAPI_GITHUB_BROKER_URL=https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN=lease-token",
+		"AGENTAPI_PROXY_ENDPOINT=http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock",
 		"DATABASE_PASSWORD=password",
 		"GIT_AUTHOR_NAME=Agent",
 		"NORMAL_BUILD_FLAG=value",
 	}
-	want := []string{"PATH=/usr/bin", "AWS_REGION=ap-northeast-1", "GIT_AUTHOR_NAME=Agent", "NORMAL_BUILD_FLAG=value"}
+	want := []string{
+		"PATH=/usr/bin",
+		"AWS_REGION=ap-northeast-1",
+		"AGENTAPI_GITHUB_BROKER_URL=https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN=lease-token",
+		"AGENTAPI_PROXY_ENDPOINT=http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock",
+		"GIT_AUTHOR_NAME=Agent",
+		"NORMAL_BUILD_FLAG=value",
+	}
 	got := filterExecutorEnvironment(input)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("filterExecutorEnvironment() = %#v, want %#v", got, want)
