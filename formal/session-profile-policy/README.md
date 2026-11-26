@@ -4,7 +4,8 @@ This model checks the safety contract between session-profile inheritance,
 policy snapshots, and broker authorization. `Fast.cfg` deliberately uses the
 smallest state space that can expose the concurrent `A -> B`, `B -> A` update
 cycle. The graph revision is bounded because this is a finite-state safety
-check, not a production capacity limit.
+check, not a production capacity limit. Two revisions are sufficient to model
+both commits in that concurrent-update scenario.
 
 The implementation obligations represented by the model are:
 

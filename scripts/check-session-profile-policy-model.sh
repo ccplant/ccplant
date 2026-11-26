@@ -5,6 +5,8 @@ repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 model_dir="$repo_dir/formal/session-profile-policy"
 tools_version=v1.8.0
 tools_url="https://github.com/tlaplus/tlaplus/releases/download/${tools_version}/tla2tools.jar"
+states_dir=$(mktemp -d)
+trap 'rm -rf "$states_dir"' EXIT
 
 if ! command -v java >/dev/null 2>&1; then
   echo "Java 11 or later is required (install it with mise, or add java to PATH)." >&2
@@ -34,6 +36,7 @@ java -cp "$tools_jar" tla2sany.SANY "$model_dir/SessionProfilePolicy.tla"
 java -cp "$tools_jar" tlc2.TLC \
   -cleanup \
   -deadlock \
+  -metadir "$states_dir" \
   -workers auto \
   -config "$model_dir/Fast.cfg" \
   "$model_dir/SessionProfilePolicy.tla"
