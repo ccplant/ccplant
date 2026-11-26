@@ -40,7 +40,7 @@ TLC treats each handler's load/merge/save transition as atomic. It verifies ever
 
 ## Keeping the model synchronized
 
-Last synchronized against commit `bcbd465385e141b7c375634bfb46ad7c91aaf0a4`, including the secret-response worktree changes dated 2026-11-26.
+Last synchronized against commit `4e2e1cd` (secret-response implementation dated 2026-11-26).
 
 When any covered function changes, compare its response disclosure rule and omitted-field merge behavior with the corresponding TLA+ action. Update the model and Go tests when behavior intentionally changes, rerun the verifier, and move the synchronization marker to the checked commit only after confirming the model still describes the code.
 
