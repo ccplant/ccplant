@@ -2015,13 +2015,30 @@ func (m *KubernetesSessionManager) DeleteRunnerSessionsNotRegistered(ctx context
 			continue
 		}
 		if err := m.DeleteSession(id); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Sprintf("%s: %v", id, err))
+			// An adopted runner can be left with only part of its Kubernetes
+			// resources (for example, a Service after its Pod disappeared). Such a
+			// workload is intentionally no longer registered by the parent, but it
+			// cannot be restored into an in-memory session for DeleteSession. Delete
+			// the conventionally named resources directly so the orphan does not
+			// permanently consume pool capacity.
+			if fallbackErr := m.deleteSessionResourcesByID(ctx, id); fallbackErr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Sprintf("%s: %v (fallback: %v)", id, err, fallbackErr))
+			}
 		}
 	}
 	if len(cleanupErrs) > 0 {
 		return fmt.Errorf("delete orphaned runner sessions: %s", strings.Join(cleanupErrs, "; "))
 	}
 	return nil
+}
+
+func (m *KubernetesSessionManager) deleteSessionResourcesByID(ctx context.Context, id string) error {
+	prefix := "agentapi-session-" + id
+	session := NewKubernetesSession(
+		id, nil, prefix, prefix+"-svc", prefix+"-pvc", m.namespace,
+		m.k8sConfig.BasePort, nil, nil,
+	)
+	return m.deleteSessionResources(ctx, session)
 }
 
 // PurgeStockSessions deletes all existing pre-warmed stock sessions (Service,
