@@ -525,9 +525,9 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	log.Printf("[SERVER] User file repository initialized")
 
 	// Initialize session profile repository (Kubernetes Secret-backed)
-	sessionProfileRepo := portrepos.SessionProfileRepository(repositories.NewKubernetesSessionProfileRepository(
+	sessionProfileRepo := portrepos.SessionProfileRepository(repositories.NewSessionProfileRepository(
 		persistenceClient,
-		namespace, encryptionRegistry,
+		namespace, applicationKVStore, encryptionRegistry,
 	))
 	contextTemplateRepo := portrepos.SessionContextTemplateRepository(repositories.NewKubernetesSessionContextTemplateRepository(persistenceClient, namespace))
 	if k8sSessionManager != nil {

@@ -25,6 +25,13 @@ func TestParseRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestDenyAll(t *testing.T) {
+	p := DenyAll()
+	if p.Allows("sessions", "read") || p.Allows("notifications", "create") {
+		t.Fatal("deny-all policy granted an operation")
+	}
+}
+
 func TestRequestOperation(t *testing.T) {
 	tests := []struct{ method, path, resource, action string }{
 		{http.MethodPost, "/start", "sessions", "create"},

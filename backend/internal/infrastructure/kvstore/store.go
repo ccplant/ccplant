@@ -59,6 +59,25 @@ type Store interface {
 	Close() error
 }
 
+type MutationType string
+
+const (
+	MutationCreate MutationType = "create"
+	MutationUpdate MutationType = "update"
+	MutationDelete MutationType = "delete"
+)
+
+type Mutation struct {
+	Type   MutationType
+	Record Record
+}
+
+// AtomicMutator applies all version-checked mutations in one backend
+// transaction. Either every mutation commits or none does.
+type AtomicMutator interface {
+	ApplyAtomically(context.Context, []Mutation) ([]Record, error)
+}
+
 // Scanner exposes unbounded iteration to offline administrative workflows.
 // It must not be injected into request-serving application components.
 type Scanner interface {

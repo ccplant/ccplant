@@ -140,10 +140,11 @@ func TestCLIBrokerPolicyControlsResourceActions(t *testing.T) {
 	server := NewWithSocket("", "")
 	server.ConfigureCLIBroker("https://example.invalid", "session-1")
 	server.brokerKey = "personal-key"
-	server.brokerPolicy = &agentpolicy.Policy{Version: agentpolicy.Version, Resources: map[string]agentpolicy.Actions{
-		"schedules": {Read: true},
-		"sessions":  {Update: true},
-	}}
+	var err error
+	server.brokerPolicy, err = agentpolicy.Parse("version: v1\nresources:\n  schedules:\n    read: true\n  sessions:\n    update: true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, tt := range []struct {
 		method, path string

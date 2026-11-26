@@ -260,6 +260,66 @@ func (s *encryptedStore) Update(ctx context.Context, record Record) (Record, err
 	return updated, nil
 }
 
+func (s *encryptedStore) ApplyAtomically(ctx context.Context, mutations []Mutation) ([]Record, error) {
+	backend, ok := s.backend.(AtomicMutator)
+	if !ok {
+		return nil, errors.New("encrypted KV backend does not support atomic updates")
+	}
+	sealed := make([]Mutation, len(mutations))
+	plaintext := make([][]byte, len(mutations))
+	for i, mutation := range mutations {
+		sealed[i] = mutation
+		if mutation.Type == MutationDelete {
+			existing, err := s.backend.Get(ctx, mutation.Record.Kind, mutation.Record.Namespace, mutation.Record.Key)
+			if err != nil {
+				return nil, err
+			}
+			if !authorizeRecord(ctx, existing, "delete") {
+				return nil, ErrNotFound
+			}
+			continue
+		}
+		if mutation.Type == MutationUpdate {
+			if _, restricted := authzscope.FromContext(ctx); restricted {
+				actualLabels, err := documentLabels(mutation.Record.Kind, mutation.Record.Value)
+				if err != nil {
+					return nil, fmt.Errorf("extract KV document labels: %w", err)
+				}
+				if mutation.Record.Labels != nil && !equalLabels(actualLabels, mutation.Record.Labels) {
+					return nil, errors.New("KV record labels do not match document labels")
+				}
+				sealed[i].Record.Labels = actualLabels
+				existing, err := s.backend.Get(ctx, mutation.Record.Kind, mutation.Record.Namespace, mutation.Record.Key)
+				if err != nil {
+					return nil, err
+				}
+				if !authorizeRecord(ctx, existing, "update") {
+					return nil, ErrNotFound
+				}
+				if ownerScopeForRecord(existing) != ownerScopeForRecord(sealed[i].Record) {
+					return nil, ErrAccessDenied
+				}
+			}
+		}
+		plaintext[i] = append([]byte(nil), mutation.Record.Value...)
+		value, err := s.seal(ctx, &sealed[i].Record)
+		if err != nil {
+			return nil, err
+		}
+		sealed[i].Record.Value = value
+	}
+	updated, err := backend.ApplyAtomically(ctx, sealed)
+	if err != nil {
+		return nil, err
+	}
+	for i := range updated {
+		if mutations[i].Type != MutationDelete {
+			updated[i].Value = plaintext[i]
+		}
+	}
+	return updated, nil
+}
+
 func (s *encryptedStore) Get(ctx context.Context, kind Kind, namespace, key string) (Record, error) {
 	record, err := s.backend.Get(ctx, kind, namespace, key)
 	if err != nil {

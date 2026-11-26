@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -206,6 +207,9 @@ func (c *SessionProfileController) CreateSessionProfile(ctx echo.Context) error 
 
 	if err := c.repo.Create(ctx.Request().Context(), profile); err != nil {
 		log.Printf("Failed to create session profile: %v", err)
+		if errors.Is(err, repositories.ErrSessionProfileGraphConflict) {
+			return echo.NewHTTPError(http.StatusConflict, "session profile graph changed; retry the create")
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create session profile")
 	}
 
@@ -512,6 +516,9 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 
 	if err := c.repo.Update(ctx.Request().Context(), profile); err != nil {
 		log.Printf("Failed to update session profile %s: %v", id, err)
+		if errors.Is(err, repositories.ErrSessionProfileGraphConflict) {
+			return echo.NewHTTPError(http.StatusConflict, "session profile graph changed; retry the update")
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update session profile")
 	}
 
@@ -683,6 +690,9 @@ func (c *SessionProfileController) DeleteSessionProfile(ctx echo.Context) error 
 
 	if err := c.repo.Delete(ctx.Request().Context(), id); err != nil {
 		log.Printf("Failed to delete session profile %s: %v", id, err)
+		if errors.Is(err, repositories.ErrSessionProfileGraphConflict) {
+			return echo.NewHTTPError(http.StatusConflict, "session profile is referenced or the graph changed")
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete session profile")
 	}
 

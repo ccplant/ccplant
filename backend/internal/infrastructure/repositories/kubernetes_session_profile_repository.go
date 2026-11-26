@@ -3,7 +3,9 @@ package repositories
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -11,11 +13,12 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
@@ -32,7 +35,9 @@ const (
 	// SecretKeySessionProfile is the key in the Secret data for session profile JSON
 	SecretKeySessionProfile = "session-profile.json"
 	// SessionProfileSecretPrefix is the prefix for session profile Secret names
-	SessionProfileSecretPrefix = "agentapi-session-profile-"
+	SessionProfileSecretPrefix       = "agentapi-session-profile-"
+	sessionProfileGraphRevisionKey   = "agentapi-session-profile-graph-revision"
+	labelSessionProfileGraphRevision = "agentapi.proxy/session-profile-graph-revision"
 )
 
 // sessionProfileJSON is the JSON representation for storage
@@ -87,6 +92,22 @@ type KubernetesSessionProfileRepository struct {
 	namespace   string
 	mu          sync.RWMutex
 	connections *KubernetesSettingsRepository
+	atomicStore kvstore.Store
+}
+
+// NewLibSQLSessionProfileRepository enables graph-wide CAS for the libSQL
+// backend while retaining the Kubernetes-shaped profile document format.
+func NewLibSQLSessionProfileRepository(client kubernetes.Interface, namespace string, store kvstore.Store, registry ...*services.EncryptionServiceRegistry) *KubernetesSessionProfileRepository {
+	repo := NewKubernetesSessionProfileRepository(client, namespace, registry...)
+	repo.atomicStore = store
+	return repo
+}
+
+func NewSessionProfileRepository(client kubernetes.Interface, namespace string, store kvstore.Store, registry ...*services.EncryptionServiceRegistry) *KubernetesSessionProfileRepository {
+	if _, ok := store.(kvstore.AtomicMutator); ok {
+		return NewLibSQLSessionProfileRepository(client, namespace, store, registry...)
+	}
+	return NewKubernetesSessionProfileRepository(client, namespace, registry...)
 }
 
 // NewKubernetesSessionProfileRepository creates a new KubernetesSessionProfileRepository
@@ -110,17 +131,58 @@ func (r *KubernetesSessionProfileRepository) Create(ctx context.Context, profile
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.atomicStore != nil {
+		return r.createAtomically(ctx, profile)
+	}
 
 	secretName := sessionProfileSecretName(profile.ID())
 	_, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err == nil {
 		return fmt.Errorf("session profile already exists: %s", profile.ID())
 	}
-	if !errors.IsNotFound(err) {
+	if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to check session profile existence: %w", err)
 	}
 
 	return r.saveProfile(ctx, profile)
+}
+
+func (r *KubernetesSessionProfileRepository) createAtomically(ctx context.Context, profile *entities.SessionProfile) error {
+	mutator := r.atomicStore.(kvstore.AtomicMutator)
+	for attempt := 0; attempt < 4; attempt++ {
+		revision, profiles, err := r.graphSnapshot(ctx)
+		if err != nil {
+			return err
+		}
+		for _, existing := range profiles {
+			if existing.ID() == profile.ID() {
+				return fmt.Errorf("session profile already exists: %s", profile.ID())
+			}
+		}
+		if err := validateSessionProfileGraph(profiles, profile); err != nil {
+			return err
+		}
+		secret, err := r.buildProfileSecret(ctx, profile)
+		if err != nil {
+			return err
+		}
+		profileRecord, err := secretToRecord(secret, 0)
+		if err != nil {
+			return err
+		}
+		mutations := []kvstore.Mutation{
+			{Type: kvstore.MutationCreate, Record: profileRecord},
+			{Type: kvstore.MutationUpdate, Record: revision},
+		}
+		if _, err := mutator.ApplyAtomically(ctx, mutations); err != nil {
+			if stderrors.Is(err, kvstore.ErrConflict) {
+				continue
+			}
+			return fmt.Errorf("atomically create session profile: %w", err)
+		}
+		return nil
+	}
+	return portrepos.ErrSessionProfileGraphConflict
 }
 
 // Get retrieves a session profile by ID
@@ -178,11 +240,14 @@ func (r *KubernetesSessionProfileRepository) Update(ctx context.Context, profile
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.atomicStore != nil {
+		return r.updateAtomically(ctx, profile)
+	}
 
 	secretName := sessionProfileSecretName(profile.ID())
 	_, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return entities.ErrSessionProfileNotFound{ID: profile.ID()}
 		}
 		return fmt.Errorf("failed to get session profile: %w", err)
@@ -192,15 +257,153 @@ func (r *KubernetesSessionProfileRepository) Update(ctx context.Context, profile
 	return r.saveProfile(ctx, profile)
 }
 
+func (r *KubernetesSessionProfileRepository) updateAtomically(ctx context.Context, profile *entities.SessionProfile) error {
+	mutator, ok := r.atomicStore.(kvstore.AtomicMutator)
+	if !ok {
+		return stderrors.New("libSQL session profile repository requires atomic KV updates")
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		revision, profiles, err := r.graphSnapshot(ctx)
+		if err != nil {
+			return err
+		}
+		if err := validateSessionProfileGraph(profiles, profile); err != nil {
+			return fmt.Errorf("%w: %v", portrepos.ErrSessionProfileGraphConflict, err)
+		}
+
+		secretName := sessionProfileSecretName(profile.ID())
+		existing, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return entities.ErrSessionProfileNotFound{ID: profile.ID()}
+			}
+			return fmt.Errorf("failed to get session profile: %w", err)
+		}
+		profile.SetUpdatedAt(time.Now())
+		secret, err := r.buildProfileSecret(ctx, profile)
+		if err != nil {
+			return err
+		}
+		secret.ResourceVersion = existing.ResourceVersion
+		value, err := json.Marshal(secret)
+		if err != nil {
+			return err
+		}
+		version, err := strconv.ParseInt(existing.ResourceVersion, 10, 64)
+		if err != nil {
+			return fmt.Errorf("parse session profile resource version: %w", err)
+		}
+		profileRecord := kvstore.Record{Kind: kvstore.KindSecret, Namespace: r.namespace, Key: secretName, Labels: secret.Labels, Value: value, Version: version}
+		mutations := []kvstore.Mutation{
+			{Type: kvstore.MutationUpdate, Record: profileRecord},
+			{Type: kvstore.MutationUpdate, Record: revision},
+		}
+		if _, err := mutator.ApplyAtomically(ctx, mutations); err != nil {
+			if stderrors.Is(err, kvstore.ErrConflict) {
+				continue
+			}
+			return fmt.Errorf("atomically update session profile graph: %w", err)
+		}
+		return nil
+	}
+	return portrepos.ErrSessionProfileGraphConflict
+}
+
+func (r *KubernetesSessionProfileRepository) graphSnapshot(ctx context.Context) (kvstore.Record, []*entities.SessionProfile, error) {
+	for attempt := 0; attempt < 4; attempt++ {
+		revision, err := r.graphRevision(ctx)
+		if err != nil {
+			return kvstore.Record{}, nil, err
+		}
+		profiles, err := r.loadProfiles(ctx, portrepos.SessionProfileFilter{})
+		if err != nil {
+			return kvstore.Record{}, nil, err
+		}
+		current, err := r.atomicStore.Get(ctx, revision.Kind, revision.Namespace, revision.Key)
+		if err != nil {
+			return kvstore.Record{}, nil, err
+		}
+		if current.Version == revision.Version {
+			return current, profiles, nil
+		}
+	}
+	return kvstore.Record{}, nil, portrepos.ErrSessionProfileGraphConflict
+}
+
+func (r *KubernetesSessionProfileRepository) graphRevision(ctx context.Context) (kvstore.Record, error) {
+	record, err := r.atomicStore.Get(ctx, kvstore.KindConfigMap, r.namespace, sessionProfileGraphRevisionKey)
+	if err == nil {
+		return record, nil
+	}
+	if !stderrors.Is(err, kvstore.ErrNotFound) {
+		return kvstore.Record{}, err
+	}
+	labels := map[string]string{labelSessionProfileGraphRevision: "true"}
+	object := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: sessionProfileGraphRevisionKey, Namespace: r.namespace, Labels: labels}, Data: map[string]string{"revision": "0"}}
+	value, marshalErr := json.Marshal(object)
+	if marshalErr != nil {
+		return kvstore.Record{}, marshalErr
+	}
+	record = kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: r.namespace, Key: sessionProfileGraphRevisionKey, Labels: labels, Value: value}
+	created, createErr := r.atomicStore.Create(ctx, record)
+	if stderrors.Is(createErr, kvstore.ErrConflict) {
+		return r.atomicStore.Get(ctx, record.Kind, record.Namespace, record.Key)
+	}
+	return created, createErr
+}
+
+func validateSessionProfileGraph(profiles []*entities.SessionProfile, candidate *entities.SessionProfile) error {
+	byID := make(map[string]*entities.SessionProfile, len(profiles))
+	for _, profile := range profiles {
+		byID[profile.ID()] = profile
+	}
+	byID[candidate.ID()] = candidate
+	for _, profile := range byID {
+		visited := map[string]struct{}{profile.ID(): {}}
+		current := profile
+		currentConfig := current.Config()
+		for sourceID := currentConfig.SourceSessionProfileID(); sourceID != ""; sourceID = currentConfig.SourceSessionProfileID() {
+			if _, seen := visited[sourceID]; seen {
+				return fmt.Errorf("session profile source contains a cyclic reference")
+			}
+			visited[sourceID] = struct{}{}
+			source, exists := byID[sourceID]
+			if !exists {
+				return entities.ErrSessionProfileNotFound{ID: sourceID}
+			}
+			if !sessionProfilesShareTenant(source, profile) {
+				return fmt.Errorf("session profile source belongs to another tenant")
+			}
+			current = source
+			currentConfig = current.Config()
+		}
+	}
+	return nil
+}
+
+func sessionProfilesShareTenant(source, profile *entities.SessionProfile) bool {
+	switch profile.Scope() {
+	case entities.ScopeUser:
+		return source.Scope() == entities.ScopeUser && source.UserID() == profile.UserID()
+	case entities.ScopeTeam:
+		return source.Scope() == entities.ScopeTeam && source.TeamID() == profile.TeamID()
+	default:
+		return false
+	}
+}
+
 // Delete removes a session profile by ID
 func (r *KubernetesSessionProfileRepository) Delete(ctx context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.atomicStore != nil {
+		return r.deleteAtomically(ctx, id)
+	}
 
 	secretName := sessionProfileSecretName(id)
 	err := r.client.CoreV1().Secrets(r.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return entities.ErrSessionProfileNotFound{ID: id}
 		}
 		return fmt.Errorf("failed to delete session profile secret: %w", err)
@@ -209,11 +412,64 @@ func (r *KubernetesSessionProfileRepository) Delete(ctx context.Context, id stri
 	return nil
 }
 
+func (r *KubernetesSessionProfileRepository) deleteAtomically(ctx context.Context, id string) error {
+	mutator := r.atomicStore.(kvstore.AtomicMutator)
+	for attempt := 0; attempt < 4; attempt++ {
+		revision, profiles, err := r.graphSnapshot(ctx)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, profile := range profiles {
+			if profile.ID() == id {
+				found = true
+				continue
+			}
+			cfg := profile.Config()
+			if cfg.SourceSessionProfileID() == id {
+				return fmt.Errorf("%w: session profile is referenced by %s", portrepos.ErrSessionProfileGraphConflict, profile.ID())
+			}
+		}
+		if !found {
+			return entities.ErrSessionProfileNotFound{ID: id}
+		}
+		secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, sessionProfileSecretName(id), metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		version, err := strconv.ParseInt(secret.ResourceVersion, 10, 64)
+		if err != nil {
+			return err
+		}
+		profileRecord := kvstore.Record{Kind: kvstore.KindSecret, Namespace: r.namespace, Key: secret.Name, Labels: secret.Labels, Version: version}
+		mutations := []kvstore.Mutation{
+			{Type: kvstore.MutationDelete, Record: profileRecord},
+			{Type: kvstore.MutationUpdate, Record: revision},
+		}
+		if _, err := mutator.ApplyAtomically(ctx, mutations); err != nil {
+			if stderrors.Is(err, kvstore.ErrConflict) {
+				continue
+			}
+			return fmt.Errorf("atomically delete session profile: %w", err)
+		}
+		return nil
+	}
+	return portrepos.ErrSessionProfileGraphConflict
+}
+
+func secretToRecord(secret *corev1.Secret, version int64) (kvstore.Record, error) {
+	value, err := json.Marshal(secret)
+	if err != nil {
+		return kvstore.Record{}, err
+	}
+	return kvstore.Record{Kind: kvstore.KindSecret, Namespace: secret.Namespace, Key: secret.Name, Labels: secret.Labels, Value: value, Version: version}, nil
+}
+
 func (r *KubernetesSessionProfileRepository) loadProfile(ctx context.Context, id string) (*entities.SessionProfile, error) {
 	secretName := sessionProfileSecretName(id)
 	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return nil, entities.ErrSessionProfileNotFound{ID: id}
 		}
 		return nil, fmt.Errorf("failed to get session profile secret: %w", err)
@@ -285,32 +541,59 @@ func (r *KubernetesSessionProfileRepository) loadProfiles(ctx context.Context, f
 }
 
 func (r *KubernetesSessionProfileRepository) saveProfile(ctx context.Context, profile *entities.SessionProfile) error {
+	secret, err := r.buildProfileSecret(ctx, profile)
+	if err != nil {
+		return err
+	}
+	secretName := secret.Name
+	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			existing, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+			if getErr != nil {
+				return fmt.Errorf("failed to get existing secret: %w", getErr)
+			}
+			existing.Data = secret.Data
+			existing.Labels = secret.Labels
+			existing.Annotations = secret.Annotations
+			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, existing, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to update session profile secret: %w", err)
+			}
+			return nil
+		}
+		return fmt.Errorf("failed to create session profile secret: %w", err)
+	}
+	return nil
+}
+
+func (r *KubernetesSessionProfileRepository) buildProfileSecret(ctx context.Context, profile *entities.SessionProfile) (*corev1.Secret, error) {
 	pj := r.entityToJSON(profile)
 	cfg := profile.Config()
 	for _, c := range []*modelprovider.Connection{cfg.CodexConnection(), cfg.ClaudeConnection(), cfg.PiConnection()} {
 		if c != nil && c.APIKey != "" {
 			svc := r.connections.encryptionSvc()
 			if svc == nil || svc.Algorithm() == "noop" {
-				return fmt.Errorf("encryption must be configured to store session profile API keys")
+				return nil, fmt.Errorf("encryption must be configured to store session profile API keys")
 			}
 		}
 	}
 	var err error
 	pj.Config.CodexConnection, err = r.connections.encodeConnection(ctx, cfg.CodexConnection())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pj.Config.ClaudeConnection, err = r.connections.encodeConnection(ctx, cfg.ClaudeConnection())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pj.Config.PiConnection, err = r.connections.encodeConnection(ctx, cfg.PiConnection())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	data, err := json.Marshal(pj)
 	if err != nil {
-		return fmt.Errorf("failed to marshal session profile: %w", err)
+		return nil, fmt.Errorf("failed to marshal session profile: %w", err)
 	}
 
 	secretName := sessionProfileSecretName(profile.ID())
@@ -326,7 +609,7 @@ func (r *KubernetesSessionProfileRepository) saveProfile(ctx context.Context, pr
 		annotations[AnnotationSessionProfileTeamID] = profile.TeamID()
 	}
 
-	secret := &corev1.Secret{
+	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        secretName,
 			Namespace:   r.namespace,
@@ -337,30 +620,7 @@ func (r *KubernetesSessionProfileRepository) saveProfile(ctx context.Context, pr
 		Data: map[string][]byte{
 			SecretKeySessionProfile: data,
 		},
-	}
-
-	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		if errors.IsAlreadyExists(err) {
-			existing, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
-			if getErr != nil {
-				return fmt.Errorf("failed to get existing secret: %w", getErr)
-			}
-
-			existing.Data[SecretKeySessionProfile] = data
-			existing.Labels = labels
-			existing.Annotations = annotations
-
-			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, existing, metav1.UpdateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to update session profile secret: %w", err)
-			}
-			return nil
-		}
-		return fmt.Errorf("failed to create session profile secret: %w", err)
-	}
-
-	return nil
+	}, nil
 }
 
 func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON) *entities.SessionProfile {

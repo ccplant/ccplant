@@ -1,4 +1,4 @@
-.PHONY: help install-deps build test lint clean docker-build docker-build-api docker-push e2e ci gofmt setup-envtest envtest devbuild devbuild-image devbuild-helm
+.PHONY: help install-deps build test lint lint-policy clean docker-build docker-build-api docker-push e2e ci gofmt setup-envtest envtest devbuild devbuild-image devbuild-helm
 
 BINARY_NAME := ccplant
 GO_FILES := $(shell find . -name "*.go" -type f)
@@ -22,6 +22,7 @@ help:
 	@echo "  test-verbose  - Run Go tests with verbose output (requires PKG=./path)"
 	@echo "                  Example: make test-verbose PKG=./cmd/..."
 	@echo "  lint          - Run linters (golangci-lint)"
+	@echo "  lint-policy   - Model-check session profile policy locally"
 	@echo "  gofmt         - Format Go code with gofmt -s -w"
 	@echo "  clean         - Clean build artifacts"
 	@echo "  docker-build  - Build Docker image"
@@ -91,6 +92,9 @@ test-verbose: gofmt
 lint: gofmt
 	@echo "Running linters..."
 	golangci-lint run --timeout=5m
+
+lint-policy:
+	../scripts/check-session-profile-policy-model.sh
 
 clean:
 	@echo "Cleaning up..."

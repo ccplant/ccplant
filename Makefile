@@ -1,6 +1,9 @@
-.PHONY: backend-build backend-test frontend-install frontend-test frontend-build e2e-test e2e-build e2e-up e2e-down docs-install docs-dev docs-build chart-deps chart-test schedule-test webhook-test slackbot-test session-manager-test test
+.PHONY: backend-build backend-test frontend-install frontend-test frontend-build e2e-test e2e-build e2e-up e2e-down docs-install docs-dev docs-build chart-deps chart-test schedule-test webhook-test slackbot-test session-manager-test lint-policy test
 
 HELM ?= helm
+
+lint-policy:
+	scripts/check-session-profile-policy-model.sh
 
 .PHONY: k3s-up k3s-forward k3s-smoke k3s-down
 k3s-up:

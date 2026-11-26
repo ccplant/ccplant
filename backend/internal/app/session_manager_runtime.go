@@ -158,7 +158,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		manager.SetTeamConfigRepository(repositories.NewKubernetesTeamConfigRepository(persistence, applicationNamespace))
 		manager.SetPersonalAPIKeyRepository(repositories.NewKubernetesPersonalAPIKeyRepository(persistence, applicationNamespace))
 		manager.SetSandboxPolicyRepository(repositories.NewKubernetesSandboxPolicyRepository(persistence, applicationNamespace))
-		manager.SetSessionProfileRepository(repositories.NewKubernetesSessionProfileRepository(persistence, applicationNamespace, registry))
+		manager.SetSessionProfileRepository(repositories.NewSessionProfileRepository(persistence, applicationNamespace, applicationStore, registry))
 		sessionRouteRepo = repositories.NewKubernetesSessionRouteRepository(persistence, applicationNamespace)
 		manager.AddSessionDeletedHandler(func(ctx context.Context, session entities.Session) {
 			cleanupLocalSessionRoutes(ctx, sessionRouteRepo, session.ID())

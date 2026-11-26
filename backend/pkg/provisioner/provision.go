@@ -699,7 +699,7 @@ func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionS
 	policy, err := agentpolicy.Parse(settings.PolicyYAML)
 	if err != nil {
 		log.Printf("[PROVISIONER] Refusing invalid agent policy: %v", err)
-		policy = &agentpolicy.Policy{Version: agentpolicy.Version, Resources: map[string]agentpolicy.Actions{}}
+		policy = agentpolicy.DenyAll()
 	}
 	s.brokerPolicy = policy
 	if endpoint := strings.TrimSpace(settings.Env["AGENTAPI_PROXY_ENDPOINT"]); endpoint != "" && !strings.HasPrefix(endpoint, "unix:") && !strings.HasPrefix(endpoint, "http+unix:") {

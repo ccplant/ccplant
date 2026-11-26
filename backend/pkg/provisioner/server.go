@@ -68,7 +68,7 @@ type Server struct {
 	brokerURL       string
 	brokerKey       string
 	brokerSessionID string
-	brokerPolicy    *agentpolicy.Policy
+	brokerPolicy    *agentpolicy.ValidatedPolicy
 
 	mu                     sync.RWMutex
 	status                 Status
@@ -311,7 +311,7 @@ func (s *Server) handleCLIBroker(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func allowedCLIBrokerRequest(r *http.Request, sessionID string, policy *agentpolicy.Policy) bool {
+func allowedCLIBrokerRequest(r *http.Request, sessionID string, policy *agentpolicy.ValidatedPolicy) bool {
 	path := r.URL.Path
 	if path == "/internal/usage-events" {
 		return r.Method == http.MethodPost
