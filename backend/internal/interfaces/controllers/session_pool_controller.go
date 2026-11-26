@@ -1464,6 +1464,15 @@ func (c *SessionPoolController) reconcileManagerSessionStatusesInner(ctx context
 			(status == "active" || status == "running" || status == "starting" || status == "creating") {
 			continue
 		}
+		// Once a direct runtime has reported that it is live, a manager's
+		// workload snapshot cannot move it back into a startup phase. This is
+		// especially important after an API restart: the manager heartbeat may
+		// lag behind the runtime status restored from Redis.
+		if route.Transport == portrepos.SessionRouteTransportDirectRuntime &&
+			(route.Status == "active" || route.Status == "running") &&
+			(status == "starting" || status == "creating") {
+			continue
+		}
 		// Suspension is a parent-controlled lifecycle state. A manager may still
 		// report the workload's terminal status from a watcher that observed the
 		// Pod deletion after suspension completed. Keep the route resumable until
