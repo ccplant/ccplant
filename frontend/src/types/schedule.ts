@@ -6,6 +6,7 @@ export type ScheduleStatus = 'active' | 'paused' | 'completed';
 // Session configuration for scheduled execution
 export interface ScheduleSessionConfig {
   environment?: Record<string, string>;
+	environment_keys?: string[];
   tags?: Record<string, string>;
   params?: {
     message?: string;

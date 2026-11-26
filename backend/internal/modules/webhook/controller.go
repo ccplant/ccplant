@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"text/template"
 	"time"
 
@@ -127,7 +128,8 @@ type WebhookResponse struct {
 	TeamID          string                        `json:"team_id,omitempty"`
 	Status          entities.WebhookStatus        `json:"status"`
 	Type            entities.WebhookType          `json:"type"`
-	Secret          string                        `json:"secret"`
+	Secret          string                        `json:"secret,omitempty"`
+	HasSecret       bool                          `json:"has_secret"`
 	SignatureHeader string                        `json:"signature_header,omitempty"`
 	SignatureType   entities.WebhookSignatureType `json:"signature_type,omitempty"`
 	SignaturePrefix string                        `json:"signature_prefix,omitempty"`
@@ -181,7 +183,7 @@ type GitHubConditionsResponse struct {
 
 // SessionConfigResponse represents session configuration in responses
 type SessionConfigResponse struct {
-	Environment            map[string]string      `json:"environment,omitempty"`
+	EnvironmentKeys        []string               `json:"environment_keys,omitempty"`
 	Tags                   map[string]string      `json:"tags,omitempty"`
 	InitialMessageTemplate string                 `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                 `json:"reuse_message_template,omitempty"`
@@ -221,15 +223,15 @@ type TriggerWebhookRequest struct {
 
 // TriggerWebhookResponse represents the response for a webhook trigger test
 type TriggerWebhookResponse struct {
-	Matched        bool                       `json:"matched"`                   // Whether any trigger matched
-	MatchedTrigger *TriggerMatchedTriggerInfo `json:"matched_trigger,omitempty"` // Info about the matched trigger
-	SessionID      string                     `json:"session_id,omitempty"`      // Set when dry_run=false and session was created
-	SessionReused  bool                       `json:"session_reused,omitempty"`  // Whether an existing session was reused
-	DryRun         bool                       `json:"dry_run"`                   // Echoes back the dry_run flag
-	InitialMessage string                     `json:"initial_message,omitempty"` // The rendered initial message (in dry_run mode)
-	Tags           map[string]string          `json:"tags,omitempty"`            // The computed tags (in dry_run mode)
-	Environment    map[string]string          `json:"environment,omitempty"`     // The computed environment (in dry_run mode)
-	Error          string                     `json:"error,omitempty"`           // Any error encountered during evaluation
+	Matched         bool                       `json:"matched"`                    // Whether any trigger matched
+	MatchedTrigger  *TriggerMatchedTriggerInfo `json:"matched_trigger,omitempty"`  // Info about the matched trigger
+	SessionID       string                     `json:"session_id,omitempty"`       // Set when dry_run=false and session was created
+	SessionReused   bool                       `json:"session_reused,omitempty"`   // Whether an existing session was reused
+	DryRun          bool                       `json:"dry_run"`                    // Echoes back the dry_run flag
+	InitialMessage  string                     `json:"initial_message,omitempty"`  // The rendered initial message (in dry_run mode)
+	Tags            map[string]string          `json:"tags,omitempty"`             // The computed tags (in dry_run mode)
+	EnvironmentKeys []string                   `json:"environment_keys,omitempty"` // Names only; values are write-only.
+	Error           string                     `json:"error,omitempty"`            // Any error encountered during evaluation
 }
 
 // TriggerMatchedTriggerInfo contains information about a matched trigger
@@ -358,7 +360,7 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 
 	log.Printf("Created webhook %s (%s) for user %s", webhook.ID(), webhook.Name(), userID)
 
-	return ctx.JSON(http.StatusCreated, c.toResponse(ctx, webhook))
+	return ctx.JSON(http.StatusCreated, c.toResponse(ctx, webhook, true))
 }
 
 // ListWebhooks handles GET /webhooks
@@ -429,11 +431,11 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 		// This check mirrors CanAccessResource: admin bypasses only for team scope.
 		if webhookScope == entities.ScopeTeam {
 			if user != nil && (user.IsAdmin() || user.IsMemberOfTeam(w.TeamID())) {
-				responses = append(responses, c.toResponse(ctx, w))
+				responses = append(responses, c.toResponse(ctx, w, false))
 			}
 		} else {
 			if user != nil && w.UserID() == string(user.ID()) {
-				responses = append(responses, c.toResponse(ctx, w))
+				responses = append(responses, c.toResponse(ctx, w, false))
 			}
 		}
 	}
@@ -465,7 +467,7 @@ func (c *WebhookController) GetWebhook(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this webhook")
 	}
 
-	return ctx.JSON(http.StatusOK, c.toResponse(ctx, webhook))
+	return ctx.JSON(http.StatusOK, c.toResponse(ctx, webhook, false))
 }
 
 // UpdateWebhook handles PUT /webhooks/:id
@@ -532,9 +534,23 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 		webhook.SetGitHub(c.requestToGitHubConfig(req.GitHub))
 	}
 	if req.Triggers != nil {
+		previousByID := make(map[string]entities.WebhookTrigger)
+		for _, trigger := range webhook.Triggers() {
+			previousByID[trigger.ID()] = trigger
+		}
+		for i := range req.Triggers {
+			requested := &req.Triggers[i]
+			previous, ok := previousByID[requested.ID]
+			if ok && requested.SessionConfig != nil && previous.SessionConfig() != nil {
+				requested.SessionConfig.Environment = mergeWebhookSecretMap(previous.SessionConfig().Environment(), requested.SessionConfig.Environment)
+			}
+		}
 		webhook.SetTriggers(c.requestToTriggers(req.Triggers))
 	}
 	if req.SessionConfig != nil {
+		if webhook.SessionConfig() != nil {
+			req.SessionConfig.Environment = mergeWebhookSecretMap(webhook.SessionConfig().Environment(), req.SessionConfig.Environment)
+		}
 		webhook.SetSessionConfig(c.requestToSessionConfig(req.SessionConfig))
 	}
 
@@ -553,7 +569,18 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 
 	log.Printf("Updated webhook %s", id)
 
-	return ctx.JSON(http.StatusOK, c.toResponse(ctx, webhook))
+	return ctx.JSON(http.StatusOK, c.toResponse(ctx, webhook, false))
+}
+
+func mergeWebhookSecretMap(existing, provided map[string]string) map[string]string {
+	merged := make(map[string]string, len(existing)+len(provided))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range provided {
+		merged[key] = value
+	}
+	return merged
 }
 
 // DeleteWebhook handles DELETE /webhooks/:id
@@ -695,7 +722,7 @@ func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *e
 }
 
 // toResponse converts entity to response
-func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) WebhookResponse {
+func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook, includeGeneratedSecret bool) WebhookResponse {
 	resp := WebhookResponse{
 		ID:              w.ID(),
 		Name:            w.Name(),
@@ -704,7 +731,7 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 		TeamID:          w.TeamID(),
 		Status:          w.Status(),
 		Type:            w.WebhookType(),
-		Secret:          w.Secret(),
+		HasSecret:       w.Secret() != "",
 		SignatureHeader: w.SignatureHeader(),
 		SignatureType:   w.SignatureType(),
 		SignaturePrefix: w.SignaturePrefix(),
@@ -713,6 +740,9 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 		CreatedAt:       w.CreatedAt().Format(time.RFC3339),
 		UpdatedAt:       w.UpdatedAt().Format(time.RFC3339),
 		DeliveryCount:   w.DeliveryCount(),
+	}
+	if includeGeneratedSecret {
+		resp.Secret = w.Secret()
 	}
 
 	// GitHub config
@@ -785,7 +815,7 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 
 func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionConfig) *SessionConfigResponse {
 	resp := &SessionConfigResponse{
-		Environment:            sc.Environment(),
+		EnvironmentKeys:        sortedMapKeys(sc.Environment()),
 		Tags:                   sc.Tags(),
 		InitialMessageTemplate: sc.InitialMessageTemplate(),
 		ReuseMessageTemplate:   sc.ReuseMessageTemplate(),
@@ -805,6 +835,15 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 		}
 	}
 	return resp
+}
+
+func sortedMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (c *WebhookController) getWebhookURL(ctx echo.Context, w *entities.Webhook) string {

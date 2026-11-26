@@ -32,6 +32,8 @@ export interface ProfileFile {
   name?: string;
   path: string;
   content?: string;
+	/** Read responses expose only whether write-only content exists. */
+	has_content?: boolean;
   permissions?: string;
 }
 
@@ -48,6 +50,8 @@ export interface SessionProfileConfig {
   claude_connection?: ModelConnection | null;
   pi_connection?: ModelConnection | null;
   environment?: Record<string, string>;
+	/** Names of configured write-only environment variables. */
+	environment_keys?: string[];
   tags?: Record<string, string>;
   pool?: string;
   initial_message_template?: string;

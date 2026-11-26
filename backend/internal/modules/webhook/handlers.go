@@ -178,7 +178,7 @@ func (h *Handlers) triggerGitHubWebhook(ctx echo.Context, webhook *entities.Webh
 		} else {
 			response.InitialMessage = dryResult.InitialMessage
 			response.Tags = dryResult.Tags
-			response.Environment = dryResult.Environment
+			response.EnvironmentKeys = sortedMapKeys(dryResult.Environment)
 		}
 		return ctx.JSON(http.StatusOK, response)
 	}
@@ -239,7 +239,7 @@ func (h *Handlers) triggerCustomWebhook(ctx echo.Context, webhook *entities.Webh
 		} else {
 			response.InitialMessage = dryResult.InitialMessage
 			response.Tags = dryResult.Tags
-			response.Environment = dryResult.Environment
+			response.EnvironmentKeys = sortedMapKeys(dryResult.Environment)
 		}
 		return ctx.JSON(http.StatusOK, response)
 	}

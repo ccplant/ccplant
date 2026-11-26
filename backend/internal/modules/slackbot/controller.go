@@ -2,6 +2,7 @@ package slackbot
 
 import (
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -116,6 +117,7 @@ type SlackBotSessionConfig struct {
 	ReuseMessageTemplate   string                 `json:"reuse_message_template,omitempty"`
 	Tags                   map[string]string      `json:"tags,omitempty"`
 	Environment            map[string]string      `json:"environment,omitempty"`
+	EnvironmentKeys        []string               `json:"environment_keys,omitempty"`
 	Params                 *SlackBotSessionParams `json:"params,omitempty"`
 	SessionProfileID       string                 `json:"session_profile_id,omitempty"`
 }
@@ -227,6 +229,9 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 		bot.SetMaxSessions(req.MaxSessions)
 	}
 	if req.SessionConfig != nil {
+		if bot.SessionConfig() != nil {
+			req.SessionConfig.Environment = mergeSlackBotSecretMap(bot.SessionConfig().Environment(), req.SessionConfig.Environment)
+		}
 		bot.SetSessionConfig(toEntitySessionConfig(req.SessionConfig))
 	}
 	if req.NotifyOnSessionCreated != nil {
@@ -268,6 +273,17 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusCreated, c.toResponse(bot))
+}
+
+func mergeSlackBotSecretMap(existing, provided map[string]string) map[string]string {
+	merged := make(map[string]string, len(existing)+len(provided))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range provided {
+		merged[key] = value
+	}
+	return merged
 }
 
 // ListSlackBots handles GET /slackbots
@@ -601,7 +617,7 @@ func fromEntitySessionConfig(sc *entities.WebhookSessionConfig) *SlackBotSession
 		InitialMessageTemplate: sc.InitialMessageTemplate(),
 		ReuseMessageTemplate:   sc.ReuseMessageTemplate(),
 		Tags:                   sc.Tags(),
-		Environment:            sc.Environment(),
+		EnvironmentKeys:        slackbotSortedMapKeys(sc.Environment()),
 		SessionProfileID:       sc.SessionProfileID(),
 	}
 	if sc.Params() != nil {
@@ -617,4 +633,13 @@ func fromEntitySessionConfig(sc *entities.WebhookSessionConfig) *SlackBotSession
 		}
 	}
 	return cfg
+}
+
+func slackbotSortedMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
