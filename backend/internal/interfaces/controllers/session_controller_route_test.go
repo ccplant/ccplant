@@ -953,7 +953,7 @@ func TestForceDeleteOrphanedRemoteSessionRequiresAuthorization(t *testing.T) {
 	}
 }
 
-func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
+func TestSuspendRemoteSessionUsesPublicSessionIDAndUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 	allocated := &fakeSession{id: "remote-id", status: "active", userID: "user-1", scope: entities.ScopeUser}
 	unrelated := &fakeSession{id: "other-id", status: "active", userID: "user-1", scope: entities.ScopeUser}
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
@@ -982,8 +982,8 @@ func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if tunnel.path != "/api/v1/sessions/remote-id/suspend" {
-		t.Fatalf("suspend path = %q, want allocated session path", tunnel.path)
+	if tunnel.path != "/api/v1/sessions/public-id/suspend" {
+		t.Fatalf("suspend path = %q, want public session path", tunnel.path)
 	}
 	var suspendSettings sessionsettings.SessionSettings
 	if err := json.Unmarshal(tunnel.body, &suspendSettings); err != nil {
@@ -1023,7 +1023,7 @@ func TestResumeRemoteSessionUsesSessionManagerAPIPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if tunnel.path != "/api/v1/sessions/remote-id/resume" {
+	if tunnel.path != "/api/v1/sessions/public-id/resume" {
 		t.Fatalf("resume path = %q, want session manager API path", tunnel.path)
 	}
 }
@@ -1221,7 +1221,7 @@ func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" {
 		t.Fatalf("status=%d retry-after=%q body=%s", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
 	}
-	if tunnel.path != "/api/v1/sessions/remote-id/resume" || !strings.Contains(rec.Body.String(), `"code":"session_resuming"`) {
+	if tunnel.path != "/api/v1/sessions/public-id/resume" || !strings.Contains(rec.Body.String(), `"code":"session_resuming"`) {
 		t.Fatalf("resume path=%q body=%s", tunnel.path, rec.Body.String())
 	}
 	if routeRepo.route.Status != "resuming" {

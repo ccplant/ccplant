@@ -1969,7 +1969,10 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 	if route.RemoteSessionID == "" || c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/suspend"
+	// The control tunnel is selected by RemoteSessionID (the allocated runner),
+	// but the Session Manager stores the claimed workload under the public
+	// session ID. Lifecycle API paths must therefore address route.SessionID.
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.SessionID) + "/suspend"
 	if c.sessionRunnerStore == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session resume data store is unavailable")
 	}
@@ -2477,7 +2480,9 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
+	// RemoteSessionID identifies the runner connection used by the tunnel. The
+	// Session Manager lifecycle repository is keyed by the public session ID.
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.SessionID) + "/resume"
 	body, settingsErr := c.remoteResumeSettings(ctx, route)
 	if settingsErr != nil {
 		return nil, settingsErr
