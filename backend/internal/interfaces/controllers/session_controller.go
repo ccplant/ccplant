@@ -1969,10 +1969,6 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 	if route.RemoteSessionID == "" || c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	// The control tunnel is selected by RemoteSessionID (the allocated runner),
-	// but the Session Manager stores the claimed workload under the public
-	// session ID. Lifecycle API paths must therefore address route.SessionID.
-	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.SessionID) + "/suspend"
 	if c.sessionRunnerStore == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session resume data store is unavailable")
 	}
@@ -1992,14 +1988,25 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session resume data; the session was not suspended")
 	}
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(settingsBody))
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build suspend request")
+	doSuspend := func(sessionID string) (*http.Response, error) {
+		targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(sessionID) + "/suspend"
+		req, requestErr := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(settingsBody))
+		if requestErr != nil {
+			return nil, requestErr
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	resp, err := doSuspend(route.RemoteSessionID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	if resp.StatusCode == http.StatusNotFound && route.SessionID != route.RemoteSessionID {
+		_ = resp.Body.Close()
+		resp, err = doSuspend(route.SessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -2480,33 +2487,30 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	// RemoteSessionID identifies the runner connection used by the tunnel. The
-	// Session Manager lifecycle repository is keyed by the public session ID.
-	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.SessionID) + "/resume"
 	body, settingsErr := c.remoteResumeSettings(ctx, route)
 	if settingsErr != nil {
 		return nil, settingsErr
 	}
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
-	}
-	if len(body) != 0 {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	ts := hmacutil.NowTimestamp()
-	parsedTarget, err := url.Parse(targetURL)
-	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
-	}
-	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, body)
-	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
-	req.Header.Set(hmacutil.TimestampHeader, ts)
-	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
-		req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
-	}
-	if route.TeamID != "" {
-		req.Header.Set("X-Forwarded-Team", route.TeamID)
+	buildResumeRequest := func(sessionID string) (*http.Request, error) {
+		targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(sessionID) + "/resume"
+		req, requestErr := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(body))
+		if requestErr != nil {
+			return nil, requestErr
+		}
+		if len(body) != 0 {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		ts := hmacutil.NowTimestamp()
+		msg := hmacutil.BuildMessage(req.Method, req.URL.RequestURI(), ts, body)
+		req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
+		req.Header.Set(hmacutil.TimestampHeader, ts)
+		if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
+			req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+		}
+		if route.TeamID != "" {
+			req.Header.Set("X-Forwarded-Team", route.TeamID)
+		}
+		return req, nil
 	}
 	previousStatus := route.Status
 	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming"); err != nil {
@@ -2517,10 +2521,28 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 			log.Printf("[ROUTE] Failed to roll back resume status for %s: %v", route.SessionID, err)
 		}
 	}
+	req, err := buildResumeRequest(route.RemoteSessionID)
+	if err != nil {
+		rollback()
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+	}
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
 		rollback()
 		return nil, echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	if resp.StatusCode == http.StatusNotFound && route.SessionID != route.RemoteSessionID {
+		_ = resp.Body.Close()
+		req, err = buildResumeRequest(route.SessionID)
+		if err != nil {
+			rollback()
+			return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+		}
+		resp, err = c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+		if err != nil {
+			rollback()
+			return nil, echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		rollback()

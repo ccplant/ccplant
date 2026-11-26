@@ -91,7 +91,7 @@ func TestRouteToRemoteSessionResumesWhenManagerReportsSuspendedWorkload(t *testi
 	if len(tunnel.calls) != 3 {
 		t.Fatalf("tunnel calls=%+v, want relay, resume, relay", tunnel.calls)
 	}
-	if tunnel.calls[1].path != "/api/v1/sessions/public-id/resume" {
+	if tunnel.calls[1].path != "/api/v1/sessions/remote-id/resume" {
 		t.Fatalf("second call path=%q, want parent resume", tunnel.calls[1].path)
 	}
 	if tunnel.calls[2].path != "/remote-id/message" || tunnel.calls[2].body != `{"content":"hi","type":"user"}` {
@@ -118,7 +118,7 @@ func TestRouteToRemoteSessionReportsResumingAfterAcceptedResume(t *testing.T) {
 	if err := controller.RouteToSession(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(tunnel.calls) != 3 || tunnel.calls[1].path != "/api/v1/sessions/public-id/resume" {
+	if len(tunnel.calls) != 3 || tunnel.calls[1].path != "/api/v1/sessions/remote-id/resume" {
 		t.Fatalf("tunnel calls=%+v", tunnel.calls)
 	}
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" || !strings.Contains(rec.Body.String(), `"code":"session_resuming"`) {
