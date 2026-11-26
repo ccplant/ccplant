@@ -2,9 +2,12 @@ package repositories
 
 import (
 	"context"
+	"errors"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
+
+var ErrSessionProfileGraphConflict = errors.New("session profile graph changed during update")
 
 // SessionProfileFilter defines filter criteria for listing session profiles
 type SessionProfileFilter struct {

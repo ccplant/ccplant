@@ -66,6 +66,51 @@ func TestEncryptedStoreRoundTripAndMetadataFilter(t *testing.T) {
 	}
 }
 
+func TestEncryptedStoreAtomicUpdatePreservesRollbackAndPlaintextBoundary(t *testing.T) {
+	ctx := context.Background()
+	backend, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "encrypted-atomic.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := encryptedTestStore(t, backend, "current", map[string]string{"current": randomEncodedKey(t)})
+	t.Cleanup(func() { _ = store.Close() })
+
+	labels := map[string]string{"agentapi.proxy/session-profile": "true"}
+	firstValue := secretDocument(t, "first", labels, "first-value")
+	secondValue := secretDocument(t, "second", labels, "second-value")
+	first, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "first", Labels: labels, Value: firstValue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "second", Labels: labels, Value: secondValue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Value = secretDocument(t, "first", labels, "changed-value")
+	second.Version++
+	mutator := store.(AtomicMutator)
+	if _, err := mutator.ApplyAtomically(ctx, []Mutation{
+		{Type: MutationUpdate, Record: first},
+		{Type: MutationUpdate, Record: second},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("ApplyAtomically() error = %v, want ErrConflict", err)
+	}
+	loaded, err := store.Get(ctx, first.Kind, first.Namespace, first.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(loaded.Value, firstValue) {
+		t.Fatal("atomic conflict changed the first encrypted record")
+	}
+	raw, err := backend.Get(ctx, first.Kind, first.Namespace, first.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw.Value, []byte("first-value")) {
+		t.Fatal("atomic encrypted record contains plaintext")
+	}
+}
+
 func TestLibSQLBackfillsMetadataForLegacyRows(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")

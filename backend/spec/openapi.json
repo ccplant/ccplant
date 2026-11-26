@@ -4087,6 +4087,9 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "409": {
+            "description": "Concurrent session profile graph update"
           }
         }
       },
@@ -4231,6 +4234,9 @@
           },
           "404": {
             "description": "Session profile not found"
+          },
+          "409": {
+            "description": "Concurrent session profile graph update"
           }
         }
       },
@@ -4261,6 +4267,9 @@
           },
           "404": {
             "description": "Session profile not found"
+          },
+          "409": {
+            "description": "Session profile is referenced or the graph changed concurrently"
           }
         }
       }
