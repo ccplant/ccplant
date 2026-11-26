@@ -57,6 +57,42 @@ func TestMergeSessionParamsRequestPoolOverridesProfilePool(t *testing.T) {
 	require.Equal(t, "profile-pool", profile.Pool)
 }
 
+func TestApplySessionProfilePreservesCapabilitiesForRunnerPool(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{
+		Docker: &entities.DockerParams{Enabled: true},
+	})
+	cfg.SetSandboxPolicyID("policy-1")
+	request := &entities.StartRequest{Params: &entities.SessionParams{Pool: "fly-dev"}}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.NotNil(t, request.Params.Sandbox)
+	require.True(t, request.Params.Sandbox.Enabled)
+	require.Equal(t, "policy-1", request.Params.Sandbox.PolicyID)
+	require.NotNil(t, request.Params.Docker)
+	require.True(t, request.Params.Docker.Enabled)
+}
+
+func TestApplySessionProfileRemovesImplicitCapabilitiesForNativeAllocator(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{
+		Sandbox: &entities.SandboxParams{Enabled: true},
+		Docker:  &entities.DockerParams{Enabled: true},
+	})
+	request := &entities.StartRequest{
+		Tags:   map[string]string{"allocator.os": "linux"},
+		Params: &entities.SessionParams{Pool: "native"},
+	}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Nil(t, request.Params.Sandbox)
+	require.Nil(t, request.Params.Docker)
+}
+
 func TestMergeSessionParamsPreservesTemplateResumeSource(t *testing.T) {
 	profile := &entities.SessionParams{AgentType: "codex-acp"}
 	merged := mergeSessionParams(profile, &entities.SessionParams{ResumeFrom: "tpl_context"})

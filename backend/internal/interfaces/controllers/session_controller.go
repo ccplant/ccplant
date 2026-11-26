@@ -1092,10 +1092,6 @@ func containsAllocatorSelector(tags map[string]string) bool {
 	return false
 }
 
-func hasRequestedSessionPool(startReq entities.StartRequest) bool {
-	return startReq.Params != nil && strings.TrimSpace(startReq.Params.Pool) != ""
-}
-
 func removeImplicitAllocatorCapabilities(params *entities.SessionParams, explicitSandbox, explicitDocker bool) {
 	if params == nil {
 		return
@@ -3372,7 +3368,7 @@ func applySessionProfile(
 				startReq.Params.Pool = cfg.Pool()
 			}
 		}
-		if containsAllocatorSelector(startReq.Tags) || hasRequestedSessionPool(*startReq) {
+		if containsAllocatorSelector(startReq.Tags) {
 			removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
 		}
 
@@ -3385,7 +3381,7 @@ func applySessionProfile(
 		// allocator.* request into an unsupported-capability request. An explicit
 		// sandbox in the request remains intact and is rejected by the allocator
 		// selection layer.
-		if !containsAllocatorSelector(startReq.Tags) && !hasRequestedSessionPool(*startReq) {
+		if !containsAllocatorSelector(startReq.Tags) {
 			applyProfileSandboxDefaults(cfg, startReq.Params)
 		}
 
