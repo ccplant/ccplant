@@ -2922,17 +2922,16 @@ func (m *KubernetesSessionManager) sessionHasReadyEndpoint(ctx context.Context, 
 // applies it to the session via SetStatusSilent so no additional broadcast is
 // triggered (the broadcasting pod already did that).
 //
-// The "infrastructure" statuses (creating, starting, unhealthy, stopped,
-// unknown) are authoritative from Kubernetes and are never overridden by Redis.
+// Kubernetes terminal/health statuses remain authoritative. A restored
+// "starting" status may, however, come from a lagging workload snapshot. In
+// that case a newer runtime event is the better source of truth.
 func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, session entities.Session) {
 	ks, ok := session.(*KubernetesSession)
 	if !ok {
 		return
 	}
-	// Infrastructure statuses must not be overridden.
 	currentStatus := ks.Status()
-	switch currentStatus {
-	case "creating", "starting", "unhealthy", "stopped", "unknown":
+	if currentStatus != "active" && currentStatus != "running" && currentStatus != "starting" {
 		return
 	}
 
@@ -2945,6 +2944,9 @@ func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, sessio
 	}
 	if redisStatus == "" {
 		return // No Redis entry; keep Kubernetes-derived status.
+	}
+	if currentStatus == "starting" && !updatedAt.After(ks.UpdatedAt()) {
+		return // The workload transition is newer; do not mask a real restart.
 	}
 
 	// Only replace with more-specific runtime statuses.
@@ -6912,7 +6914,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
 		status = "suspended"
 	}
-	session.SetStatus(status)
+	// Preserve the persisted transition time. SetStatus would stamp the restore
+	// time and make this workload snapshot look newer than a Redis runtime event.
+	session.SetStatusSilentAt(status, updatedAt)
 	session.SetDescription(initialMessage) // Cache initial message as description
 	session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
 
@@ -7043,7 +7047,8 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 	if svc.Annotations[sessionSuspendedAtAnnotation] != "" && deployment == nil && pod == nil {
 		status = "suspended"
 	}
-	session.SetStatus(status)
+	// Preserve the persisted transition time; see restoreSessionFromService.
+	session.SetStatusSilentAt(status, updatedAt)
 	session.SetDescription(initialMessage) // Cache initial message as description
 	session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
 
