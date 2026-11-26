@@ -145,6 +145,32 @@ func TestLoadConfigKubernetesSessionIsolationFromEnv(t *testing.T) {
 	assert.True(t, loadedConfig.KubernetesSession.DisableServiceAccountToken)
 }
 
+func TestLoadConfigKubernetesSessionDinDResourcesDefault(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, "2", loadedConfig.KubernetesSession.DinDCPURequest)
+	assert.Equal(t, "2", loadedConfig.KubernetesSession.DinDCPULimit)
+	assert.Equal(t, "2Gi", loadedConfig.KubernetesSession.DinDMemoryRequest)
+	assert.Equal(t, "2Gi", loadedConfig.KubernetesSession.DinDMemoryLimit)
+}
+
+func TestLoadConfigKubernetesSessionDinDResourcesFromEnv(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	t.Setenv("AGENTAPI_K8S_SESSION_DIND_CPU_REQUEST", "250m")
+	t.Setenv("AGENTAPI_K8S_SESSION_DIND_CPU_LIMIT", "3")
+	t.Setenv("AGENTAPI_K8S_SESSION_DIND_MEMORY_REQUEST", "512Mi")
+	t.Setenv("AGENTAPI_K8S_SESSION_DIND_MEMORY_LIMIT", "4Gi")
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, "250m", loadedConfig.KubernetesSession.DinDCPURequest)
+	assert.Equal(t, "3", loadedConfig.KubernetesSession.DinDCPULimit)
+	assert.Equal(t, "512Mi", loadedConfig.KubernetesSession.DinDMemoryRequest)
+	assert.Equal(t, "4Gi", loadedConfig.KubernetesSession.DinDMemoryLimit)
+}
+
 func TestLoadK8sSessionConfigFromYAMLUsesStringKeyedAffinityMaps(t *testing.T) {
 	configFile := t.TempDir() + "/k8s-session-config.yaml"
 	err := os.WriteFile(configFile, []byte(`

@@ -88,6 +88,12 @@
             "resources": {"$ref": "#/$defs/resourceRequirements"}
           }
         },
+        "dind": {
+          "type": "object",
+          "properties": {
+            "resources": {"$ref": "#/$defs/resourceRequirements"}
+          }
+        },
         "nodeSelector": {"type": "object", "additionalProperties": {"type": "string"}},
         "affinity": {"type": "object"},
         "tolerations": {"type": "array", "items": {"type": "object"}},

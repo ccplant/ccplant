@@ -170,6 +170,22 @@ assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED false "$TMP_DIR/executor-
 assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED true "$TMP_DIR/executor-standalone-enabled.yaml"
 assert_env_value AGENTAPI_K8S_SESSION_MOLI_LAYOUT true "$TMP_DIR/executor-standalone-default.yaml"
 
+# DinD sidecar resources keep the previous 2 CPU / 2Gi defaults unless set.
+assert_env_value AGENTAPI_K8S_SESSION_DIND_CPU_REQUEST 2 "$TMP_DIR/executor-builtin-default.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_DIND_MEMORY_LIMIT 2Gi "$TMP_DIR/executor-manager-default.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_DIND_CPU_REQUEST 2 "$TMP_DIR/executor-standalone-default.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_DIND_MEMORY_REQUEST 2Gi "$TMP_DIR/executor-standalone-default.yaml"
+"$HELM_BIN" template dind-standalone "$REPO_ROOT/chart/session-manager" \
+  --set session.dind.resources.requests.cpu=250m \
+  --set session.dind.resources.requests.memory=512Mi \
+  --set session.dind.resources.limits.cpu=3 \
+  --set session.dind.resources.limits.memory=4Gi \
+  >"$TMP_DIR/dind-standalone.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_DIND_CPU_REQUEST 250m "$TMP_DIR/dind-standalone.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_DIND_MEMORY_REQUEST 512Mi "$TMP_DIR/dind-standalone.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_DIND_CPU_LIMIT 3 "$TMP_DIR/dind-standalone.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_DIND_MEMORY_LIMIT 4Gi "$TMP_DIR/dind-standalone.yaml"
+
 # Public-only session egress must retain the authenticated callback from pool
 # runners to their own manager while denying arbitrary cluster-internal peers.
 "$HELM_BIN" template isolated-manager "$REPO_ROOT/chart/session-manager" \
