@@ -329,3 +329,32 @@ func TestNativeSessionManagerDeleteRemovesStateBeforeReturning(t *testing.T) {
 		t.Fatalf("repeated delete must be idempotent: %v", err)
 	}
 }
+
+func TestNativeSessionManagerDeleteRemovesReadOnlyDirectories(t *testing.T) {
+	stateDir := t.TempDir()
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(stateDir, "sessions", "go-cache")
+	moduleDir := filepath.Join(root, "home", "go", "pkg", "mod", "example.com", "module@v1.0.0")
+	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "module.go"), []byte("package module\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(moduleDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+
+	session := &NativeSession{id: "go-cache", request: &entities.RunServerRequest{}, rootDir: root, status: "error"}
+	m.sessions[session.id] = session
+
+	if err := m.DeleteSession(session.id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("read-only session state remains: %v", err)
+	}
+}

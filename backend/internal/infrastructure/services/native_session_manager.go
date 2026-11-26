@@ -543,15 +543,46 @@ func terminateNativeProcessGroup(pid int, root string) error {
 }
 
 func cleanupNativeSessionDirs(root string) error {
+	// Tool-managed caches can contain read-only directories. In particular, Go
+	// deliberately stores downloaded modules under 0555 directories, which
+	// prevents RemoveAll from unlinking their children on macOS. Native session
+	// roots are private disposable trees, so restore owner write permission on
+	// directories before removing them. WalkDir does not follow symlinks.
+	permissionErr := makeNativeSessionTreeRemovable(root)
 	stateErr := os.RemoveAll(root)
 	herdrErr := os.RemoveAll(nativeHerdrRuntimeDir(filepath.Base(root)))
+	if stateErr == nil {
+		permissionErr = nil
+	}
 	if stateErr != nil {
 		stateErr = fmt.Errorf("remove session state: %w", stateErr)
 	}
 	if herdrErr != nil {
 		herdrErr = fmt.Errorf("remove session herdr runtime: %w", herdrErr)
 	}
-	return errors.Join(stateErr, herdrErr)
+	return errors.Join(permissionErr, stateErr, herdrErr)
+}
+
+func makeNativeSessionTreeRemovable(root string) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().Perm()&0o200 != 0 {
+			return nil
+		}
+		if err := os.Chmod(path, info.Mode().Perm()|0o200); err != nil {
+			return fmt.Errorf("make session directory removable %s: %w", path, err)
+		}
+		return nil
+	})
 }
 
 func (m *NativeSessionManager) SendMessage(ctx context.Context, id, message string) error {
