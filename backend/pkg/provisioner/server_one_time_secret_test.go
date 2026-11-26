@@ -66,6 +66,25 @@ func TestHandleOneTimeSecretProxiesNextWithoutID(t *testing.T) {
 	require.JSONEq(t, `{"value":"next-value"}`, rec.Body.String())
 }
 
+func TestHandleOneTimeSecretDoesNotUseNetworkFilterControlSocketForParent(t *testing.T) {
+	t.Setenv("NETWORK_FILTER_CONTROL_SOCKET", filepath.Join(t.TempDir(), "control.sock"))
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"value":"next-value"}`))
+	}))
+	defer parent.Close()
+
+	s := New(9001, "")
+	s.activeSettings = &sessionsettings.SessionSettings{ParentRuntime: &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: parent.URL, SessionID: "public-session", Token: "runtime-token", Generation: 4,
+	}}
+	req := httptest.NewRequest(http.MethodGet, "/one-time-secrets/next", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+	s.handleOneTimeSecret(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, `{"value":"next-value"}`, rec.Body.String())
+}
+
 func TestHandleOneTimeSecretAcceptsUnixSocketCaller(t *testing.T) {
 	t.Setenv("NETWORK_FILTER_CONTROL_SOCKET", "")
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

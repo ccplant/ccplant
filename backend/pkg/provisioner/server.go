@@ -63,6 +63,7 @@ type Server struct {
 	socketPath      string
 	settingsFile    string // path to optional auto-provision settings file
 	httpClient      *http.Client
+	filterClient    *http.Client
 	filterURL       string
 	brokerURL       string
 	brokerKey       string
@@ -113,7 +114,7 @@ func NewWithHost(host string, port int, settingsFile string) *Server {
 	}
 	if socketPath := strings.TrimSpace(os.Getenv("NETWORK_FILTER_CONTROL_SOCKET")); socketPath != "" {
 		s.filterURL = "http://unix"
-		s.httpClient = unixSocketHTTPClient(socketPath)
+		s.filterClient = unixSocketHTTPClient(socketPath)
 	}
 	return s
 }
@@ -629,7 +630,7 @@ func (s *Server) handleSandboxPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.client().Do(req)
+	resp, err := s.networkFilterClient().Do(req)
 	if err != nil {
 		http.Error(w, "network filter not available", http.StatusServiceUnavailable)
 		return
@@ -646,6 +647,14 @@ func (s *Server) client() *http.Client {
 		return s.httpClient
 	}
 	return http.DefaultClient
+}
+
+func (s *Server) networkFilterClient() *http.Client {
+	if s.filterClient != nil {
+		return s.filterClient
+	}
+	// Keep manually constructed Servers in tests and integrations compatible.
+	return s.client()
 }
 
 func (s *Server) controlURL() string {
