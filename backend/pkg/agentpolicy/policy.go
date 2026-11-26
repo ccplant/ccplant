@@ -19,16 +19,23 @@ type Actions struct {
 	Delete bool `json:"delete,omitempty" yaml:"delete,omitempty"`
 }
 
-type Policy struct {
+type policyDocument struct {
 	Version   string             `json:"version" yaml:"version"`
 	Resources map[string]Actions `json:"resources" yaml:"resources"`
 }
 
-func Parse(data string) (*Policy, error) {
+// ValidatedPolicy is the only policy representation accepted by enforcement
+// code. Its contents are deliberately private so callers cannot construct a
+// policy without going through Parse (or the fail-closed DenyAll constructor).
+type ValidatedPolicy struct {
+	resources map[string]Actions
+}
+
+func Parse(data string) (*ValidatedPolicy, error) {
 	if strings.TrimSpace(data) == "" {
 		return nil, nil
 	}
-	var policy Policy
+	var policy policyDocument
 	decoder := yaml.NewDecoder(strings.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&policy); err != nil {
@@ -45,7 +52,13 @@ func Parse(data string) (*Policy, error) {
 			return nil, fmt.Errorf("invalid policy.yaml: invalid resource %q", resource)
 		}
 	}
-	return &policy, nil
+	return &ValidatedPolicy{resources: policy.Resources}, nil
+}
+
+// DenyAll returns a valid policy that grants no operation. It is intended for
+// fail-closed error paths at enforcement boundaries.
+func DenyAll() *ValidatedPolicy {
+	return &ValidatedPolicy{resources: map[string]Actions{}}
 }
 
 func validResource(value string) bool {
@@ -55,13 +68,13 @@ func validResource(value string) bool {
 	return !strings.HasPrefix(value, "-") && !strings.HasSuffix(value, "-")
 }
 
-func (p *Policy) Allows(resource, action string) bool {
+func (p *ValidatedPolicy) Allows(resource, action string) bool {
 	if p == nil {
 		return false
 	}
-	actions, ok := p.Resources[resource]
+	actions, ok := p.resources[resource]
 	if !ok {
-		actions, ok = p.Resources["*"]
+		actions, ok = p.resources["*"]
 	}
 	if !ok {
 		return false
