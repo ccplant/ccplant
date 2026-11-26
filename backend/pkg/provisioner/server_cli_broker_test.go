@@ -1,15 +1,73 @@
 package provisioner
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/agentpolicy"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+func TestCLIBrokerUnixSocketAcceptsUnauthenticatedCallerAndAuthenticatesUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer session-key" {
+			t.Errorf("upstream Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	socketPath := filepath.Join(t.TempDir(), "provisioner.sock")
+	server := NewWithSocket(socketPath, "")
+	server.ConfigureCLIBroker(upstream.URL, "session-1")
+	server.brokerKey = "session-key"
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Start(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("server shutdown: %v", err)
+		}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("provisioner socket was not created")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+	}}}
+	req, err := http.NewRequest(http.MethodPost, "http://unix/notifications/send", strings.NewReader(`{"title":"done","body":"ok"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Header.Get("Authorization") != "" {
+		t.Fatal("local request unexpectedly has authorization")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+}
 
 func TestCLIBrokerAuthenticatesAndScopesNotification(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -371,8 +371,11 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 	if !hasMount(main.VolumeMounts, "agent-local-sockets", filepath.Dir(provisionerSocketPath), "") {
 		t.Fatalf("agent mounts = %#v, want shared local sockets", main.VolumeMounts)
 	}
-	if hasMount(executor.VolumeMounts, "agent-local-sockets", filepath.Dir(provisionerSocketPath), "") {
-		t.Fatalf("executor mounts = %#v, must not expose provisioner sockets", executor.VolumeMounts)
+	if !hasMount(executor.VolumeMounts, "agent-local-sockets", filepath.Dir(agentSocketPath), "") {
+		t.Fatalf("executor mounts = %#v, want shared local agent socket", executor.VolumeMounts)
+	}
+	if !hasEnvValue(executor.Env, "AGENTAPI_LOCAL_SOCKET", agentSocketPath) {
+		t.Fatal("executor does not use the shared local agent socket")
 	}
 	prepareSockets := findContainerByName(deployment.Spec.Template.Spec.InitContainers, "prepare-agent-local-sockets")
 	if prepareSockets == nil {

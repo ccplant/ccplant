@@ -23,6 +23,12 @@ import (
 
 const defaultExecutorSocket = "/run/ccplant-executor/executor.sock"
 
+var executorManagedFilePaths = []string{
+	"/home/agentapi/.gitconfig",
+	"/home/agentapi/.local/bin/agentapi-github-credential",
+	"/home/agentapi/.local/bin/gh",
+}
+
 var ExecutorServerCmd = &cobra.Command{
 	Use:   "executor-server",
 	Short: "Run commands received over the session executor Unix socket",
@@ -211,7 +217,16 @@ func runExecutorClient(args []string) error {
 	if err != nil {
 		return err
 	}
-	request := executorproxy.Request{Args: append([]string{"bash"}, args...), Cwd: cwd, Env: filterExecutorEnvironment(os.Environ())}
+	files, err := readExecutorManagedFilesFromPaths(executorManagedFilePaths)
+	if err != nil {
+		return err
+	}
+	request := executorproxy.Request{
+		Args:  append([]string{"bash"}, args...),
+		Cwd:   cwd,
+		Env:   filterExecutorEnvironment(os.Environ()),
+		Files: files,
+	}
 	if err := executorproxy.WriteJSON(conn, request); err != nil {
 		return err
 	}
@@ -287,6 +302,13 @@ func filterExecutorEnvironment(env []string) []string {
 
 func executorEnvironmentIsSensitive(name string) bool {
 	upper := strings.ToUpper(name)
+	// The GitHub broker token is a short-lived, repository-scoped session lease,
+	// not the underlying GitHub credential. The executor needs the pair so the
+	// generated git/gh helpers can obtain credentials without exposing the
+	// agent container's direct tokens.
+	if upper == "AGENTAPI_GITHUB_BROKER_TOKEN" {
+		return false
+	}
 	for _, fragment := range []string{
 		"ACCESS_KEY", "API_KEY", "AUTH_TOKEN", "AUTHORIZATION", "BEARER", "COOKIE",
 		"CREDENTIAL", "OAUTH", "PASSWORD", "PRIVATE_KEY", "SECRET", "SESSION_TOKEN", "TOKEN",
@@ -306,6 +328,10 @@ func readExecutorManagedFiles(encodedPaths string) ([]executorproxy.ManagedFile,
 	if err := json.Unmarshal([]byte(encodedPaths), &paths); err != nil {
 		return nil, fmt.Errorf("decode executor managed file paths: %w", err)
 	}
+	return readExecutorManagedFilesFromPaths(paths)
+}
+
+func readExecutorManagedFilesFromPaths(paths []string) ([]executorproxy.ManagedFile, error) {
 	files := make([]executorproxy.ManagedFile, 0, len(paths))
 	for _, path := range paths {
 		info, err := os.Stat(path)
