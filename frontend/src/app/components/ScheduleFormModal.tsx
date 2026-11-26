@@ -58,7 +58,9 @@ export default function ScheduleFormModal({
       setOneshot(editingSchedule.session_config?.params?.oneshot === true)
       setReuseSession(editingSchedule.session_config?.reuse_session === true)
       setReuseMessage(editingSchedule.session_config?.reuse_message || '')
-      setEnvVarPairs(recordToKeyValuePairs(editingSchedule.session_config?.environment))
+      setEnvVarPairs(editingSchedule.session_config?.environment
+        ? recordToKeyValuePairs(editingSchedule.session_config.environment)
+        : editingSchedule.session_config?.environment_keys?.map(key => ({ key, value: '' })) ?? [{ key: '', value: '' }])
 
       if (editingSchedule.cron_expr) {
         setExecutionType('recurring')

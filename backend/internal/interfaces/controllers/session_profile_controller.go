@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -111,33 +112,49 @@ type SessionProfileResponse struct {
 
 // SessionProfileConfigResponse represents session profile config in responses
 type SessionProfileConfigResponse struct {
-	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
-	CodexConnection        *modelprovider.Connection    `json:"codex_connection,omitempty"`
-	ClaudeConnection       *modelprovider.Connection    `json:"claude_connection,omitempty"`
-	PiConnection           *modelprovider.Connection    `json:"pi_connection,omitempty"`
-	Environment            map[string]string            `json:"environment,omitempty"`
-	Tags                   map[string]string            `json:"tags,omitempty"`
-	Pool                   string                       `json:"pool,omitempty"`
-	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
-	CommandWrapperTemplate string                       `json:"command_wrapper_template,omitempty"`
-	SystemPrompt           string                       `json:"system_prompt,omitempty"`
-	SystemPromptMode       string                       `json:"system_prompt_mode,omitempty"`
-	Params                 *entities.SessionParams      `json:"params,omitempty"`
-	ReuseSession           bool                         `json:"reuse_session,omitempty"`
-	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
-	SessionTTL             string                       `json:"session_ttl,omitempty"`
-	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
-	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
-	SecretIDs              []string                     `json:"secret_ids,omitempty"`
-	GitHubRepositories     []string                     `json:"github_repositories,omitempty"`
-	Skills                 []string                     `json:"skills,omitempty"`
-	PiPackages             []string                     `json:"pi_packages,omitempty"`
-	Files                  []entities.ProfileFile       `json:"files,omitempty"`
-	Repositories           []entities.ProfileRepository `json:"repositories,omitempty"`
-	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
-	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
-	PolicyYAML             string                       `json:"policy_yaml,omitempty"`
+	SettingsTeamID         string                               `json:"settings_team_id,omitempty"`
+	CodexConnection        *modelprovider.Connection            `json:"codex_connection,omitempty"`
+	ClaudeConnection       *modelprovider.Connection            `json:"claude_connection,omitempty"`
+	PiConnection           *modelprovider.Connection            `json:"pi_connection,omitempty"`
+	EnvironmentKeys        []string                             `json:"environment_keys,omitempty"`
+	Tags                   map[string]string                    `json:"tags,omitempty"`
+	Pool                   string                               `json:"pool,omitempty"`
+	InitialMessageTemplate string                               `json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                               `json:"reuse_message_template,omitempty"`
+	CommandWrapperTemplate string                               `json:"command_wrapper_template,omitempty"`
+	SystemPrompt           string                               `json:"system_prompt,omitempty"`
+	SystemPromptMode       string                               `json:"system_prompt_mode,omitempty"`
+	Params                 *entities.SessionParams              `json:"params,omitempty"`
+	ReuseSession           bool                                 `json:"reuse_session,omitempty"`
+	SandboxPolicyID        string                               `json:"sandbox_policy_id,omitempty"`
+	SessionTTL             string                               `json:"session_ttl,omitempty"`
+	UnsyncedFilePaths      []string                             `json:"unsynced_file_paths,omitempty"`
+	SourceSessionProfileID string                               `json:"source_session_profile_id,omitempty"`
+	SecretIDs              []string                             `json:"secret_ids,omitempty"`
+	GitHubRepositories     []string                             `json:"github_repositories,omitempty"`
+	Skills                 []string                             `json:"skills,omitempty"`
+	PiPackages             []string                             `json:"pi_packages,omitempty"`
+	Files                  []ProfileFileResponse                `json:"files,omitempty"`
+	Repositories           []entities.ProfileRepository         `json:"repositories,omitempty"`
+	MCPServers             map[string]*ProfileMCPServerResponse `json:"mcp_servers,omitempty"`
+	SessionState           *entities.SessionStateConfig         `json:"session_state,omitempty"`
+	PolicyYAML             string                               `json:"policy_yaml,omitempty"`
+}
+
+type ProfileFileResponse struct {
+	Name        string `json:"name,omitempty"`
+	Path        string `json:"path"`
+	Permissions string `json:"permissions,omitempty"`
+	HasContent  bool   `json:"has_content"`
+}
+
+type ProfileMCPServerResponse struct {
+	Type       string   `json:"type"`
+	URL        string   `json:"url,omitempty"`
+	Command    string   `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	EnvKeys    []string `json:"env_keys,omitempty"`
+	HeaderKeys []string `json:"header_keys,omitempty"`
 }
 
 // PreviewSessionProfileRequest is the request body for POST /session-profiles/preview
@@ -496,6 +513,49 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 	}
 	if req.Config != nil {
 		config := c.requestToConfig(*req.Config)
+		previous := profile.Config()
+		if req.Config.Environment == nil {
+			config.SetEnvironment(previous.Environment())
+		} else {
+			config.SetEnvironment(mergeProfileSecretMap(previous.Environment(), req.Config.Environment))
+		}
+		if req.Config.Files == nil {
+			config.SetProfileFiles(previous.ProfileFiles())
+		} else {
+			previousFiles := make(map[string]entities.ProfileFile)
+			for _, file := range previous.ProfileFiles() {
+				previousFiles[file.Path] = file
+			}
+			files := config.ProfileFiles()
+			for i := range files {
+				if files[i].Content == "" {
+					if old, ok := previousFiles[files[i].Path]; ok {
+						files[i].Content = old.Content
+					}
+				}
+			}
+			config.SetProfileFiles(files)
+		}
+		if req.Config.MCPServers == nil {
+			config.SetMCPServers(previous.MCPServers())
+		} else if previous.MCPServers() != nil && config.MCPServers() != nil {
+			for name, requested := range req.Config.MCPServers {
+				if requested == nil {
+					continue
+				}
+				old, ok := previous.MCPServers().Servers()[name]
+				current, currentOK := config.MCPServers().Servers()[name]
+				if !ok || !currentOK {
+					continue
+				}
+				if requested.Env == nil {
+					current.SetEnv(old.Env())
+				}
+				if requested.Headers == nil {
+					current.SetHeaders(old.Headers())
+				}
+			}
+		}
 		if err := c.validateSourceSessionProfile(ctx.Request().Context(), profile, config); err != nil {
 			return err
 		}
@@ -775,11 +835,15 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 
 func (c *SessionProfileController) toResponse(p *entities.SessionProfile) SessionProfileResponse {
 	cfg := p.Config()
-	mcpServers := make(map[string]*MCPServerRequest)
+	mcpServers := make(map[string]*ProfileMCPServerResponse)
 	if cfg.MCPServers() != nil {
 		for name, server := range cfg.MCPServers().Servers() {
-			mcpServers[name] = &MCPServerRequest{Type: server.Type(), URL: server.URL(), Command: server.Command(), Args: server.Args(), Env: server.Env(), Headers: server.Headers()}
+			mcpServers[name] = &ProfileMCPServerResponse{Type: server.Type(), URL: server.URL(), Command: server.Command(), Args: server.Args(), EnvKeys: profileSortedMapKeys(server.Env()), HeaderKeys: profileSortedMapKeys(server.Headers())}
 		}
+	}
+	files := make([]ProfileFileResponse, 0, len(cfg.ProfileFiles()))
+	for _, file := range cfg.ProfileFiles() {
+		files = append(files, ProfileFileResponse{Name: file.Name, Path: file.Path, Permissions: file.Permissions, HasContent: file.Content != ""})
 	}
 	return SessionProfileResponse{
 		ID:                   p.ID(),
@@ -795,7 +859,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			CodexConnection:        cfg.CodexConnection(),
 			ClaudeConnection:       cfg.ClaudeConnection(),
 			PiConnection:           cfg.PiConnection(),
-			Environment:            cfg.Environment(),
+			EnvironmentKeys:        profileSortedMapKeys(cfg.Environment()),
 			Tags:                   cfg.Tags(),
 			Pool:                   cfg.Pool(),
 			SettingsTeamID:         cfg.SettingsTeamID(),
@@ -814,7 +878,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			GitHubRepositories:     cfg.GitHubRepositories(),
 			Skills:                 cfg.Skills(),
 			PiPackages:             cfg.PiPackages(),
-			Files:                  cfg.ProfileFiles(),
+			Files:                  files,
 			Repositories:           cfg.ProfileRepositories(),
 			MCPServers:             mcpServers,
 			SessionState:           cfg.SessionState(),
@@ -823,6 +887,26 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt: p.UpdatedAt().Format(time.RFC3339),
 	}
+}
+
+func profileSortedMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func mergeProfileSecretMap(existing, provided map[string]string) map[string]string {
+	merged := make(map[string]string, len(existing)+len(provided))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range provided {
+		merged[key] = value
+	}
+	return merged
 }
 
 func validateProfileSettingsTeam(user *entities.User, profile *entities.SessionProfile, cfg entities.SessionProfileConfig) error {

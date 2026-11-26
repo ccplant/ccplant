@@ -46,7 +46,7 @@ type FileResponse struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Path        string `json:"path"`
-	Content     string `json:"content"`
+	HasContent  bool   `json:"has_content"`
 	Permissions string `json:"permissions"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
@@ -211,7 +211,7 @@ func toFileResponse(f *entities.UserFile) FileResponse {
 		ID:          f.ID(),
 		Name:        f.Name(),
 		Path:        f.Path(),
-		Content:     f.Content(),
+		HasContent:  f.Content() != "",
 		Permissions: f.Permissions(),
 		CreatedAt:   f.CreatedAt().Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:   f.UpdatedAt().Format("2006-01-02T15:04:05Z07:00"),

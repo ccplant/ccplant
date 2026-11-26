@@ -49,7 +49,7 @@ export default function KeyValueInput({ pairs, onChange, disabled = false, helpT
 export function keyValuePairsToRecord(pairs: KeyValuePair[]): Record<string, string> | undefined {
   const record: Record<string, string> = {}
   pairs.forEach(({ key, value }) => {
-    if (key.trim()) record[key.trim()] = value
+    if (key.trim() && value) record[key.trim()] = value
   })
   return Object.keys(record).length > 0 ? record : undefined
 }

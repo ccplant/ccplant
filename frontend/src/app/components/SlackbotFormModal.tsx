@@ -81,8 +81,10 @@ export default function SlackbotFormModal({
       setInitialMessageTemplate(sc?.initial_message_template ?? '{{ .event.text }}')
       setReuseMessageTemplate(sc?.reuse_message_template ?? '{{ .event.text }}')
 
-      if (sc?.environment && Object.keys(sc.environment).length > 0) {
-        setEnvPairs(Object.entries(sc.environment).map(([key, value]) => ({ key, value })))
+      if ((sc?.environment && Object.keys(sc.environment).length > 0) || sc?.environment_keys?.length) {
+        setEnvPairs(sc.environment
+          ? Object.entries(sc.environment).map(([key, value]) => ({ key, value }))
+          : (sc.environment_keys ?? []).map(key => ({ key, value: '' })))
         setShowAdvanced(true)
       } else {
         setEnvPairs([{ key: '', value: '' }])
@@ -235,7 +237,7 @@ export default function SlackbotFormModal({
   const pairsToRecord = (pairs: KeyValuePair[]): Record<string, string> => {
     const record: Record<string, string> = {}
     pairs.forEach(({ key, value }) => {
-      if (key.trim()) record[key.trim()] = value
+      if (key.trim() && value) record[key.trim()] = value
     })
     return record
   }

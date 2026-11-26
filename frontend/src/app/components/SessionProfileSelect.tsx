@@ -141,9 +141,9 @@ export default function SessionProfileSelect({
               {selected.config.params.agent_type}
             </span>
           )}
-          {selected.config?.environment && Object.keys(selected.config.environment).length > 0 && (
+          {((selected.config?.environment_keys?.length ?? 0) > 0 || (selected.config?.environment && Object.keys(selected.config.environment).length > 0)) && (
             <span className="text-[10px] text-gray-500 dark:text-gray-400">
-              ENV×{Object.keys(selected.config.environment).length}
+              ENV×{selected.config?.environment_keys?.length ?? Object.keys(selected.config?.environment ?? {}).length}
             </span>
           )}
           {selected.description && (

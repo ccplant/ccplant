@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -109,22 +110,31 @@ type UpdateScheduleRequest struct {
 
 // ScheduleResponse represents the response for a schedule
 type ScheduleResponse struct {
-	ID               string                 `json:"id"`
-	Name             string                 `json:"name"`
-	UserID           string                 `json:"user_id"`
-	Scope            entities.ResourceScope `json:"scope,omitempty"`
-	TeamID           string                 `json:"team_id,omitempty"`
-	Status           ScheduleStatus         `json:"status"`
-	ScheduledAt      *time.Time             `json:"scheduled_at,omitempty"`
-	CronExpr         string                 `json:"cron_expr,omitempty"`
-	Timezone         string                 `json:"timezone,omitempty"`
-	SessionConfig    SessionConfig          `json:"session_config"`
-	NextExecutionAt  *time.Time             `json:"next_execution_at,omitempty"`
-	ExecutionCount   int                    `json:"execution_count"`
-	LastExecution    *ExecutionRecord       `json:"last_execution,omitempty"`
-	ExecutionHistory []ExecutionRecord      `json:"execution_history,omitempty"`
-	CreatedAt        time.Time              `json:"created_at"`
-	UpdatedAt        time.Time              `json:"updated_at"`
+	ID               string                        `json:"id"`
+	Name             string                        `json:"name"`
+	UserID           string                        `json:"user_id"`
+	Scope            entities.ResourceScope        `json:"scope,omitempty"`
+	TeamID           string                        `json:"team_id,omitempty"`
+	Status           ScheduleStatus                `json:"status"`
+	ScheduledAt      *time.Time                    `json:"scheduled_at,omitempty"`
+	CronExpr         string                        `json:"cron_expr,omitempty"`
+	Timezone         string                        `json:"timezone,omitempty"`
+	SessionConfig    ScheduleSessionConfigResponse `json:"session_config"`
+	NextExecutionAt  *time.Time                    `json:"next_execution_at,omitempty"`
+	ExecutionCount   int                           `json:"execution_count"`
+	LastExecution    *ExecutionRecord              `json:"last_execution,omitempty"`
+	ExecutionHistory []ExecutionRecord             `json:"execution_history,omitempty"`
+	CreatedAt        time.Time                     `json:"created_at"`
+	UpdatedAt        time.Time                     `json:"updated_at"`
+}
+
+type ScheduleSessionConfigResponse struct {
+	EnvironmentKeys  []string                `json:"environment_keys,omitempty"`
+	Tags             map[string]string       `json:"tags,omitempty"`
+	Params           *entities.SessionParams `json:"params,omitempty"`
+	ReuseSession     bool                    `json:"reuse_session,omitempty"`
+	ReuseMessage     string                  `json:"reuse_message,omitempty"`
+	SessionProfileID string                  `json:"session_profile_id,omitempty"`
 }
 
 // CreateSchedule handles POST /schedules
@@ -425,6 +435,11 @@ func (h *Handlers) UpdateSchedule(c echo.Context) error {
 		schedule.Timezone = *req.Timezone
 	}
 	if req.SessionConfig != nil {
+		if req.SessionConfig.Environment == nil {
+			req.SessionConfig.Environment = schedule.SessionConfig.Environment
+		} else {
+			req.SessionConfig.Environment = mergeScheduleSecretMap(schedule.SessionConfig.Environment, req.SessionConfig.Environment)
+		}
 		schedule.SessionConfig = *req.SessionConfig
 	}
 
@@ -453,6 +468,17 @@ func (h *Handlers) UpdateSchedule(c echo.Context) error {
 	log.Printf("Updated schedule %s", id)
 
 	return c.JSON(http.StatusOK, h.toResponse(schedule))
+}
+
+func mergeScheduleSecretMap(existing, provided map[string]string) map[string]string {
+	merged := make(map[string]string, len(existing)+len(provided))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range provided {
+		merged[key] = value
+	}
+	return merged
 }
 
 // DeleteSchedule handles DELETE /schedules/:id
@@ -641,7 +667,7 @@ func (h *Handlers) toResponse(s *Schedule) ScheduleResponse {
 		ScheduledAt:      s.ScheduledAt,
 		CronExpr:         s.CronExpr,
 		Timezone:         s.Timezone,
-		SessionConfig:    s.SessionConfig,
+		SessionConfig:    scheduleSessionConfigResponse(s.SessionConfig),
 		NextExecutionAt:  s.NextExecutionAt,
 		ExecutionCount:   s.ExecutionCount,
 		LastExecution:    s.LastExecution,
@@ -649,6 +675,33 @@ func (h *Handlers) toResponse(s *Schedule) ScheduleResponse {
 		CreatedAt:        s.CreatedAt,
 		UpdatedAt:        s.UpdatedAt,
 	}
+}
+
+func scheduleSessionConfigResponse(config SessionConfig) ScheduleSessionConfigResponse {
+	keys := make([]string, 0, len(config.Environment))
+	for key := range config.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	params := cloneRedactedSessionParams(config.Params)
+	return ScheduleSessionConfigResponse{EnvironmentKeys: keys, Tags: config.Tags, Params: params, ReuseSession: config.ReuseSession, ReuseMessage: config.ReuseMessage, SessionProfileID: config.SessionProfileID}
+}
+
+func cloneRedactedSessionParams(params *entities.SessionParams) *entities.SessionParams {
+	if params == nil {
+		return nil
+	}
+	copy := *params
+	copy.GithubToken = ""
+	if params.Docker != nil {
+		dockerCopy := *params.Docker
+		dockerCopy.Registries = append([]entities.DockerRegistry(nil), params.Docker.Registries...)
+		for i := range dockerCopy.Registries {
+			dockerCopy.Registries[i].Password = ""
+		}
+		copy.Docker = &dockerCopy
+	}
+	return &copy
 }
 
 // userCanAccessSchedule checks if the current user can access the schedule

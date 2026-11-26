@@ -241,9 +241,12 @@ export default function SessionProfileEditor({
       setGitHubRepositories((cfg?.github_repositories ?? []).join('\n'))
       setConnectionId(cfg?.params?.connection_id ?? '')
 
-      if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
-        const generalEnvironment = Object.entries(cfg.environment)
-          .filter(([key]) => key !== 'CODEX_MODEL' && key !== 'ANTHROPIC_MODEL')
+      if ((cfg?.environment && Object.keys(cfg.environment).length > 0) || cfg?.environment_keys?.length) {
+        const generalEnvironment = cfg.environment
+          ? Object.entries(cfg.environment).filter(([key]) => key !== 'CODEX_MODEL' && key !== 'ANTHROPIC_MODEL')
+          : (cfg.environment_keys ?? [])
+            .filter(key => key !== 'CODEX_MODEL' && key !== 'ANTHROPIC_MODEL')
+            .map(key => [key, ''] as [string, string])
         setEnvPairs(generalEnvironment.length > 0
           ? generalEnvironment.map(([key, value]) => ({ key, value }))
           : [{ key: '', value: '' }])
@@ -395,7 +398,7 @@ export default function SessionProfileEditor({
   const pairsToRecord = (pairs: KeyValuePair[]): Record<string, string> => {
     const record: Record<string, string> = {}
     pairs.forEach(({ key, value }) => {
-      if (key.trim()) record[key.trim()] = value
+      if (key.trim() && value) record[key.trim()] = value
     })
     return record
   }
@@ -467,7 +470,11 @@ export default function SessionProfileEditor({
         .map(path => path.trim())
         .filter(Boolean)
       const parsedProfileFiles = profileFiles
-        .map(file => ({ ...file, path: file.path.trim(), permissions: file.permissions?.trim() }))
+        .map(file => {
+          const parsed = { ...file, path: file.path.trim(), permissions: file.permissions?.trim() }
+          delete parsed.has_content
+          return parsed
+        })
         .filter(file => file.path)
 	  const parsedProfileRepositories = profileRepositories
 	    .map(repository => ({ repository: repository.repository.trim(), path: repository.path.trim(), branch: repository.branch?.trim() }))
@@ -925,7 +932,7 @@ export default function SessionProfileEditor({
                               type="text"
                               value={pair.value}
                               onChange={(e) => updatePair(envPairs, setEnvPairs, idx, 'value', e.target.value)}
-                              placeholder="value"
+                              placeholder={editingProfile?.config?.environment_keys?.includes(pair.key) ? '保存済み（空欄なら保持）' : 'value'}
                               className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                             <button
@@ -1106,8 +1113,10 @@ export default function SessionProfileEditor({
                               value={file.content || ''}
                               onChange={e => updateProfileFile(idx, 'content', e.target.value)}
                               rows={4}
+                              placeholder={file.has_content ? '保存済み（空欄なら保持）' : undefined}
                               className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono resize-y focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
+                            {file.has_content && !file.content && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">内容は再表示されません。変更する場合だけ入力してください。</p>}
                           </div>
                           <div>
                             <label htmlFor={`profile-file-${idx}-permissions`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">パーミッション</label>

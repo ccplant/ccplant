@@ -83,13 +83,13 @@ func (c *ShareController) CreateShare(ctx echo.Context) error {
 	// Check if share already exists
 	existingShare, err := c.shareRepo.FindBySessionID(sessionID)
 	if err == nil && existingShare != nil {
-		// Return existing share
+		// A share token is a bearer credential. Return it only at creation time;
+		// an existing credential must never be recoverable through a read path.
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
-			"token":      existingShare.Token(),
 			"session_id": existingShare.SessionID(),
-			"share_url":  fmt.Sprintf("/s/%s/", existingShare.Token()),
 			"created_at": existingShare.CreatedAt(),
 			"expires_at": existingShare.ExpiresAt(),
+			"has_share":  true,
 		})
 	}
 
@@ -140,13 +140,12 @@ func (c *ShareController) GetShare(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
-		"token":      share.Token(),
 		"session_id": share.SessionID(),
-		"share_url":  fmt.Sprintf("/s/%s/", share.Token()),
 		"created_by": share.CreatedBy(),
 		"created_at": share.CreatedAt(),
 		"expires_at": share.ExpiresAt(),
 		"is_expired": share.IsExpired(),
+		"has_share":  true,
 	})
 }
 

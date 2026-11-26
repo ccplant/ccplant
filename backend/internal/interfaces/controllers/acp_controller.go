@@ -672,10 +672,9 @@ func (c *ACPController) proxyToOutboundBridge(ctx echo.Context, route *portrepos
 // Streams live session/update notifications from the per-session bridge until
 // the client disconnects. History is NOT replayed here; clients fetch it separately.
 func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
-	log.Printf("[ACP] HandleSessionSSE: called (method=%s, origin=%s, headers=%v)",
+	log.Printf("[ACP] HandleSessionSSE: called (method=%s, origin=%s)",
 		ctx.Request().Method,
 		ctx.Request().Header.Get("Origin"),
-		ctx.Request().Header,
 	)
 	sessionId := ctx.Request().Header.Get("Acp-Session-Id")
 	if sessionId == "" {

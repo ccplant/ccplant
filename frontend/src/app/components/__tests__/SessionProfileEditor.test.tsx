@@ -294,6 +294,19 @@ it('loads agent-specific models and keeps them out of the general environment ed
   expect(screen.queryByDisplayValue('ANTHROPIC_MODEL')).not.toBeInTheDocument()
 })
 
+it('shows write-only environment keys without sending blank replacement values', async () => {
+  render(<SessionProfileEditor section="environment" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{
+    id: 'profile', name: 'Environment', created_at: '', updated_at: '',
+    config: { environment_keys: ['TOKEN', 'CODEX_MODEL'] },
+  }} />)
+  expect(screen.getByDisplayValue('TOKEN')).toBeInTheDocument()
+  expect(screen.queryByDisplayValue('CODEX_MODEL')).not.toBeInTheDocument()
+  expect(screen.getByPlaceholderText('保存済み（空欄なら保持）')).toHaveValue('')
+  fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+  expect(mocks.update.mock.calls[0][1].config).not.toHaveProperty('environment')
+})
+
 it('does not prefill agent-specific fields from the legacy shared model', () => {
   render(<SessionProfileEditor section="models" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Legacy', created_at: '', updated_at: '', config: { params: { model: 'legacy-model' } } }} />)
   const target = screen.getByLabelText('デフォルトモデルの認証方式')
@@ -323,6 +336,20 @@ it('saves profile files registered in the files section', async () => {
     { name: 'Existing', path: '/home/agentapi/keep.txt', content: 'keep', permissions: undefined },
     { name: 'SSH key', path: '/home/agentapi/.ssh/id_ed25519', content: 'private-key', permissions: '0600' },
   ])
+})
+
+it('shows stored profile file content as write-only and omits it when unchanged', async () => {
+  render(<SessionProfileEditor section="files" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{
+    id: 'profile', name: 'Files', created_at: '', updated_at: '',
+    config: { files: [{ name: 'SSH key', path: '/home/agentapi/.ssh/id_ed25519', has_content: true, permissions: '0600' }] },
+  }} />)
+  expect(screen.getByPlaceholderText('保存済み（空欄なら保持）')).toHaveValue('')
+  expect(screen.getByText('内容は再表示されません。変更する場合だけ入力してください。')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+  expect(mocks.update.mock.calls[0][1].config.files).toEqual([{
+    name: 'SSH key', path: '/home/agentapi/.ssh/id_ed25519', permissions: '0600',
+  }])
 })
 
 it('saves repositories preloaded before agent startup', async () => {

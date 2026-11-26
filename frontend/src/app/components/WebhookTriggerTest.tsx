@@ -282,12 +282,12 @@ export default function WebhookTriggerTest({ webhook }: WebhookTriggerTestProps)
                     </div>
                   )}
 
-                  {result.environment && Object.keys(result.environment).length > 0 && (
+                  {result.environment_keys && result.environment_keys.length > 0 && (
                     <div>
                       <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Environment:</p>
-                      <pre className="mt-1 text-sm text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 p-2 rounded overflow-x-auto">
-                        {JSON.stringify(result.environment, null, 2)}
-                      </pre>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Values are write-only. Configured keys: {result.environment_keys.join(', ')}
+                      </p>
                     </div>
                   )}
                 </div>
