@@ -400,7 +400,7 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		return
 	}
 	targetBase := w.agentURL
-	if command.Path == "/herdr/rpc" {
+	if command.Path == "/herdr/rpc" || command.Path == "/herdr/events" {
 		targetBase = w.provisionerURL
 	}
 	target := targetBase + command.Path

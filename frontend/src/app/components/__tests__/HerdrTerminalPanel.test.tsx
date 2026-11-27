@@ -8,6 +8,10 @@ function createClient(terminals: Array<{ address: string; name: string; state: s
   return {
     listHerdrTerminals: vi.fn().mockResolvedValue(terminals),
     readHerdrTerminal: vi.fn().mockResolvedValue('agent output'),
+    subscribeToHerdrEvents: vi.fn((_sessionId: string, onEvent: () => void) => {
+      onEvent()
+      return { close: vi.fn() }
+    }),
   } as unknown as AgentAPIProxyClient
 }
 

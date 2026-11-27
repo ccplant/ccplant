@@ -41,12 +41,12 @@ export default function HerdrTerminalPanel({ client, sessionId, selectedTerminal
     }
   }, [client, selectedTerminal, sessionId]);
 
-  useEffect(() => { void refreshTerminals(); }, [refreshTerminals]);
-  useEffect(() => { void refreshOutput(); }, [refreshOutput, refreshToken]);
   useEffect(() => {
-    const timer = window.setInterval(() => { void refreshTerminals(); void refreshOutput(); }, 3000);
-    return () => window.clearInterval(timer);
-  }, [refreshOutput, refreshTerminals]);
+    const refresh = () => { void refreshTerminals(); void refreshOutput(); };
+    const subscription = client.subscribeToHerdrEvents(sessionId, refresh);
+    return () => subscription.close();
+  }, [client, refreshOutput, refreshTerminals, sessionId]);
+  useEffect(() => { void refreshOutput(); }, [refreshOutput, refreshToken]);
 
   if (terminals.length === 0) return null;
 

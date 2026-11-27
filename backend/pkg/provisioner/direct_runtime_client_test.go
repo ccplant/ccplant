@@ -376,6 +376,52 @@ func TestDirectRuntimeRoutesHerdrRPCToProvisioner(t *testing.T) {
 	}
 }
 
+func TestDirectRuntimeRoutesHerdrEventsToProvisionerAsStream(t *testing.T) {
+	var provisionerCalls, agentCalls int
+	provisioner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provisionerCalls++
+		if r.URL.Path != "/herdr/events" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"seq\":1,\"terminals\":[]}\n\n"))
+	}))
+	defer provisioner.Close()
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agentCalls++
+		http.NotFound(w, r)
+	}))
+	defer agent.Close()
+	var frames []core.ResponseFrame
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Frames []core.ResponseFrame `json:"frames"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		frames = append(frames, body.Frames...)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer parent.Close()
+
+	worker := &directRuntimeWorker{
+		cfg:    &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "public", Token: "secret", Generation: 1},
+		client: parent.Client(), agentURL: agent.URL, provisionerURL: provisioner.URL,
+	}
+	worker.executeRequest(context.Background(), core.Command{
+		ID: "herdr-events-1", StreamID: "1-0", Method: http.MethodGet, Path: "/herdr/events",
+		Headers: map[string][]string{"Accept": {"text/event-stream"}},
+	})
+
+	if provisionerCalls != 1 || agentCalls != 0 {
+		t.Fatalf("provisioner calls=%d agent calls=%d", provisionerCalls, agentCalls)
+	}
+	if len(frames) < 3 || frames[0].Status != http.StatusOK || string(frames[1].Body) != "data: {\"seq\":1,\"terminals\":[]}\n\n" || !frames[len(frames)-1].Done {
+		t.Fatalf("frames = %#v", frames)
+	}
+}
+
 func TestDirectRuntimeInterruptPromptCancelsBeforePrompt(t *testing.T) {
 	var methods []string
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,35 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentAPIProxyClient, AgentAPIProxyError } from '../agentapi-proxy-client';
 
 describe('AgentAPIProxyClient herdr-core transport', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('subscribes to terminal changes through the session-scoped event stream', () => {
+    class FakeEventSource {
+      static instance: FakeEventSource;
+      static readonly OPEN = 1;
+      readyState = FakeEventSource.OPEN;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      addEventListener = vi.fn();
+      close = vi.fn();
+      constructor(readonly url: string) { FakeEventSource.instance = this; }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const onEvent = vi.fn();
+    const client = new AgentAPIProxyClient({ baseURL: '/api/v1' });
+
+    const subscription = client.subscribeToHerdrEvents('session-a', onEvent);
+    expect(FakeEventSource.instance.url).toBe('/api/v1/session-a/herdr/events');
+    FakeEventSource.instance.onmessage?.(new MessageEvent('message', { data: '{"seq":1}' }));
+    expect(onEvent).toHaveBeenCalledOnce();
+
+    subscription.close();
+    expect(FakeEventSource.instance.close).toHaveBeenCalledOnce();
+  });
 
   it('lists terminals through the session-scoped JSON-RPC bridge', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
