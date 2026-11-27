@@ -28,6 +28,8 @@ func TestHerdrEventStream(t *testing.T) {
 	pool := envOrDefault("E2E_PARAM_POOL", "fly-dev")
 	agentType := envOrDefault("E2E_PARAM_AGENT_TYPE", "codex-acp")
 	marker := "herdr-stream-" + apitest.UniqueName()
+	prompt := "Use the shell to run exactly `hc run --bg --name " + marker + " sleep 120`. " +
+		"After the command succeeds, reply with exactly HERDR_STREAM_E2E_OK."
 	c := client(t)
 
 	var created struct {
@@ -40,6 +42,7 @@ func TestHerdrEventStream(t *testing.T) {
 			"pool":        pool,
 			"agent_type":  agentType,
 			"session_ttl": "10m",
+			"message":     prompt,
 		},
 	}, &created, http.StatusOK, http.StatusCreated, http.StatusAccepted)
 	if created.SessionID == "" {
@@ -63,44 +66,8 @@ func TestHerdrEventStream(t *testing.T) {
 	}
 	defer stream.Body.Close()
 
-	prompt := "Use the shell to run exactly `hc run --bg --name " + marker + " sleep 120`. " +
-		"After the command succeeds, reply with exactly HERDR_STREAM_E2E_OK."
-	waitForACPPromptReady(t, c, created.SessionID, prompt)
-
 	if err := waitForHerdrTerminal(stream, marker); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func waitForACPPromptReady(t *testing.T, c *apitest.Client, sessionID, prompt string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancel()
-	request := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "session/prompt",
-		"params": map[string]any{
-			"sessionId": sessionID,
-			"prompt": []map[string]string{{
-				"type": "text",
-				"text": prompt,
-			}},
-		},
-	}
-	for {
-		var response struct {
-			Error json.RawMessage `json:"error"`
-		}
-		err := c.Do(ctx, http.MethodPost, "/acp", request, &response, http.StatusOK)
-		if err == nil && len(response.Error) == 0 {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("ACP prompt endpoint did not become ready: %v", err)
-		case <-time.After(2 * time.Second):
-		}
 	}
 }
 

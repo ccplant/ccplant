@@ -361,45 +361,55 @@ func (s *Server) handleHerdrEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.CommandContext(r.Context(), "hc", "events", "--json")
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		http.Error(w, "herdr-core is unavailable", http.StatusBadGateway)
-		return
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &limitedWriter{writer: &stderr, remaining: 64 << 10}
-	if err := cmd.Start(); err != nil {
-		http.Error(w, "herdr-core is unavailable", http.StatusBadGateway)
-		return
-	}
-	defer func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		_ = cmd.Wait()
-	}()
-
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64*1024), 8<<20)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if !json.Valid(line) {
-			continue
+	for r.Context().Err() == nil {
+		cmd := exec.CommandContext(r.Context(), "hc", "events", "--json")
+		stdout, err := cmd.StdoutPipe()
+		if err == nil {
+			var stderr bytes.Buffer
+			cmd.Stderr = &limitedWriter{writer: &stderr, remaining: 64 << 10}
+			err = cmd.Start()
+			if err == nil {
+				scanner := bufio.NewScanner(stdout)
+				scanner.Buffer(make([]byte, 64*1024), 8<<20)
+				for scanner.Scan() {
+					line := scanner.Bytes()
+					if !json.Valid(line) {
+						continue
+					}
+					if _, err := fmt.Fprintf(w, "data: %s\n\n", line); err != nil {
+						_ = cmd.Process.Kill()
+						_ = cmd.Wait()
+						return
+					}
+					flusher.Flush()
+				}
+				if scanErr := scanner.Err(); scanErr != nil && r.Context().Err() == nil {
+					log.Printf("[PROVISIONER] herdr-core event stream failed: %v", scanErr)
+				}
+				_ = cmd.Wait()
+			}
 		}
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", line); err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		// hc can exit while herdr-core is still starting or briefly reconnecting.
+		// Keep the HTTP stream alive and retry instead of turning that transient
+		// state into an EOF for every browser subscriber.
+		if _, err := io.WriteString(w, ": reconnecting\n\n"); err != nil {
 			return
 		}
 		flusher.Flush()
-	}
-	if err := scanner.Err(); err != nil && r.Context().Err() == nil {
-		log.Printf("[PROVISIONER] herdr-core event stream failed: %v", err)
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(time.Second):
+		}
 	}
 }
 
