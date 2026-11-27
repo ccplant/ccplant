@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -225,6 +226,23 @@ func TestSessionManagerHelmUpgradeArgsForceServerSideApplyConflicts(t *testing.T
 		"--wait",
 		"--version", "v1.2.3",
 	}, args)
+}
+
+func TestSessionManagerHelmUpgradeArgsUsesCLIVersionByDefault(t *testing.T) {
+	previous := buildinfo.Version
+	buildinfo.Version = "v1.4.2"
+	t.Cleanup(func() { buildinfo.Version = previous })
+
+	opts := sessionManagerInstallOptions{
+		release:   "manager",
+		chart:     "oci://example.com/session-manager",
+		namespace: "sessions",
+		timeout:   "10m",
+	}
+
+	args := sessionManagerHelmUpgradeArgs(opts, "/tmp/values.yaml", false)
+
+	require.Equal(t, []string{"--version", "v1.4.2"}, args[len(args)-2:])
 }
 
 func sessionManagerDeploymentForLeaseMigrationTest(env []corev1.EnvVar) *appsv1.Deployment {
