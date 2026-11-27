@@ -3600,6 +3600,7 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 	}
 
 	log.Printf("[K8S_SESSION] Deleting session %s", id)
+	session.SetStatus(entities.SessionStatusTerminating)
 
 	// Invoke registered handlers BEFORE cancelling the context or removing Kubernetes resources.
 	// At this point the session's Service endpoint is still reachable (e.g. for GetMessages).
@@ -3628,6 +3629,11 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 	if err := m.deleteSessionResources(ctx, session); err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to delete session resources: %v", err)
 	}
+
+	// Publish the successful terminal state before removing the session and its
+	// Redis status. SSE consumers can then distinguish deletion from an agent
+	// endpoint failure while the list entry is being removed.
+	session.SetStatus(entities.SessionStatusTerminated)
 
 	// Remove session from map
 	m.cleanupSession(id)

@@ -102,6 +102,22 @@ export default function StatusBadge({ status, className = '' }: StatusBadgeProps
           icon: '🔴',
           label: 'Unhealthy'
         }
+      case 'terminating':
+        return {
+          bg: 'bg-gray-100 dark:bg-gray-800 animate-pulse',
+          text: 'text-gray-700 dark:text-gray-300 font-semibold',
+          border: 'border-gray-300 dark:border-gray-600 border-2',
+          icon: '↻',
+          label: '削除中'
+        }
+      case 'terminated':
+        return {
+          bg: 'bg-gray-100 dark:bg-gray-800',
+          text: 'text-gray-600 dark:text-gray-400',
+          border: 'border-gray-200 dark:border-gray-600',
+          icon: '⏹️',
+          label: '削除済み'
+        }
       case 'stopped':
         return {
           bg: 'bg-gray-100 dark:bg-gray-800',

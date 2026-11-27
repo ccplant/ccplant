@@ -537,6 +537,12 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     if (session.status === 'suspending') {
       return { status: 'starting' as const, colorClass: 'bg-violet-500 animate-pulse', text: 'サスペンド中' }
     }
+    if (session.status === 'terminating') {
+      return { status: 'terminating' as const, colorClass: 'bg-gray-400 animate-pulse', text: '削除中' }
+    }
+    if (session.status === 'terminated') {
+      return { status: 'terminated' as const, colorClass: 'bg-gray-400', text: '削除済み' }
+    }
     if (session.status === 'error' || session.status === 'timeout') {
       return { status: 'error' as const, colorClass: 'bg-red-500', text: session.status === 'timeout' ? '起動タイムアウト' : '起動失敗' }
     }

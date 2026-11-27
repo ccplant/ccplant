@@ -3,18 +3,20 @@ package entities
 // Canonical public session statuses. Runtime-only "stable" is normalized to
 // active before it crosses a session-manager boundary.
 const (
-	SessionStatusCreating   = "creating"
-	SessionStatusStarting   = "starting"
-	SessionStatusActive     = "active"
-	SessionStatusRunning    = "running"
-	SessionStatusSuspending = "suspending"
-	SessionStatusSuspended  = "suspended"
-	SessionStatusResuming   = "resuming"
-	SessionStatusStopped    = "stopped"
-	SessionStatusUnhealthy  = "unhealthy"
-	SessionStatusError      = "error"
-	SessionStatusTimeout    = "timeout"
-	SessionStatusUnknown    = "unknown"
+	SessionStatusCreating    = "creating"
+	SessionStatusStarting    = "starting"
+	SessionStatusActive      = "active"
+	SessionStatusRunning     = "running"
+	SessionStatusSuspending  = "suspending"
+	SessionStatusSuspended   = "suspended"
+	SessionStatusResuming    = "resuming"
+	SessionStatusTerminating = "terminating"
+	SessionStatusTerminated  = "terminated"
+	SessionStatusStopped     = "stopped"
+	SessionStatusUnhealthy   = "unhealthy"
+	SessionStatusError       = "error"
+	SessionStatusTimeout     = "timeout"
+	SessionStatusUnknown     = "unknown"
 )
 
 // NormalizeSessionStatus maps runtime vocabulary to the public session
@@ -31,6 +33,8 @@ func NormalizeSessionStatus(status string) (string, bool) {
 		SessionStatusSuspending,
 		SessionStatusSuspended,
 		SessionStatusResuming,
+		SessionStatusTerminating,
+		SessionStatusTerminated,
 		SessionStatusStopped,
 		SessionStatusUnhealthy,
 		SessionStatusError,

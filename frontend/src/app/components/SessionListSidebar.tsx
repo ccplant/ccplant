@@ -22,6 +22,8 @@ function getStatusDotClass(status: SessionStatus): string {
     case 'running':  return 'bg-yellow-400 animate-pulse'
     case 'starting': return 'bg-yellow-400 animate-pulse'
     case 'creating': return 'bg-blue-400 animate-pulse'
+    case 'terminating': return 'bg-gray-400 animate-pulse'
+    case 'terminated': return 'bg-gray-400'
     case 'unhealthy':return 'bg-red-500'
     case 'error':    return 'bg-red-500'
     case 'timeout':  return 'bg-red-500'
@@ -124,7 +126,7 @@ export default function SessionListSidebar({
       updated[idx] = { ...updated[idx], status: event.status as SessionStatus }
       return updated
     })
-    if (statusChanged && (event.status === 'active' || event.status === 'stopped' || event.status === 'error' || event.status === 'timeout')) {
+    if (statusChanged && (event.status === 'active' || event.status === 'stopped' || event.status === 'terminated' || event.status === 'error' || event.status === 'timeout')) {
       void fetchSessions()
     }
   }, [fetchSessions])
@@ -235,6 +237,8 @@ export default function SessionListSidebar({
                       <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-0.5 leading-none">
                         {session.status === 'error' || session.status === 'timeout' ? (
                           <span className="text-red-600 dark:text-red-400" title={session.error_message}>{session.status === 'timeout' ? '起動タイムアウト' : '起動失敗'}</span>
+                        ) : session.status === 'terminating' || session.status === 'terminated' ? (
+                          <span className="text-gray-500 dark:text-gray-400">{session.status === 'terminating' ? '削除中' : '削除済み'}</span>
                         ) : session.status === 'suspended' ? (
                           <span className="text-violet-600 dark:text-violet-400">サスペンド中</span>
                         ) : session.status === 'running' ? (
