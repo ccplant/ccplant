@@ -60,22 +60,42 @@ func statusKey(sessionID string) string {
 
 // SetStatus persists status, updated_at and pod_id into a Redis hash and
 // refreshes the key TTL.
-func (r *RedisStatusRepository) SetStatus(ctx context.Context, sessionID, status, podID string) error {
+func (r *RedisStatusRepository) SetStatus(ctx context.Context, sessionID, status, podID string, updatedAt time.Time) (bool, error) {
 	key := statusKey(sessionID)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-
-	pipe := r.client.Pipeline()
-	pipe.HSet(ctx, key,
-		fieldStatus, status,
-		fieldUpdatedAt, now,
-		fieldPodID, podID,
-	)
-	pipe.Expire(ctx, key, redisStatusTTL)
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("redis SetStatus %s: %w", sessionID, err)
+	updatedAt = updatedAt.UTC()
+	for attempt := 0; attempt < 5; attempt++ {
+		accepted := false
+		err := r.client.Watch(ctx, func(tx *redis.Tx) error {
+			currentRaw, err := tx.HGet(ctx, key, fieldUpdatedAt).Result()
+			if err != nil && err != redis.Nil {
+				return err
+			}
+			if currentRaw != "" {
+				current, parseErr := time.Parse(time.RFC3339Nano, currentRaw)
+				if parseErr != nil {
+					return fmt.Errorf("parse stored updated_at: %w", parseErr)
+				}
+				if !updatedAt.After(current) {
+					return nil
+				}
+			}
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.HSet(ctx, key, fieldStatus, status, fieldUpdatedAt, updatedAt.Format(time.RFC3339Nano), fieldPodID, podID)
+				pipe.Expire(ctx, key, redisStatusTTL)
+				return nil
+			})
+			accepted = err == nil
+			return err
+		}, key)
+		if err == redis.TxFailedErr {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("redis SetStatus %s: %w", sessionID, err)
+		}
+		return accepted, nil
 	}
-	return nil
+	return false, fmt.Errorf("redis SetStatus %s: concurrent update retries exhausted", sessionID)
 }
 
 // GetStatus retrieves the current status stored for sessionID.

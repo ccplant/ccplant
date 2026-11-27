@@ -14,7 +14,9 @@ type fixedStatusRepository struct {
 	updatedAt time.Time
 }
 
-func (r fixedStatusRepository) SetStatus(context.Context, string, string, string) error { return nil }
+func (r fixedStatusRepository) SetStatus(context.Context, string, string, string, time.Time) (bool, error) {
+	return true, nil
+}
 func (r fixedStatusRepository) GetStatus(context.Context, string) (string, time.Time, error) {
 	return r.status, r.updatedAt, nil
 }
@@ -60,5 +62,26 @@ func TestRuntimeStatusOverrideFromRedisKeepsNewerWorkloadRestart(t *testing.T) {
 
 	if got := session.Status(); got != "starting" {
 		t.Fatalf("status = %q, want starting", got)
+	}
+}
+
+func TestSetStatusSilentAtRejectsOutOfOrderAndConflictingEvents(t *testing.T) {
+	newest := time.Now()
+	session := newStatusRestoreTestSession("running", newest)
+
+	if session.SetStatusSilentAt("active", newest.Add(-time.Second)) {
+		t.Fatal("older event was accepted")
+	}
+	if got := session.Status(); got != "running" {
+		t.Fatalf("older event changed status to %q", got)
+	}
+	if session.SetStatusSilentAt("active", newest) {
+		t.Fatal("conflicting event with the same timestamp was accepted")
+	}
+	if got := session.Status(); got != "running" {
+		t.Fatalf("conflicting event changed status to %q", got)
+	}
+	if !session.SetStatusSilentAt("active", newest.Add(time.Second)) {
+		t.Fatal("newer event was not accepted")
 	}
 }

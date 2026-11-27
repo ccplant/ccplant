@@ -46,7 +46,7 @@ FROM alpine:3.22 AS api
 
 ARG RELEASE_VERSION=dev
 
-RUN apk add --no-cache ca-certificates tini tzdata && \
+RUN apk add --no-cache ca-certificates curl tini tzdata && \
     ln -s /sbin/tini /usr/bin/tini && \
     /usr/bin/tini --version && \
     runtime_group="$(awk -F: '$3 == 999 { print $1; exit }' /etc/group)" && \

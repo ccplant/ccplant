@@ -1468,7 +1468,10 @@ func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route
 		// A late status push from a terminating Pod must not resurrect the route.
 		return nil
 	}
-	status := publicSessionStatus(runtimeStatus)
+	status, valid := entities.NormalizeSessionStatus(runtimeStatus)
+	if !valid {
+		return fmt.Errorf("invalid session status %q", runtimeStatus)
+	}
 	previous := route.Status
 	// StatusUpdatedAt is the completion timestamp used by session TTL cleanup.
 	// Repeated /status reads and runtime retries must not move that deadline.
@@ -1541,13 +1544,6 @@ func (c *SessionController) rememberRemoteSessionStatus(ctx context.Context, rou
 	if err := c.RecordRemoteSessionStatus(ctx, route, payload.Status); err != nil {
 		log.Printf("[ROUTE] Failed to persist status for %s: %v", route.SessionID, err)
 	}
-}
-
-func publicSessionStatus(runtimeStatus string) string {
-	if runtimeStatus == "stable" {
-		return "active"
-	}
-	return runtimeStatus
 }
 
 func (c *SessionController) subscribeRemoteStatusEvents() (<-chan repositories.SessionStatusEvent, func()) {

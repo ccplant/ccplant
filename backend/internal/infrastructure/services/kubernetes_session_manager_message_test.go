@@ -263,3 +263,21 @@ func TestCrossPodCompletionPreservesTTLStart(t *testing.T) {
 		t.Fatalf("completion metadata lost: status=%s updatedAt=%s", session.Status(), session.UpdatedAt())
 	}
 }
+
+func TestCrossPodStatusRejectsStaleAndInvalidEvents(t *testing.T) {
+	m := newTestManagerForCycle(t)
+	session := NewKubernetesSession("ordered-session", &entities.RunServerRequest{}, "deploy", "svc", "pvc", "ns", 9000, nil, nil)
+	newest := time.Now()
+	session.SetStatusSilentAt("running", newest)
+	m.sessions[session.ID()] = session
+	events := make(chan portrepos.StatusChangeEvent, 2)
+	events <- portrepos.StatusChangeEvent{SessionID: session.ID(), Status: "active", UpdatedAt: newest.Add(-time.Second), PodID: "other-pod"}
+	events <- portrepos.StatusChangeEvent{SessionID: session.ID(), Status: "surprise", UpdatedAt: newest.Add(time.Second), PodID: "other-pod"}
+	close(events)
+
+	m.consumeStatusEvents(context.Background(), events)
+
+	if got := session.Status(); got != "running" {
+		t.Fatalf("status=%q, want running", got)
+	}
+}

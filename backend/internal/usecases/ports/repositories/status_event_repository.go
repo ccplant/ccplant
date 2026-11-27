@@ -20,7 +20,7 @@ type StatusChangeEvent struct {
 type StatusEventRepository interface {
 	// SetStatus persists the runtime status for sessionID so other pods can read it.
 	// podID is the identifier of the calling pod (used for deduplication on receive).
-	SetStatus(ctx context.Context, sessionID, status, podID string) error
+	SetStatus(ctx context.Context, sessionID, status, podID string, updatedAt time.Time) (bool, error)
 
 	// GetStatus retrieves the latest known runtime status for sessionID from the
 	// shared store.  Returns ("", time.Time{}, nil) when no entry exists.

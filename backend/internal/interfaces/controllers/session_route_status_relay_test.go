@@ -133,6 +133,20 @@ func TestRemoteStatusReachesSubscribersOnOtherReplicas(t *testing.T) {
 	expectNoRouteStatusEvent(t, browserOnB)
 }
 
+func TestRecordRemoteSessionStatusRejectsUnknownStatus(t *testing.T) {
+	routes := repositories.NewKubernetesSessionRouteRepository(fake.NewSimpleClientset(), "test")
+	route := &portrepos.SessionRoute{SessionID: "s1", Status: "running", StatusUpdatedAt: time.Now()}
+	saveRouteStatusTestRoute(t, routes, route)
+	controller := NewSessionController(nil, nil, WithSessionRouteRepository(routes))
+
+	if err := controller.RecordRemoteSessionStatus(context.Background(), route, "surprise"); err == nil {
+		t.Fatal("unknown status was accepted")
+	}
+	if route.Status != "running" {
+		t.Fatalf("status=%q, want running", route.Status)
+	}
+}
+
 func TestRemoteStatusStaysProcessLocalWithoutRouteStatusBus(t *testing.T) {
 	routes := repositories.NewKubernetesSessionRouteRepository(fake.NewSimpleClientset(), "test")
 	route := &portrepos.SessionRoute{SessionID: "s1", Status: "starting", StatusUpdatedAt: time.Now()}

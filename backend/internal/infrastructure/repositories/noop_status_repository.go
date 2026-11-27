@@ -22,8 +22,8 @@ func NewNoopStatusRepository() *NoopStatusRepository {
 }
 
 // SetStatus does nothing and returns nil.
-func (n *NoopStatusRepository) SetStatus(_ context.Context, _, _, _ string) error {
-	return nil
+func (n *NoopStatusRepository) SetStatus(_ context.Context, _, _, _ string, _ time.Time) (bool, error) {
+	return true, nil
 }
 
 // GetStatus always reports "not found" (empty status).
