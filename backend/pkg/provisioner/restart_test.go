@@ -3,13 +3,14 @@ package provisioner
 import (
 	"context"
 	"errors"
-	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestPauseAgentWaitsForProcessAndCredentialWorker(t *testing.T) {
@@ -124,5 +125,63 @@ func TestScheduleSessionSuspendFromReadyUsesSessionControlToken(t *testing.T) {
 	}
 	if gotPath != "/internal/session-state/runner-1/suspend" || gotAuth != "Bearer control-token" {
 		t.Fatalf("path=%q auth=%q", gotPath, gotAuth)
+	}
+}
+
+func TestRetryScheduleSessionSuspendFromReadyRecoversAfterTransientFailure(t *testing.T) {
+	var attempts atomic.Int32
+	manager := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer manager.Close()
+	t.Setenv("PROVISIONER_LOCAL_PROXY_URL", manager.URL)
+	t.Setenv("SESSION_CONTROL_TOKEN", "control-token")
+	t.Setenv("AGENTAPI_SESSION_ID", "session-1")
+	t.Setenv("AGENTAPI_ALLOCATED_SESSION_ID", "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	retryScheduleSessionSuspendFromReady(ctx, "session-1", time.Millisecond, time.Millisecond)
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("attempts = %d, want 2", got)
+	}
+}
+
+func TestRetryScheduleSessionSuspendFromReadyStopsWhenProvisioningStops(t *testing.T) {
+	var attempts atomic.Int32
+	manager := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer manager.Close()
+	t.Setenv("PROVISIONER_LOCAL_PROXY_URL", manager.URL)
+	t.Setenv("SESSION_CONTROL_TOKEN", "control-token")
+	t.Setenv("AGENTAPI_SESSION_ID", "session-1")
+	t.Setenv("AGENTAPI_ALLOCATED_SESSION_ID", "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		retryScheduleSessionSuspendFromReady(ctx, "session-1", time.Hour, time.Hour)
+	}()
+
+	deadline := time.After(time.Second)
+	for attempts.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("initial suspend request was not attempted")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("retry loop did not stop after context cancellation")
 	}
 }

@@ -113,6 +113,31 @@ func scheduleSessionSuspendFromReady(ctx context.Context) error {
 }
 
 const (
+	readySuspendRetryInitial = time.Second
+	readySuspendRetryMax     = 30 * time.Second
+)
+
+func retryScheduleSessionSuspendFromReady(ctx context.Context, sessionID string, initialBackoff, maxBackoff time.Duration) {
+	backoff := initialBackoff
+	for {
+		if err := scheduleSessionSuspendFromReady(ctx); err == nil {
+			return
+		} else {
+			log.Printf("[PROVISIONER] Failed to schedule idle suspend after setup for session %s; retrying in %s: %v", sessionID, backoff, err)
+		}
+
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		backoff = minDuration(backoff*2, maxBackoff)
+	}
+}
+
+const (
 	containerJavaScriptRuntime  = "/usr/local/bin/node"
 	containerCodexACPEntrypoint = "/home/agentapi/.npm-global/bin/codex-acp"
 )
@@ -653,9 +678,11 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// ── Step 10: mark ready and supervise ────────────────────────────────────
 	s.setPhase("provision:ready")
 	s.setStatus(StatusReady, "")
-	if err := scheduleSessionSuspendFromReady(ctx); err != nil {
-		log.Printf("[PROVISIONER] Failed to schedule idle suspend after setup for session %s: %v", settings.Session.ID, err)
-	}
+	s.agentWorkers.Add(1)
+	go func() {
+		defer s.agentWorkers.Done()
+		retryScheduleSessionSuspendFromReady(ctx, settings.Session.ID, readySuspendRetryInitial, readySuspendRetryMax)
+	}()
 
 	// ── Step 11: launch acp-posts subprocess if SlackParams provided ─────────
 	if settings.SlackParams != nil && settings.SlackParams.Channel != "" {
