@@ -829,6 +829,48 @@ func TestSessionManagerHeartbeatDisablesSupplierForDisabledLogicalPool(t *testin
 	}
 }
 
+func TestSessionManagerHeartbeatReportsPendingRunnerDemand(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range []*core.Allocation{
+		{SessionID: "plain", Pool: "linux", AuthorizedManagerIDs: []string{"manager-a"}},
+		{SessionID: "dind", Pool: "linux", AuthorizedManagerIDs: []string{"manager-a"}, Requirements: map[string]string{"dind": "true"}},
+		{SessionID: "other-manager", Pool: "linux", AuthorizedManagerIDs: []string{"manager-b"}},
+	} {
+		if err := store.Enqueue(ctx, allocation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	controller := NewSessionPoolController(store, nil)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	var heartbeat struct {
+		Pools []*core.PoolSupplier `json:"pools"`
+	}
+	decodeRecorder(t, result, &heartbeat)
+	if len(heartbeat.Pools) != 1 || heartbeat.Pools[0].PendingRunners["false"] != 1 || heartbeat.Pools[0].PendingRunners["true"] != 1 {
+		t.Fatalf("pending runner demand = %+v, want false=1 true=1", heartbeat.Pools)
+	}
+}
+
 func TestSessionManagerHeartbeatReportsAllocatedRunnerIDs(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")

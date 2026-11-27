@@ -81,6 +81,10 @@ type PoolSupplier struct {
 	UpdatedAt    time.Time         `json:"updated_at"`
 	IdleRunners  int               `json:"idle_runners,omitempty"`
 	TotalRunners int               `json:"total_runners,omitempty"`
+	// PendingRunners reports claimable allocations by DinD requirement. It is
+	// populated in manager heartbeat responses and is not persisted as supplier
+	// configuration.
+	PendingRunners map[string]int `json:"pending_runners,omitempty"`
 }
 
 type Binding struct {

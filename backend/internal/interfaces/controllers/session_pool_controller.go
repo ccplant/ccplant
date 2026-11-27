@@ -149,6 +149,10 @@ type managerScopedSessionRunnerStore interface {
 	ListManagerAllocations(context.Context, string) ([]*core.Allocation, error)
 }
 
+type pendingSessionRunnerStore interface {
+	ListPendingAllocations(context.Context) ([]*core.Allocation, error)
+}
+
 const (
 	sessionManagerHeartbeatTTL = 90 * time.Second
 	// Idle runners continuously long-poll for allocations. Their authenticated
@@ -1245,6 +1249,25 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	pendingAllocations, err := telemetry.LoggedOperation(requestCtx, "session_pool.heartbeat.list_pending_allocations", func(operationCtx context.Context) ([]*core.Allocation, error) {
+		if pending, ok := c.store.(pendingSessionRunnerStore); ok {
+			return pending.ListPendingAllocations(operationCtx)
+		}
+		allocations, listErr := c.store.ListAllocations(operationCtx, "")
+		if listErr != nil {
+			return nil, listErr
+		}
+		result := make([]*core.Allocation, 0)
+		for _, allocation := range allocations {
+			if allocation.Status == core.AllocationPending {
+				result = append(result, allocation)
+			}
+		}
+		return result, nil
+	}, telemetry.String("session_manager.id", manager.ID))
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
 	if heartbeat.LocalRunnerIDs != nil {
 		runners, managerAllocations, err = c.reconcileMissingManagerRunnersWith(requestCtx, manager.ID, *heartbeat.LocalRunnerIDs, runners, managerAllocations)
 		if err != nil {
@@ -1296,6 +1319,14 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 	}
 	for _, pool := range pools {
 		if pool.ManagerID == manager.ID {
+			copy := *pool
+			copy.PendingRunners = make(map[string]int)
+			for _, allocation := range pendingAllocations {
+				if allocation.Pool != pool.Pool || (len(allocation.AuthorizedManagerIDs) > 0 && !containsString(allocation.AuthorizedManagerIDs, manager.ID)) {
+					continue
+				}
+				copy.PendingRunners[strconv.FormatBool(strings.EqualFold(allocation.Requirements["dind"], "true"))]++
+			}
 			for _, allocation := range allocationsByPool[pool.Pool] {
 				if allocation.RunnerID == "" {
 					continue
@@ -1313,7 +1344,6 @@ func (c *SessionPoolController) heartbeatManager(ctx echo.Context) error {
 					allocatedRunnerPolicies[allocation.RunnerID] = meta
 				}
 			}
-			copy := *pool
 			// A supplier cannot remain allocatable when its logical pool is
 			// disabled. Propagate the effective state to the remote manager so it
 			// retires idle stock instead of merely stopping replenishment.
