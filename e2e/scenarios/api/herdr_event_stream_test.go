@@ -31,19 +31,24 @@ func TestHerdrEventStream(t *testing.T) {
 	prompt := "Use the shell to run exactly `hc run --bg --name " + marker + " sleep 120`. " +
 		"After the command succeeds, reply with exactly HERDR_STREAM_E2E_OK."
 	c := client(t)
+	params := map[string]any{
+		"pool":        pool,
+		"agent_type":  agentType,
+		"session_ttl": "10m",
+		"message":     prompt,
+		"docker":      map[string]any{"enabled": false},
+	}
+	if managerID := os.Getenv("E2E_PARAM_MANAGER_ID"); managerID != "" {
+		params["manager_id"] = managerID
+	}
 
 	var created struct {
 		SessionID string `json:"session_id"`
 	}
 	request(t, c, http.MethodPost, "/start", map[string]any{
-		"scope": "user",
-		"tags":  map[string]string{"e2e_run": marker},
-		"params": map[string]any{
-			"pool":        pool,
-			"agent_type":  agentType,
-			"session_ttl": "10m",
-			"message":     prompt,
-		},
+		"scope":  "user",
+		"tags":   map[string]string{"e2e_run": marker},
+		"params": params,
 	}, &created, http.StatusOK, http.StatusCreated, http.StatusAccepted)
 	if created.SessionID == "" {
 		t.Fatal("start response did not contain session_id")
@@ -60,13 +65,7 @@ func TestHerdrEventStream(t *testing.T) {
 
 	streamCtx, cancelStream := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancelStream()
-	stream, err := openHerdrEventStream(streamCtx, c.BaseURL, created.SessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stream.Body.Close()
-
-	if err := waitForHerdrTerminal(stream, marker); err != nil {
+	if err := waitForHerdrTerminal(streamCtx, c.BaseURL, created.SessionID, marker); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -104,24 +103,34 @@ func openHerdrEventStream(ctx context.Context, baseURL, sessionID string) (*http
 	}
 }
 
-func waitForHerdrTerminal(stream *http.Response, marker string) error {
-	scanner := bufio.NewScanner(stream.Body)
-	scanner.Buffer(make([]byte, 64*1024), 8<<20)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
+func waitForHerdrTerminal(ctx context.Context, baseURL, sessionID, marker string) error {
+	for ctx.Err() == nil {
+		stream, err := openHerdrEventStream(ctx, baseURL, sessionID)
+		if err != nil {
+			return err
 		}
-		payload := strings.TrimPrefix(line, "data: ")
-		if !json.Valid([]byte(payload)) {
-			continue
+		scanner := bufio.NewScanner(stream.Body)
+		scanner.Buffer(make([]byte, 64*1024), 8<<20)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimPrefix(line, "data: ")
+			if json.Valid([]byte(payload)) && strings.Contains(payload, marker) {
+				_ = stream.Body.Close()
+				return nil
+			}
 		}
-		if strings.Contains(payload, marker) {
-			return nil
+		_ = stream.Body.Close()
+		if err := scanner.Err(); err != nil && ctx.Err() == nil {
+			return fmt.Errorf("read Herdr event stream: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			break
+		case <-time.After(time.Second):
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read Herdr event stream: %w", err)
-	}
-	return fmt.Errorf("Herdr event stream closed before terminal %q appeared", marker)
+	return fmt.Errorf("Herdr terminal %q did not appear before the stream deadline", marker)
 }
