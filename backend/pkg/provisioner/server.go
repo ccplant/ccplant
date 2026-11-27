@@ -4,6 +4,7 @@
 package provisioner
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -204,6 +205,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
 	mux.HandleFunc("/one-time-secrets/", s.handleOneTimeSecret)
 	mux.HandleFunc("/herdr/rpc", s.handleHerdrRPC)
+	mux.HandleFunc("/herdr/events", s.handleHerdrEvents)
 	mux.HandleFunc("/notifications/send", s.handleCLIBroker)
 	mux.HandleFunc("/internal/usage-events", s.handleCLIBroker)
 	mux.HandleFunc("/sessions/", s.handleCLIBroker)
@@ -339,6 +341,76 @@ var allowedHerdrMethods = map[string]struct{}{
 	"terminal.read":      {},
 	"terminal.send":      {},
 	"terminal.interrupt": {},
+}
+
+// handleHerdrEvents exposes herdr-core's long-lived fact stream as SSE.  The
+// first event is a complete terminal snapshot; subsequent events describe
+// changes, so browser clients can refresh only when the underlying state moves.
+func (s *Server) handleHerdrEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := os.Stat(herdrParkMarkerPath()); err == nil {
+		http.Error(w, "herdr-core is parked for session suspend", http.StatusServiceUnavailable)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	for r.Context().Err() == nil {
+		cmd := exec.CommandContext(r.Context(), "hc", "events", "--json")
+		stdout, err := cmd.StdoutPipe()
+		if err == nil {
+			var stderr bytes.Buffer
+			cmd.Stderr = &limitedWriter{writer: &stderr, remaining: 64 << 10}
+			err = cmd.Start()
+			if err == nil {
+				scanner := bufio.NewScanner(stdout)
+				scanner.Buffer(make([]byte, 64*1024), 8<<20)
+				for scanner.Scan() {
+					line := scanner.Bytes()
+					if !json.Valid(line) {
+						continue
+					}
+					if _, err := fmt.Fprintf(w, "data: %s\n\n", line); err != nil {
+						_ = cmd.Process.Kill()
+						_ = cmd.Wait()
+						return
+					}
+					flusher.Flush()
+				}
+				if scanErr := scanner.Err(); scanErr != nil && r.Context().Err() == nil {
+					log.Printf("[PROVISIONER] herdr-core event stream failed: %v", scanErr)
+				}
+				_ = cmd.Wait()
+			}
+		}
+		if r.Context().Err() != nil {
+			return
+		}
+		// hc can exit while herdr-core is still starting or briefly reconnecting.
+		// Keep the HTTP stream alive and retry instead of turning that transient
+		// state into an EOF for every browser subscriber.
+		if _, err := io.WriteString(w, ": reconnecting\n\n"); err != nil {
+			return
+		}
+		flusher.Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 // handleHerdrRPC exposes the small, user-facing part of herdr-core's JSON-RPC

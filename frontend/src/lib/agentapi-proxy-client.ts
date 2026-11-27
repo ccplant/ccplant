@@ -2992,6 +2992,15 @@ export class AgentAPIProxyClient {
     return result.terminals ?? [];
   }
 
+  /** Subscribe to herdr-core terminal changes over a long-lived SSE stream. */
+  subscribeToHerdrEvents(sessionId: string, onEvent: () => void): EventSubscription {
+    const isUsingProxy = this.baseURL.includes('/api/v1');
+    const url = isUsingProxy
+      ? `/api/v1/${sessionId}/herdr/events`
+      : `${this.baseURL}/${sessionId}/herdr/events`;
+    return this.subscribeWithEventSource(url, { onMessage: onEvent });
+  }
+
   async readHerdrTerminal(sessionId: string, terminal: string, lines = 200): Promise<string> {
     const result = await this.herdrRPC<{ text: string }>(sessionId, 'terminal.read', { terminal, lines });
     return result.text ?? '';
