@@ -27,7 +27,10 @@ func TestHerdrEventStream(t *testing.T) {
 
 	pool := envOrDefault("E2E_PARAM_POOL", "fly-dev")
 	agentType := envOrDefault("E2E_PARAM_AGENT_TYPE", "codex-acp")
-	marker := "herdr-stream-" + apitest.UniqueName()
+	// hc terminal names are limited to 32 characters. UniqueName already adds
+	// an e2e prefix, so keep this scenario prefix short enough for the command
+	// to be accepted by herdr-core.
+	marker := "herdr-" + apitest.UniqueName()
 	prompt := "Use the shell to run exactly `hc run --bg --name " + marker + " sleep 120`. " +
 		"After the command succeeds, reply with exactly HERDR_STREAM_E2E_OK."
 	c := client(t)
