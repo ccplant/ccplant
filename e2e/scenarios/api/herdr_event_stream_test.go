@@ -65,13 +65,31 @@ func TestHerdrEventStream(t *testing.T) {
 
 	prompt := "Use the shell to run exactly `hc run --bg --name " + marker + " sleep 120`. " +
 		"After the command succeeds, reply with exactly HERDR_STREAM_E2E_OK."
-	request(t, c, http.MethodPost, "/"+url.PathEscape(created.SessionID)+"/message", map[string]any{
+	waitForAgentMessageReady(t, c, created.SessionID, map[string]any{
 		"content": prompt,
 		"type":    "user",
-	}, nil, http.StatusOK, http.StatusAccepted, http.StatusNoContent)
+	})
 
 	if err := waitForHerdrTerminal(stream, marker); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func waitForAgentMessageReady(t *testing.T, c *apitest.Client, sessionID string, message map[string]any) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	path := "/" + url.PathEscape(sessionID) + "/message"
+	for {
+		err := c.Do(ctx, http.MethodPost, path, message, nil, http.StatusOK, http.StatusAccepted, http.StatusNoContent)
+		if err == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("agent message endpoint did not become ready: %v", err)
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
