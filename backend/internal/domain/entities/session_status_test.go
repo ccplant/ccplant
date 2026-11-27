@@ -12,6 +12,8 @@ func TestNormalizeSessionStatus(t *testing.T) {
 		{input: "running", want: "running", valid: true},
 		{input: "active", want: "active", valid: true},
 		{input: "resuming", want: "resuming", valid: true},
+		{input: "terminating", want: "terminating", valid: true},
+		{input: "terminated", want: "terminated", valid: true},
 		{input: "unknown-runtime-state", valid: false},
 		{input: "", valid: false},
 	}

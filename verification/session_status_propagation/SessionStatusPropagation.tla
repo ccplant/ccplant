@@ -5,7 +5,8 @@ CONSTANT Replicas
 
 CanonicalStatuses == {"creating", "starting", "active", "running",
                       "suspending", "suspended", "resuming", "stopped",
-                      "unhealthy", "error", "timeout", "unknown"}
+                      "terminating", "terminated", "unhealthy", "error",
+                      "timeout", "unknown"}
 
 Events == [
     e1 |-> [status |-> "active",  version |-> 1, valid |-> TRUE],
