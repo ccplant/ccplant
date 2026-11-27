@@ -40,7 +40,7 @@ type KubernetesSession struct {
 
 	// statusChangeCallback is called by SetStatus when the status changes.
 	// Set by KubernetesSessionManager at session creation to enable proxy-wide pub/sub.
-	statusChangeCallback func(sessionID, newStatus string)
+	statusChangeCallback func(sessionID, newStatus string, updatedAt time.Time)
 }
 
 // NewKubernetesSession creates a new KubernetesSession
@@ -182,11 +182,12 @@ func (s *KubernetesSession) SetStatus(status string) {
 	if changed {
 		s.updatedAt = time.Now()
 	}
+	updatedAt := s.updatedAt
 	cb := s.statusChangeCallback
 	s.mutex.Unlock()
 
 	if changed && cb != nil {
-		cb(s.id, status)
+		cb(s.id, status, updatedAt)
 	}
 }
 
@@ -226,16 +227,26 @@ func (s *KubernetesSession) SetStatusSilent(status string) {
 
 // SetStatusSilentAt preserves the originating status transition time when
 // synchronizing replicas, so TTL cleanup does not use the previous turn's time.
-func (s *KubernetesSession) SetStatusSilentAt(status string, updatedAt time.Time) {
+func (s *KubernetesSession) SetStatusSilentAt(status string, updatedAt time.Time) bool {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	if s.status != status || updatedAt.After(s.updatedAt) {
-		if updatedAt.IsZero() {
-			updatedAt = time.Now()
-		}
+	if updatedAt.IsZero() {
+		updatedAt = time.Now()
+	}
+	// Pub/Sub delivery is at-least-once and can be reordered. Applying an older
+	// event would make another replica and its SSE clients move backwards.
+	if s.status != entities.SessionStatusCreating && updatedAt.Before(s.updatedAt) {
+		return false
+	}
+	if s.status != entities.SessionStatusCreating && updatedAt.Equal(s.updatedAt) && s.status != status {
+		return false
+	}
+	changed := s.status != status
+	s.status = status
+	if changed || updatedAt.After(s.updatedAt) {
 		s.updatedAt = updatedAt
 	}
-	s.status = status
+	return changed
 }
 
 // SetStartedAt sets the session start time (used for restored sessions)

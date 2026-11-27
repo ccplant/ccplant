@@ -1250,8 +1250,14 @@ func (m *KubernetesSessionManager) consumeStatusEvents(ctx context.Context, ch <
 			m.mutex.RLock()
 			session, exists := m.sessions[evt.SessionID]
 			m.mutex.RUnlock()
-			if exists {
-				session.SetStatusSilentAt(evt.Status, evt.UpdatedAt)
+			status, valid := entities.NormalizeSessionStatus(evt.Status)
+			if !valid || evt.UpdatedAt.IsZero() {
+				log.Printf("[K8S_SESSION] Ignoring invalid cross-pod status event: session=%s status=%q updated_at=%s",
+					evt.SessionID, evt.Status, evt.UpdatedAt)
+				continue
+			}
+			if exists && !session.SetStatusSilentAt(status, evt.UpdatedAt) {
+				continue
 			}
 
 			// Forward to local SSE subscribers only.
@@ -1259,7 +1265,7 @@ func (m *KubernetesSessionManager) consumeStatusEvents(ctx context.Context, ch <
 			// function also re-publishes to Redis, which would create an infinite
 			// feedback loop across pods (Pod B re-publishes → Pod C processes →
 			// Pod C re-publishes → Pod A processes → ...).
-			m.broadcastStatusChangeLocal(evt.SessionID, evt.Status)
+			m.broadcastStatusChangeLocal(evt.SessionID, status, evt.UpdatedAt)
 		}
 	}
 }
@@ -6428,11 +6434,11 @@ func (m *KubernetesSessionManager) AddSessionDeletedHandler(handler SessionDelet
 // (in-process) SSE subscribers without publishing to Redis.
 // Called by consumeStatusEvents when replaying a cross-pod event so the event
 // reaches local SSE clients without causing a Redis re-publish loop.
-func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status string) {
+func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status string, updatedAt time.Time) {
 	evt := SessionStatusEvent{
 		SessionID: sessionID,
 		Status:    status,
-		Timestamp: time.Now(),
+		Timestamp: updatedAt,
 	}
 	m.globalSubsMu.Lock()
 	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d (cross-pod relay)", sessionID, status, len(m.globalSubs))
@@ -6451,11 +6457,11 @@ func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status 
 // Non-blocking: slow subscribers are skipped to avoid stalling SetStatus.
 // When a StatusEventRepository is configured it also persists the status and
 // publishes an event for other pods to pick up.
-func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status string) {
+func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status string, updatedAt time.Time) {
 	evt := SessionStatusEvent{
 		SessionID: sessionID,
 		Status:    status,
-		Timestamp: time.Now(),
+		Timestamp: updatedAt,
 	}
 	m.globalSubsMu.Lock()
 	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d", sessionID, status, len(m.globalSubs))
@@ -6472,13 +6478,19 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 	if m.statusEventRepo != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		if err := m.statusEventRepo.SetStatus(ctx, sessionID, status, m.podID); err != nil {
+		accepted, err := m.statusEventRepo.SetStatus(ctx, sessionID, status, m.podID, updatedAt)
+		if err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to persist status to Redis session=%s: %v", sessionID, err)
+			return
+		}
+		if !accepted {
+			log.Printf("[K8S_SESSION] Skipping stale status publication session=%s status=%s updated_at=%s", sessionID, status, updatedAt)
+			return
 		}
 		crossEvt := portrepos.StatusChangeEvent{
 			SessionID: sessionID,
 			Status:    status,
-			UpdatedAt: time.Now(),
+			UpdatedAt: updatedAt,
 			PodID:     m.podID,
 		}
 		if err := m.statusEventRepo.PublishStatusChange(ctx, crossEvt); err != nil {

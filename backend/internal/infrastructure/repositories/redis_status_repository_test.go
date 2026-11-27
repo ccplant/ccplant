@@ -46,3 +46,25 @@ func TestRouteStatusChannelIsSeparateFromManagerChannel(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 }
+
+func TestSetStatusRejectsStaleOverwrite(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	repo := NewRedisStatusRepository(client, "pod")
+	ctx := context.Background()
+	newest := time.Now().UTC()
+
+	accepted, err := repo.SetStatus(ctx, "s1", "running", "pod-new", newest)
+	if err != nil || !accepted {
+		t.Fatalf("new status accepted=%t err=%v", accepted, err)
+	}
+	accepted, err = repo.SetStatus(ctx, "s1", "active", "pod-old", newest.Add(-time.Second))
+	if err != nil || accepted {
+		t.Fatalf("stale status accepted=%t err=%v", accepted, err)
+	}
+	status, updatedAt, err := repo.GetStatus(ctx, "s1")
+	if err != nil || status != "running" || !updatedAt.Equal(newest) {
+		t.Fatalf("stored status=%q updated_at=%s err=%v", status, updatedAt, err)
+	}
+}
