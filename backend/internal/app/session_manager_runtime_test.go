@@ -254,6 +254,30 @@ func TestReconcileSessionRunnerPoolsUsesInfrastructureInventory(t *testing.T) {
 	}
 }
 
+func TestReconcileSessionRunnerPoolsCreatesOnDemandWhenMinIdleIsZero(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
+		Pool: "managed", Enabled: true, MinIdle: 0, MaxRunners: 20,
+		PendingRunners: map[string]int{"false": 1, "true": 2},
+	}})
+	if manager.created != 3 {
+		t.Fatalf("created %d runners, want 3", manager.created)
+	}
+	if got := manager.createdDinD; len(got) != 3 || got[0] || !got[1] || !got[2] {
+		t.Fatalf("created DinD variants = %v, want [false true true]", got)
+	}
+}
+
+func TestReconcileSessionRunnerPoolsMinIdleZeroWithoutDemandCreatesNothing(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
+		Pool: "managed", Enabled: true, MinIdle: 0, MaxRunners: 20,
+	}})
+	if manager.created != 0 {
+		t.Fatalf("created %d runners without demand", manager.created)
+	}
+}
+
 func TestReconcileSessionRunnerPoolsReplacesLocallyStaleRunner(t *testing.T) {
 	manager := &fakeRunnerInfrastructure{idle: map[bool]int{false: 1}, total: 1}
 	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{

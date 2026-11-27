@@ -612,6 +612,24 @@ func (s *Store) ListAllocations(ctx context.Context, pool string) ([]*core.Alloc
 	return result, err
 }
 
+// ListPendingAllocations returns demand that has not yet been claimed. The
+// status selector avoids reading active allocation records (and their detached
+// settings) on every session-manager heartbeat.
+func (s *Store) ListPendingAllocations(ctx context.Context) ([]*core.Allocation, error) {
+	var result []*core.Allocation
+	err := s.listWithSelector(ctx, "allocation", func(raw []byte) error {
+		var value core.Allocation
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		if value.Status == core.AllocationPending {
+			result = append(result, &value)
+		}
+		return nil
+	}, labelStatus+"="+string(core.AllocationPending))
+	return result, err
+}
+
 // ListManagerAllocations is the allocation counterpart to ListManagerRunners.
 func (s *Store) ListManagerAllocations(ctx context.Context, managerID string) ([]*core.Allocation, error) {
 	var result []*core.Allocation

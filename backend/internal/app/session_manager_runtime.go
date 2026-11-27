@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -698,9 +699,6 @@ func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfra
 				}
 				continue
 			}
-			if pool.MinIdle <= 0 {
-				continue
-			}
 			localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
 			if err != nil {
 				log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)
@@ -716,7 +714,8 @@ func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfra
 					log.Printf("[SESSION_MANAGER] Count pool %s idle runners (dind=%t): %v", pool.Pool, dind, err)
 					continue
 				}
-				for localIdle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
+				desired := max(pool.MinIdle, pool.PendingRunners[strconv.FormatBool(dind)])
+				for localIdle < desired && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
 					if err := manager.CreateStockSessionForPool(ctx, pool.Pool, dind); err != nil {
 						log.Printf("[SESSION_MANAGER] Create pool %s runner (dind=%t): %v", pool.Pool, dind, err)
 						break
