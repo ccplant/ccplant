@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -68,7 +69,7 @@ func newSessionManagerInstallCommand() *cobra.Command {
 	flags.StringVarP(&opts.namespace, "namespace", "n", "ccplant-session", "Kubernetes namespace")
 	flags.StringVar(&opts.release, "release", "session-manager", "Helm release name")
 	flags.StringVar(&opts.chart, "chart", "oci://ghcr.io/ccplant/charts/session-manager", "session-manager Helm chart")
-	flags.StringVar(&opts.version, "version", "", "Helm chart version")
+	flags.StringVar(&opts.version, "version", "", "Helm chart version (defaults to the ccplant CLI version)")
 	flags.StringArrayVarP(&opts.valuesFiles, "values", "f", nil, "additional Helm values file (can be specified multiple times)")
 	flags.StringVar(&opts.pool, "pool", "default", "logical pool supplied by this manager")
 	flags.StringVar(&opts.name, "name", "", "manager display name")
@@ -263,9 +264,11 @@ func sessionManagerHelmUpgradeArgs(opts sessionManagerInstallOptions, valuesFile
 		// the first migration upgrade cannot become ready.
 		args = append(args, "--atomic")
 	}
-	if opts.version != "" {
-		args = append(args, "--version", opts.version)
+	version := opts.version
+	if version == "" {
+		version = buildinfo.Version
 	}
+	args = append(args, "--version", version)
 	return args
 }
 
