@@ -34,25 +34,39 @@ type fakeUserFileRepository struct {
 	files map[string][]*entities.UserFile
 }
 
-func TestResolveProjectedSecretsFiltersProfileReferences(t *testing.T) {
+func TestBuildSessionSettings_DoesNotProjectProfileSecrets(t *testing.T) {
 	settings := entities.NewSettings("user-1")
-	settings.SetSecretSettings([]entities.SecretSetting{
-		{ID: "selected", Values: map[string]string{"token": "selected-value"}, Projections: []entities.SecretProjection{{Key: "token", Type: "env", EnvName: "SELECTED"}}},
-		{ID: "other", Values: map[string]string{"token": "other-value"}, Projections: []entities.SecretProjection{{Key: "token", Type: "env", EnvName: "OTHER"}}},
-	})
-	manager := &KubernetesSessionManager{settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user-1": settings}}}
-
-	env, files := manager.resolveProjectedSecrets(context.Background(), &entities.RunServerRequest{
+	settings.SetSecretSettings([]entities.SecretSetting{{
+		ID:     "selected",
+		Values: map[string]string{"env-token": "env-value", "file-token": "file-value"},
+		Projections: []entities.SecretProjection{
+			{Key: "env-token", Type: "env", EnvName: "PROJECTED_SECRET"},
+			{Key: "file-token", Type: "file", Path: "/tmp/projected-secret"},
+		},
+	}})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+	))
+	require.NoError(t, err)
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{"user-1": settings}})
+	req := &entities.RunServerRequest{
 		UserID: "user-1", Scope: entities.ScopeUser, ProfileSecretIDs: []string{"selected"},
-	})
-	if env["SELECTED"] != "selected-value" {
-		t.Fatalf("SELECTED = %q", env["SELECTED"])
 	}
-	if _, ok := env["OTHER"]; ok {
-		t.Fatal("unreferenced secret was projected")
+	session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	got := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	if _, ok := got.Env["PROJECTED_SECRET"]; ok {
+		t.Fatal("profile secret was projected into the session environment")
 	}
-	if len(files) != 0 {
-		t.Fatalf("files = %#v", files)
+	for _, file := range got.Files {
+		if file.Path == "/tmp/projected-secret" {
+			t.Fatal("profile secret was projected into a session file")
+		}
 	}
 }
 

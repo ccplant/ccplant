@@ -49,9 +49,8 @@ type SessionProfileConfig struct {
 	// sourceProfileID references another profile whose environment and MCP
 	// servers are inherited before this profile's local overrides.
 	sourceProfileID string
-	// secretIDs selects settings-scoped secrets whose projections are exposed to
-	// sessions created with this profile. An empty list preserves the legacy
-	// behavior of exposing every projected secret in the settings scope.
+	// secretIDs selects settings-scoped secrets that sessions created with this
+	// profile may retrieve through the session-control secret API.
 	secretIDs          []string
 	githubRepositories []string
 	skills             []string

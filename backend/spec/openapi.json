@@ -11825,7 +11825,7 @@
         },
         "secret_ids": {
           "type": "array",
-          "description": "Settings Secret IDs whose env and file projections are exposed to sessions using this profile. Empty preserves the legacy behavior of using all projected secrets in the settings scope.",
+          "description": "Settings Secret IDs that sessions using this profile may retrieve through ccplant client list-secrets/get-secret. Values are not projected into the session environment or files. Empty grants no settings-secret access.",
           "items": { "type": "string" },
           "uniqueItems": true
         },
