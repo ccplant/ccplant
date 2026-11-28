@@ -82,13 +82,11 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 	if settings.Env == nil {
 		settings.Env = make(map[string]string)
 	}
-	if strings.TrimSpace(settings.Env["HOME"]) == "" {
-		homeDir := strings.TrimSpace(opts.CompileOptions.OutputDir)
-		if homeDir == "" {
-			homeDir = DefaultCompileOptions().OutputDir
-		}
-		settings.Env["HOME"] = homeDir
+	homeDir := strings.TrimSpace(opts.CompileOptions.OutputDir)
+	if homeDir == "" {
+		homeDir = DefaultCompileOptions().OutputDir
 	}
+	settings.Env["HOME"] = homeDir
 
 	// 1. Write GitHub App PEM to disk so git/gh can use it
 	if err := writePEM(settings, opts.PEMOutputPath); err != nil {

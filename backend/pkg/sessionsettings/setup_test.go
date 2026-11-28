@@ -276,3 +276,19 @@ func TestSetupSettingsRejectsIncompleteGitHubBrokerConfiguration(t *testing.T) {
 		t.Fatalf("SetupSettings() error = %v, want incomplete broker configuration error", err)
 	}
 }
+
+func TestSetupSettingsOverridesInheritedHomeWithCompileOutput(t *testing.T) {
+	homeDir := t.TempDir()
+	compileOpts := DefaultCompileOptions()
+	compileOpts.OutputDir = homeDir
+	compileOpts.EnvFilePath = filepath.Join(homeDir, ".session", "env")
+	compileOpts.StartupPath = filepath.Join(homeDir, ".session", "startup.sh")
+	settings := &SessionSettings{Env: map[string]string{"HOME": "/root"}}
+
+	if err := SetupSettings(settings, SetupOptions{CompileOptions: compileOpts}); err != nil {
+		t.Fatal(err)
+	}
+	if settings.Env["HOME"] != homeDir {
+		t.Fatalf("HOME = %q, want compile output %q", settings.Env["HOME"], homeDir)
+	}
+}
