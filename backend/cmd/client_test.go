@@ -82,6 +82,18 @@ func TestGetSecretPrintsOnlyValue(t *testing.T) {
 	assert.Equal(t, "profile-secret\n", output.String())
 }
 
+func TestListSecretsPrintsMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		_, _ = w.Write([]byte(`{"secrets":[{"id":"sec_allowed","name":"GitHub","keys":["TOKEN"]}]}`))
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	err := listSecrets(context.Background(), server.Client(), server.URL, &output)
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"secrets":[{"id":"sec_allowed","name":"GitHub","keys":["TOKEN"]}]}`, output.String())
+}
+
 func TestClientCmdInit(t *testing.T) {
 	// Test that subcommands are properly registered
 	// Note: init() is called automatically when package is loaded

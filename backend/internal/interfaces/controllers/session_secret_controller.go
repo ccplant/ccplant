@@ -92,6 +92,42 @@ func (c *SessionSecretController) GetAuthorized(ctx echo.Context) error {
 	return ctx.NoContent(http.StatusNotFound)
 }
 
+// ListAuthorized returns metadata for settings Secrets explicitly selected by
+// the session profile. Values and projections are never included.
+func (c *SessionSecretController) ListAuthorized(ctx echo.Context) error {
+	settingsName, allowedIDs, ok := c.authorizedSettingsSecrets(ctx, ctx.Param("sessionId"))
+	if !ok {
+		return ctx.NoContent(http.StatusUnauthorized)
+	}
+	if c.settings == nil || settingsName == "" {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+	settings, err := c.settings.FindByName(ctx.Request().Context(), settingsName)
+	if err != nil {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+	type authorizedSecretMetadata struct {
+		ID   string   `json:"id"`
+		Name string   `json:"name"`
+		Keys []string `json:"keys"`
+	}
+	result := make([]authorizedSecretMetadata, 0, len(allowedIDs))
+	for _, secret := range settings.SecretSettings() {
+		if _, allowed := allowedIDs[secret.ID]; !allowed {
+			continue
+		}
+		keys := make([]string, 0, len(secret.Values))
+		for key := range secret.Values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		result = append(result, authorizedSecretMetadata{ID: secret.ID, Name: secret.Name, Keys: keys})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	ctx.Response().Header().Set("Cache-Control", "no-store")
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"secrets": result})
+}
+
 func (c *SessionSecretController) authorizedSettingsSecrets(ctx echo.Context, sessionID string) (string, map[string]struct{}, bool) {
 	header := ctx.Request().Header.Get("Authorization")
 	if !strings.HasPrefix(header, "Bearer ") {

@@ -43,6 +43,8 @@ func TestAutomaticUpdateCommandAllowlist(t *testing.T) {
 		{"ccplant doctor", true},
 		{"ccplant client user list", true},
 		{"ccplant client consume-secret", false},
+		{"ccplant client get-secret", false},
+		{"ccplant client list-secrets", false},
 		{"ccplant client cycle", false},
 		{"ccplant server", false},
 		{"ccplant acp-server", false},

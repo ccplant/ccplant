@@ -128,6 +128,13 @@ var getSecretCmd = &cobra.Command{
 	RunE:  runGetSecret,
 }
 
+var listSecretsCmd = &cobra.Command{
+	Use:   "list-secrets",
+	Short: "List settings secrets authorized for this session",
+	Args:  cobra.NoArgs,
+	RunE:  runListSecrets,
+}
+
 var sendCmd = &cobra.Command{
 	Use:   "send [message]",
 	Short: "Send a message to the agent",
@@ -248,6 +255,7 @@ func init() {
 	ClientCmd.AddCommand(reportUsageCmd)
 	ClientCmd.AddCommand(consumeSecretCmd)
 	ClientCmd.AddCommand(getSecretCmd)
+	ClientCmd.AddCommand(listSecretsCmd)
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
@@ -332,7 +340,48 @@ func getSecret(ctx context.Context, client *http.Client, endpoint string, output
 	return err
 }
 
+func runListSecrets(cmd *cobra.Command, _ []string) error {
+	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+	defer cancel()
+	if socketPath := strings.TrimSpace(os.Getenv("PROVISIONER_LOCAL_SOCKET")); socketPath != "" {
+		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		}}
+		return listSecrets(ctx, &http.Client{Transport: transport}, "http://unix/settings-secrets", cmd.OutOrStdout())
+	}
+	return listSecrets(ctx, http.DefaultClient, "http://127.0.0.1:9001/settings-secrets", cmd.OutOrStdout())
+}
+
+func listSecrets(ctx context.Context, client *http.Client, endpoint string, output io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("list settings secrets: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("list settings secrets: local endpoint returned %s", resp.Status)
+	}
+	var result struct {
+		Secrets []struct {
+			ID   string   `json:"id"`
+			Name string   `json:"name"`
+			Keys []string `json:"keys"`
+		} `json:"secrets"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSecretListResponseBytes)).Decode(&result); err != nil {
+		return fmt.Errorf("decode settings secret list: %w", err)
+	}
+	encoder := json.NewEncoder(output)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
 const maxOneTimeSecretResponseBytes = 65 << 10
+const maxSecretListResponseBytes = 1 << 20
 
 func runReportUsage(cmd *cobra.Command, args []string) error {
 	hookInput, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
