@@ -88,6 +88,29 @@ func TestPoolSessionPreservesProfileRuntimeCustomization(t *testing.T) {
 	require.Equal(t, "profile instructions", manager.request.ProfileSystemPrompt)
 }
 
+func TestPoolSessionPreservesProfileSecretAuthorization(t *testing.T) {
+	store := infrasessionrunner.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	manager := &capturingPoolSettingsManager{}
+	routes := &recordingSessionRouteRepository{}
+	server := &Server{sessionManager: manager, sessionRunnerStore: store, sessionRouteRepo: routes}
+
+	_, err := server.createPoolSession(
+		context.Background(),
+		testAuthorizedRoute(t, "pool", nil),
+		"session",
+		entities.StartRequest{ProfileSecretIDs: []string{"secret-a", "secret-b"}, SettingsTeamID: "org/team"},
+		"user",
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, manager.request)
+	require.Equal(t, []string{"secret-a", "secret-b"}, manager.request.ProfileSecretIDs)
+	require.Equal(t, "org/team", manager.request.SettingsTeamID)
+	require.Equal(t, []string{"secret-a", "secret-b"}, routes.route.AuthorizedSecretIDs)
+	require.Equal(t, "org/team", routes.route.SettingsName)
+}
+
 func TestPoolSessionDoesNotIgnoreSettingsAuthorizationError(t *testing.T) {
 	// No allocation store: the function must stop before enqueueing anything.
 	server := &Server{sessionManager: rejectedProfileSettingsManager{}}

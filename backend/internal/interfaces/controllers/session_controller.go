@@ -3344,6 +3344,11 @@ func applySessionProfile(
 		startReq.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
 		startReq.ProfileSystemPrompt = cfg.SystemPrompt()
 		startReq.ProfilePolicyYAML = cfg.PolicyYAML()
+		startReq.ProfileSecretIDs = cfg.SecretIDs()
+		startReq.SettingsTeamID = cfg.SettingsTeamID()
+		if profile.Scope() == entities.ScopeTeam && startReq.Scope != entities.ScopeTeam && startReq.SettingsTeamID == "" {
+			startReq.SettingsTeamID = profile.TeamID()
+		}
 		if profileFiles := cfg.ProfileFiles(); len(profileFiles) > 0 {
 			startReq.ProfileFiles = make([]sessionsettings.ManagedFile, len(profileFiles))
 			for i, file := range profileFiles {

@@ -2215,6 +2215,8 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		ProfileCommandWrapper:    startReq.ProfileCommandWrapper,
 		ProfileSystemPrompt:      startReq.ProfileSystemPrompt,
 		ProfilePolicyYAML:        startReq.ProfilePolicyYAML,
+		ProfileSecretIDs:         append([]string(nil), startReq.ProfileSecretIDs...),
+		SettingsTeamID:           startReq.SettingsTeamID,
 		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 		Storages:                 append([]entities.ResolvedStorageAttachment(nil), startReq.ResolvedStorages...),
 	}
