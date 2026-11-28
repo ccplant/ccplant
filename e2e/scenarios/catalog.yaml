@@ -62,6 +62,18 @@ scenarios:
       live_session: true
       pool: fly-dev
       agent_type: codex-acp
+  - id: api.session.profile-secret-access
+    category: session
+    description: Fly poolのセッションがprofile認可済みSecretだけをAPI経由で取得しenvへ投影しない
+    kind: go-test
+    package: ./scenarios/api
+    test: TestProfileSecretAccess
+    timeout: 6m
+    capabilities: [external-session-manager]
+    parameters:
+      live_session: true
+      pool: fly-dev
+      agent_type: codex-acp
   - id: api.session.herdr-event-stream
     category: session
     description: 実エージェントが作成したHerdr terminalをロングポーリングSSEで受信できる

@@ -190,7 +190,7 @@ func automaticUpdateAllowed(command *cobra.Command) bool {
 			return false
 		}
 		switch parts[2] {
-		case "cycle", "report-usage", "consume-secret", "send", "events", "backup-session-state":
+		case "cycle", "report-usage", "consume-secret", "get-secret", "list-secrets", "send", "events", "backup-session-state":
 			return false
 		default:
 			return true

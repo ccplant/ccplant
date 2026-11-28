@@ -61,6 +61,29 @@ func TestHandleSettingsSecretProxiesWithRuntimeCredential(t *testing.T) {
 	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 }
 
+func TestHandleSettingsSecretsProxiesAuthorizedMetadata(t *testing.T) {
+	t.Setenv("NETWORK_FILTER_CONTROL_SOCKET", "")
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/internal/session-control/public-session/settings-secrets", r.URL.Path)
+		require.Equal(t, "4", r.URL.Query().Get("generation"))
+		require.Equal(t, "Bearer runtime-token", r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"secrets":[{"id":"sec_allowed","name":"Allowed","keys":["TOKEN"]}]}`))
+	}))
+	defer parent.Close()
+
+	s := New(9001, "")
+	s.activeSettings = &sessionsettings.SessionSettings{ParentRuntime: &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: parent.URL, SessionID: "public-session", Token: "runtime-token", Generation: 4,
+	}}
+	req := httptest.NewRequest(http.MethodGet, "/settings-secrets", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+	s.handleSettingsSecrets(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, `{"secrets":[{"id":"sec_allowed","name":"Allowed","keys":["TOKEN"]}]}`, rec.Body.String())
+	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+}
+
 func TestHandleOneTimeSecretRejectsNonLoopback(t *testing.T) {
 	s := New(9001, "")
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/one-time-secrets/secret-1", nil)

@@ -78,6 +78,8 @@ CRUDはランダムな`e2e-`接頭辞を持つ専用リソースだけを作成�
 
 `api.session.consume-secret`はFly開発pool上に一時profileとセッションを作成し、ランダムなテスト値をセッションへ登録して、`ccplant client consume-secret`がUnix socket経由で取得した結果、秘匿情報の状態が`pending`から`consumed`へ変わることを検証します。値そのものはログへ出力せず、課金されるチャットも送信しません。コマンドから実行する場合は実セッション起動を許可する`E2E_PARAM_LIVE_SESSION=true`を指定してください。`E2E_PARAM_POOL`の既定値は`fly-dev`、`E2E_PARAM_AGENT_TYPE`の既定値は`codex-acp`です。作成したセッションとprofileは成功・失敗にかかわらず削除を試みます。
 
+`api.session.profile-secret-access`はFly開発pool上に一時Settings Secret、profile、セッションを作成し、profileで選択したSecretだけが`ccplant client list-secrets`に現れ、`get-secret`で取得できることを検証します。同時に、Secretへenv projectionを設定してもセッション環境へ自動展開されないことを確認します。値そのものはログへ出力せず、課金されるチャットも送信しません。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`を指定してください。`E2E_PARAM_POOL`の既定値は`fly-dev`、`E2E_PARAM_AGENT_TYPE`の既定値は`codex-acp`です。作成したSecret、profile、セッションは成功・失敗にかかわらず削除を試みます。
+
 `api.session.herdr-event-stream`は指定pool上で実ACPエージェントを起動し、HerdrのSSEを購読した状態でエージェントに一時terminalを作成させ、そのterminalがポーリングなしでストリームに現れることを検証します。課金されるチャットを1回送信します。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`を指定し、previewではPR専用poolを`E2E_PARAM_POOL`へ指定してください。`E2E_PARAM_AGENT_TYPE`の既定値は`codex-acp`です。作成したセッションは成功・失敗にかかわらず削除を試みます。
 
 `api.session.storage-tag-namespace`は、一時StorageとProfileを作成し、同じStorageがrepositoryタグごとに別のnamespaceへ解決されることをdry-runと実セッションのファイル同期で検証します。さらに最初のrepositoryでセッションを再作成し、以前のファイルが復元されることと、別repositoryのnamespaceが維持されることを確認します。チャットメッセージは送信しません。既定では`fly-dev` pool、`codex-acp`、公開repositoryの`ccplant/ccplant`と`ccplant/ccplant-deploy`を使います。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`を指定し、必要に応じて`E2E_PARAM_POOL`、`E2E_PARAM_AGENT_TYPE`、`E2E_PARAM_REPOSITORY_A`、`E2E_PARAM_REPOSITORY_B`を上書きしてください。

@@ -207,6 +207,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
 	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
 	mux.HandleFunc("/one-time-secrets/", s.handleOneTimeSecret)
+	mux.HandleFunc("/settings-secrets", s.handleSettingsSecrets)
 	mux.HandleFunc("/settings-secrets/", s.handleSettingsSecret)
 	mux.HandleFunc("/github-credentials", s.handleGitHubCredentials)
 	mux.HandleFunc("/herdr/rpc", s.handleHerdrRPC)
@@ -639,6 +640,53 @@ func (s *Server) handleSettingsSecret(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		log.Printf("[PROVISIONER] settings secret parent request failed: %v", err)
+		http.Error(w, "parent runtime unavailable", http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// handleSettingsSecrets proxies metadata for the settings Secrets authorized
+// by the active session profile. Secret values are never returned by this path.
+func (s *Server) handleSettingsSecrets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.socketPath == "" && !isLoopbackRemoteAddr(r.RemoteAddr) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	s.mu.RLock()
+	settings := s.activeSettings
+	var runtime *sessionsettings.ParentRuntimeConfig
+	if settings != nil && settings.ParentRuntime != nil {
+		copy := *settings.ParentRuntime
+		runtime = &copy
+	}
+	s.mu.RUnlock()
+	if runtime == nil || !runtime.Enabled || runtime.Endpoint == "" || runtime.SessionID == "" || runtime.Token == "" {
+		http.Error(w, "parent runtime unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	endpoint := strings.TrimRight(runtime.Endpoint, "/") + "/internal/session-control/" + url.PathEscape(runtime.SessionID) + "/settings-secrets"
+	query := url.Values{}
+	query.Set("generation", fmt.Sprintf("%d", runtime.Generation))
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint+"?"+query.Encode(), nil)
+	if err != nil {
+		http.Error(w, "failed to create parent request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+runtime.Token)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		log.Printf("[PROVISIONER] settings secret list parent request failed: %v", err)
 		http.Error(w, "parent runtime unavailable", http.StatusBadGateway)
 		return
 	}

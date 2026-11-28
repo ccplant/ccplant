@@ -232,8 +232,8 @@ func TestSessionSettingsSecretRequiresPersistedCapability(t *testing.T) {
 	}
 	settings := entities.NewSettings("team-a")
 	settings.SetSecretSettings([]entities.SecretSetting{
-		{ID: "sec_allowed", Values: map[string]string{"TOKEN": "allowed-value"}},
-		{ID: "sec_other", Values: map[string]string{"TOKEN": "other-value"}},
+		{ID: "sec_allowed", Name: "Allowed", Values: map[string]string{"TOKEN": "allowed-value", "USER": "octocat"}},
+		{ID: "sec_other", Name: "Hidden", Values: map[string]string{"TOKEN": "other-value"}},
 	})
 	controller := NewSessionSecretController(fake.NewSimpleClientset(), "default", oneTimeSecretManagerStub{}, oneTimeSecretRouteRepo{route: route}, secretSettingsRepoStub{byName: map[string]*entities.Settings{"team-a": settings}})
 	e := echo.New()
@@ -257,4 +257,16 @@ func TestSessionSettingsSecretRequiresPersistedCapability(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, request("runtime-token", 3, "sec_allowed", "TOKEN").Code)
 	require.Equal(t, http.StatusNotFound, request("runtime-token", 4, "sec_other", "TOKEN").Code)
 	require.Equal(t, http.StatusNotFound, request("runtime-token", 4, "sec_allowed", "MISSING").Code)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/?generation=4", nil)
+	listReq.Header.Set("Authorization", "Bearer runtime-token")
+	listRec := httptest.NewRecorder()
+	listCtx := e.NewContext(listReq, listRec)
+	listCtx.SetParamNames("sessionId")
+	listCtx.SetParamValues("session-settings")
+	require.NoError(t, controller.ListAuthorized(listCtx))
+	require.Equal(t, http.StatusOK, listRec.Code)
+	require.JSONEq(t, `{"secrets":[{"id":"sec_allowed","name":"Allowed","keys":["TOKEN","USER"]}]}`, listRec.Body.String())
+	require.NotContains(t, listRec.Body.String(), "allowed-value")
+	require.NotContains(t, listRec.Body.String(), "sec_other")
 }

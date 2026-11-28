@@ -16,14 +16,14 @@ cd "$repo_root/verification/session_secret_authorization"
 tlc=(mise exec java@temurin-21 -- java -XX:+UseParallelGC -cp "$jar" tlc2.TLC -cleanup -deadlock SessionSecretAuthorization.tla)
 "${tlc[@]}" -config good.cfg
 
-for broken in broken-token.cfg broken-generation.cfg broken-scope.cfg broken-secret.cfg; do
+for broken in broken-token.cfg broken-generation.cfg broken-scope.cfg broken-secret.cfg broken-capability.cfg; do
   output="$(mktemp)"
   if "${tlc[@]}" -config "$broken" >"$output" 2>&1; then
     rm -f "$output"
     echo "$broken unexpectedly satisfied AuthorizedDisclosure" >&2
     exit 1
   fi
-  if ! grep -q "Invariant AuthorizedDisclosure is violated" "$output"; then
+  if ! grep -Eq "Invariant (AuthorizedDisclosure|CapabilityIsLaunchSnapshot) is violated" "$output"; then
     cat "$output" >&2
     rm -f "$output"
     echo "$broken failed without the expected authorization counterexample" >&2
@@ -34,4 +34,4 @@ done
 
 cd "$repo_root/backend"
 mise exec -- go test ./internal/interfaces/controllers ./internal/infrastructure/repositories ./internal/infrastructure/services ./pkg/provisioner ./cmd \
-  -run 'SessionSettingsSecret|SecretCapability|HandleSettingsSecret|GetSecret|NativeSession' -count=1
+  -run 'SessionSettingsSecret|SecretCapability|HandleSettingsSecret|GetSecret|NativeSession|DoesNotProjectProfileSecrets' -count=1
