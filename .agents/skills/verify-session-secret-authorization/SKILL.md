@@ -42,6 +42,6 @@ TLC treats one request as atomic and verifies a two-scope/two-secret finite mode
 
 ## Keeping the model synchronized
 
-Last synchronized against commit `REPLACE_AFTER_IMPLEMENTATION_COMMIT`.
+Last synchronized against commit `faa042e`.
 
 When covered code changes, compare every authentication and authorization gate with `Gate` and `AuthorizedDisclosure`. Update the model and focused tests when behavior intentionally changes. Run the verifier, confirm all four broken configurations are still caught, and move the synchronization marker only after the implementation commit is known.
