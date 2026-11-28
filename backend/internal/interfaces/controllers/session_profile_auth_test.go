@@ -22,6 +22,33 @@ func TestApplySessionProfileDoesNotMaterializePiConnectionAsEnvironment(t *testi
 	require.Empty(t, request.ProfileEnvironment)
 }
 
+func TestApplySessionProfilePreservesSecretCapabilitiesForRunnerPool(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetSecretIDs([]string{"secret-a", "secret-b"})
+	cfg.SetSettingsTeamID("org/team")
+	request := &entities.StartRequest{}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Equal(t, []string{"secret-a", "secret-b"}, request.ProfileSecretIDs)
+	require.Equal(t, "org/team", request.SettingsTeamID)
+}
+
+func TestApplyTeamSessionProfileUsesProfileTeamForSettingsSecrets(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Team Profile", "owner")
+	profile.SetScope(entities.ScopeTeam)
+	profile.SetTeamID("org/team")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetSecretIDs([]string{"team-secret"})
+	request := &entities.StartRequest{Scope: entities.ScopeUser}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Equal(t, []string{"team-secret"}, request.ProfileSecretIDs)
+	require.Equal(t, "org/team", request.SettingsTeamID)
+}
+
 func TestProfileAuthMethodsValidationAndMerge(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetParams(&entities.SessionParams{CodexAuthMode: "oauth"})

@@ -227,6 +227,10 @@ type StartRequest struct {
 	ProfileSystemPrompt       string                             `json:"-"`
 	ProfilePolicyYAML         string                             `json:"-"`
 	ResolvedSessionProfileID  string                             `json:"-"`
+	// ProfileSecretIDs and SettingsTeamID are authorized profile capabilities
+	// resolved by the parent API. They must never be accepted from request JSON.
+	ProfileSecretIDs []string `json:"-"`
+	SettingsTeamID   string   `json:"-"`
 	// ResolvedStorages is populated by the parent API after authorization.
 	ResolvedStorages []ResolvedStorageAttachment `json:"-"`
 	// ReuseMatchTags asks /start to reuse a live session matching every tag.
@@ -319,8 +323,8 @@ type RunServerRequest struct {
 	// ProfileSystemPrompt is written to the instruction file for the resolved agent type.
 	ProfileSystemPrompt string
 	ProfilePolicyYAML   string
-	// ProfileSecretIDs limits settings Secret projection to the references stored
-	// on the resolved session profile. Empty preserves legacy all-secret behavior.
+	// ProfileSecretIDs limits settings Secret access to the references stored on
+	// the resolved session profile. Empty fails closed for get-secret requests.
 	ProfileSecretIDs         []string
 	ResolvedSessionProfileID string
 	// SettingsTeamID is authorized and resolved from the profile at launch.

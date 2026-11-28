@@ -38,6 +38,11 @@ type SessionRoute struct {
 	// before this route can be removed from the user-visible session list.
 	DeletionRequestID string
 	ContextTemplateID string
+	// SettingsName and AuthorizedSecretIDs are the server-resolved capability
+	// carried by this session. They are persisted with the route so any API
+	// replica can enforce settings-secret reads without trusting caller input.
+	SettingsName        string
+	AuthorizedSecretIDs []string
 }
 
 // RemoteProvisionSettingsBuilder is an optional interface that SessionManager implementations

@@ -82,6 +82,7 @@ func (m *KubernetesSessionManager) prepareBuiltInDirectRuntime(ctx context.Conte
 		RuntimeTokenHash: hex.EncodeToString(digest[:]), Generation: 1, UserID: req.UserID,
 		Scope: string(req.Scope), TeamID: req.TeamID, Tags: req.Tags, StartedAt: now,
 		InitialMessage: req.InitialMessage, Status: "creating", StatusUpdatedAt: now,
+		SettingsName: settingsNameForRequest(req), AuthorizedSecretIDs: append([]string(nil), req.ProfileSecretIDs...),
 	}
 	if err := repo.Save(ctx, route); err != nil {
 		return nil, fmt.Errorf("save built-in direct runtime route: %w", err)
@@ -99,6 +100,19 @@ func (m *KubernetesSessionManager) prepareBuiltInDirectRuntime(ctx context.Conte
 			log.Printf("[SESSION_ROUTE] Warning: failed to clean up built-in route %s: %v", id, err)
 		}
 	}, nil
+}
+
+func settingsNameForRequest(req *entities.RunServerRequest) string {
+	if req == nil {
+		return ""
+	}
+	if req.SettingsTeamID != "" {
+		return req.SettingsTeamID
+	}
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		return req.TeamID
+	}
+	return req.UserID
 }
 
 // CreateSessionDirect allocates a session on this manager without submitting it

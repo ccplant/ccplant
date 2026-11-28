@@ -43,11 +43,104 @@ type SessionSecretController struct {
 	namespace string
 	manager   sessionSecretManager
 	routes    portrepos.SessionRouteRepository
+	settings  portrepos.SettingsRepository
 	now       func() time.Time
 }
 
-func NewSessionSecretController(client kubernetes.Interface, namespace string, manager sessionSecretManager, routes portrepos.SessionRouteRepository) *SessionSecretController {
-	return &SessionSecretController{client: client, namespace: namespace, manager: manager, routes: routes, now: time.Now}
+func NewSessionSecretController(client kubernetes.Interface, namespace string, manager sessionSecretManager, routes portrepos.SessionRouteRepository, settings ...portrepos.SettingsRepository) *SessionSecretController {
+	controller := &SessionSecretController{client: client, namespace: namespace, manager: manager, routes: routes, now: time.Now}
+	if len(settings) > 0 {
+		controller.settings = settings[0]
+	}
+	return controller
+}
+
+// GetAuthorized returns one value from a settings Secret explicitly selected
+// by the session profile. The runtime bearer token authenticates the session;
+// the server-resolved route capability authorizes the resource.
+func (c *SessionSecretController) GetAuthorized(ctx echo.Context) error {
+	settingsName, allowedIDs, ok := c.authorizedSettingsSecrets(ctx, ctx.Param("sessionId"))
+	if !ok {
+		return ctx.NoContent(http.StatusUnauthorized)
+	}
+	if c.settings == nil || settingsName == "" || len(allowedIDs) == 0 {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+	secretID := ctx.Param("secretId")
+	if _, allowed := allowedIDs[secretID]; !allowed {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+	key := ctx.QueryParam("key")
+	if key == "" {
+		return ctx.NoContent(http.StatusBadRequest)
+	}
+	settings, err := c.settings.FindByName(ctx.Request().Context(), settingsName)
+	if err != nil {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+	for _, secret := range settings.SecretSettings() {
+		if secret.ID != secretID {
+			continue
+		}
+		value, exists := secret.Values[key]
+		if !exists {
+			return ctx.NoContent(http.StatusNotFound)
+		}
+		ctx.Response().Header().Set("Cache-Control", "no-store")
+		return ctx.JSON(http.StatusOK, map[string]string{"value": value})
+	}
+	return ctx.NoContent(http.StatusNotFound)
+}
+
+func (c *SessionSecretController) authorizedSettingsSecrets(ctx echo.Context, sessionID string) (string, map[string]struct{}, bool) {
+	header := ctx.Request().Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return "", nil, false
+	}
+	token := strings.TrimPrefix(header, "Bearer ")
+	if validator, ok := c.manager.(interface{ ValidateSessionControlToken(string, string) bool }); ok && validator.ValidateSessionControlToken(sessionID, token) {
+		session := c.manager.GetSession(sessionID)
+		withRequest, hasRequest := session.(interface {
+			Request() *entities.RunServerRequest
+		})
+		if session == nil || !hasRequest || withRequest.Request() == nil {
+			return "", nil, false
+		}
+		req := withRequest.Request()
+		settingsName := req.UserID
+		if req.SettingsTeamID != "" {
+			settingsName = req.SettingsTeamID
+		} else if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+			settingsName = req.TeamID
+		}
+		return settingsName, stringSet(req.ProfileSecretIDs), true
+	}
+	if c.routes == nil {
+		return "", nil, false
+	}
+	route, err := c.routes.Get(ctx.Request().Context(), sessionID)
+	if err != nil || route == nil || route.Transport != portrepos.SessionRouteTransportDirectRuntime || route.RuntimeTokenHash == "" {
+		return "", nil, false
+	}
+	generation, err := strconv.ParseInt(ctx.QueryParam("generation"), 10, 64)
+	if err != nil || generation != route.Generation {
+		return "", nil, false
+	}
+	digest := sha256.Sum256([]byte(token))
+	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(digest[:])), []byte(route.RuntimeTokenHash)) != 1 {
+		return "", nil, false
+	}
+	return route.SettingsName, stringSet(route.AuthorizedSecretIDs), true
+}
+
+func stringSet(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value != "" {
+			result[value] = struct{}{}
+		}
+	}
+	return result
 }
 
 // Create registers a short-lived value for a running session. The value is

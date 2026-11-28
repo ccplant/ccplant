@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +38,20 @@ func (m oneTimeSecretManagerStub) ValidateSessionControlToken(id, token string) 
 }
 
 type oneTimeSecretRouteRepo struct{ route *portrepos.SessionRoute }
+
+type secretSettingsRepoStub struct{ byName map[string]*entities.Settings }
+
+func (r secretSettingsRepoStub) Save(context.Context, *entities.Settings) error { return nil }
+func (r secretSettingsRepoStub) FindByName(_ context.Context, name string) (*entities.Settings, error) {
+	settings, ok := r.byName[name]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+	return settings, nil
+}
+func (r secretSettingsRepoStub) Delete(context.Context, string) error               { return nil }
+func (r secretSettingsRepoStub) Exists(context.Context, string) (bool, error)       { return false, nil }
+func (r secretSettingsRepoStub) List(context.Context) ([]*entities.Settings, error) { return nil, nil }
 
 func (r oneTimeSecretRouteRepo) Save(context.Context, *portrepos.SessionRoute) error { return nil }
 func (r oneTimeSecretRouteRepo) Get(_ context.Context, id string) (*portrepos.SessionRoute, error) {
@@ -205,4 +221,40 @@ func TestSessionSecretConsumeNextWithoutID(t *testing.T) {
 	require.JSONEq(t, `{"value":"next-secret"}`, first.Body.String())
 	require.Equal(t, "no-store", first.Header().Get("Cache-Control"))
 	require.Equal(t, http.StatusNotFound, consume().Code)
+}
+
+func TestSessionSettingsSecretRequiresPersistedCapability(t *testing.T) {
+	tokenHash := sha256.Sum256([]byte("runtime-token"))
+	route := &portrepos.SessionRoute{
+		SessionID: "session-settings", Transport: portrepos.SessionRouteTransportDirectRuntime,
+		RuntimeTokenHash: hex.EncodeToString(tokenHash[:]), Generation: 4,
+		SettingsName: "team-a", AuthorizedSecretIDs: []string{"sec_allowed"},
+	}
+	settings := entities.NewSettings("team-a")
+	settings.SetSecretSettings([]entities.SecretSetting{
+		{ID: "sec_allowed", Values: map[string]string{"TOKEN": "allowed-value"}},
+		{ID: "sec_other", Values: map[string]string{"TOKEN": "other-value"}},
+	})
+	controller := NewSessionSecretController(fake.NewSimpleClientset(), "default", oneTimeSecretManagerStub{}, oneTimeSecretRouteRepo{route: route}, secretSettingsRepoStub{byName: map[string]*entities.Settings{"team-a": settings}})
+	e := echo.New()
+
+	request := func(token string, generation int, secretID, key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?generation=%d&key=%s", generation, url.QueryEscape(key)), nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		ctx := e.NewContext(req, rec)
+		ctx.SetParamNames("sessionId", "secretId")
+		ctx.SetParamValues("session-settings", secretID)
+		require.NoError(t, controller.GetAuthorized(ctx))
+		return rec
+	}
+
+	allowed := request("runtime-token", 4, "sec_allowed", "TOKEN")
+	require.Equal(t, http.StatusOK, allowed.Code)
+	require.JSONEq(t, `{"value":"allowed-value"}`, allowed.Body.String())
+	require.Equal(t, "no-store", allowed.Header().Get("Cache-Control"))
+	require.Equal(t, http.StatusUnauthorized, request("wrong", 4, "sec_allowed", "TOKEN").Code)
+	require.Equal(t, http.StatusUnauthorized, request("runtime-token", 3, "sec_allowed", "TOKEN").Code)
+	require.Equal(t, http.StatusNotFound, request("runtime-token", 4, "sec_other", "TOKEN").Code)
+	require.Equal(t, http.StatusNotFound, request("runtime-token", 4, "sec_allowed", "MISSING").Code)
 }

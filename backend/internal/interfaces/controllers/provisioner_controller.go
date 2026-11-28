@@ -407,12 +407,27 @@ func (pc *ProvisionerController) CompleteSessionAllocation(c echo.Context) error
 			route.TeamID = allocation.Request.TeamID
 			route.Tags = allocation.Request.Tags
 			route.InitialMessage = allocation.Request.InitialMessage
+			route.SettingsName = requestSettingsName(allocation.Request)
+			route.AuthorizedSecretIDs = append([]string(nil), allocation.Request.ProfileSecretIDs...)
 		}
 		if err := pc.sessionRouteRepo.Save(c.Request().Context(), route); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func requestSettingsName(req *entities.RunServerRequest) string {
+	if req == nil {
+		return ""
+	}
+	if req.SettingsTeamID != "" {
+		return req.SettingsTeamID
+	}
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		return req.TeamID
+	}
+	return req.UserID
 }
 
 func (pc *ProvisionerController) GetNextExternalSessionAllocation(c echo.Context) error {
@@ -520,6 +535,8 @@ func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Contex
 			route.TeamID = allocation.Request.TeamID
 			route.Tags = allocation.Request.Tags
 			route.InitialMessage = allocation.Request.InitialMessage
+			route.SettingsName = requestSettingsName(allocation.Request)
+			route.AuthorizedSecretIDs = append([]string(nil), allocation.Request.ProfileSecretIDs...)
 		}
 		if err := pc.sessionRouteRepo.Save(c.Request().Context(), route); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})

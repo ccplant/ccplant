@@ -62,6 +62,23 @@ func TestKubernetesSessionRouteRepositoryPersistsAnnotations(t *testing.T) {
 	require.Equal(t, want, routes[0].Annotations)
 }
 
+func TestKubernetesSessionRouteRepositoryPersistsSecretCapability(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	writer := NewKubernetesSessionRouteRepository(client, "test")
+	wantIDs := []string{"sec_a", "sec_b"}
+	require.NoError(t, writer.Save(context.Background(), &portrepos.SessionRoute{SessionID: "session-a", SettingsName: "team-a", AuthorizedSecretIDs: wantIDs}))
+
+	reader := NewKubernetesSessionRouteRepository(client, "test")
+	route, err := reader.Get(context.Background(), "session-a")
+	require.NoError(t, err)
+	require.Equal(t, "team-a", route.SettingsName)
+	require.Equal(t, wantIDs, route.AuthorizedSecretIDs)
+	route.AuthorizedSecretIDs[0] = "mutated"
+	again, err := reader.Get(context.Background(), "session-a")
+	require.NoError(t, err)
+	require.Equal(t, wantIDs, again.AuthorizedSecretIDs)
+}
+
 func TestKubernetesSessionRouteRepositorySaveUpdatesExistingSecret(t *testing.T) {
 	repo := NewKubernetesSessionRouteRepository(fake.NewSimpleClientset(), "test")
 	ctx := context.Background()
