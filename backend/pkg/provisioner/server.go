@@ -59,17 +59,20 @@ type Server struct {
 	activeSettings *sessionsettings.SessionSettings
 	restartID      string
 
-	port            int
-	host            string
-	socketPath      string
-	settingsFile    string // path to optional auto-provision settings file
-	httpClient      *http.Client
-	filterClient    *http.Client
-	filterURL       string
-	brokerURL       string
-	brokerKey       string
-	brokerSessionID string
-	brokerPolicy    *agentpolicy.ValidatedPolicy
+	port              int
+	host              string
+	socketPath        string
+	settingsFile      string // path to optional auto-provision settings file
+	httpClient        *http.Client
+	filterClient      *http.Client
+	filterURL         string
+	brokerURL         string
+	brokerKey         string
+	brokerSessionID   string
+	brokerPolicy      *agentpolicy.ValidatedPolicy
+	githubToken       string
+	githubBrokerURL   string
+	githubBrokerToken string
 
 	mu                     sync.RWMutex
 	status                 Status
@@ -204,6 +207,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
 	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
 	mux.HandleFunc("/one-time-secrets/", s.handleOneTimeSecret)
+	mux.HandleFunc("/github-credentials", s.handleGitHubCredentials)
 	mux.HandleFunc("/herdr/rpc", s.handleHerdrRPC)
 	mux.HandleFunc("/herdr/events", s.handleHerdrEvents)
 	mux.HandleFunc("/notifications/send", s.handleCLIBroker)
@@ -248,6 +252,52 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
 	return nil
+}
+
+func (s *Server) handleGitHubCredentials(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+
+	s.mu.RLock()
+	directToken, brokerURL, brokerToken := s.githubToken, s.githubBrokerURL, s.githubBrokerToken
+	s.mu.RUnlock()
+	if directToken != "" {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"username": "x-access-token", "token": directToken})
+		return
+	}
+	if brokerURL == "" || brokerToken == "" {
+		http.Error(w, "GitHub credentials are not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	upstreamURL, err := url.Parse(brokerURL)
+	if err != nil {
+		http.Error(w, "invalid GitHub broker URL", http.StatusServiceUnavailable)
+		return
+	}
+	upstreamURL.RawQuery = r.URL.RawQuery
+	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL.String(), nil)
+	if err != nil {
+		http.Error(w, "invalid GitHub broker request", http.StatusBadRequest)
+		return
+	}
+	upstream.Header.Set("Authorization", "Bearer "+brokerToken)
+	upstream.Header.Set("Accept", "application/json")
+	resp, err := s.httpClient.Do(upstream)
+	if err != nil {
+		http.Error(w, "GitHub broker upstream request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, 1<<20))
 }
 
 // ConfigureCLIBroker supplies the parent endpoint used for credentialed CLI

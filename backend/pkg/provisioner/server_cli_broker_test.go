@@ -16,6 +16,42 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
+func TestConfigureAgentGitHubBrokerEnvUsesSocketForKubernetes(t *testing.T) {
+	env := map[string]string{
+		"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN": "lease",
+		"GITHUB_TOKEN":                 "token",
+	}
+
+	configureAgentGitHubBrokerEnv(env, true, "")
+
+	if got := env["AGENTAPI_GITHUB_BROKER_SOCKET"]; got != "/tmp/ccplant/provisioner.sock" {
+		t.Fatalf("broker socket = %q", got)
+	}
+	for _, key := range []string{"AGENTAPI_GITHUB_BROKER_URL", "AGENTAPI_GITHUB_BROKER_TOKEN", "GITHUB_TOKEN"} {
+		if _, ok := env[key]; ok {
+			t.Errorf("%s unexpectedly remains in agent environment", key)
+		}
+	}
+}
+
+func TestConfigureAgentGitHubBrokerEnvLeavesNativeRouteUnchanged(t *testing.T) {
+	env := map[string]string{
+		"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN": "lease",
+		"GITHUB_TOKEN":                 "token",
+	}
+
+	configureAgentGitHubBrokerEnv(env, true, "/var/lib/ccplant/sessions")
+
+	if _, ok := env["AGENTAPI_GITHUB_BROKER_SOCKET"]; ok {
+		t.Fatal("native agent environment unexpectedly uses provisioner socket")
+	}
+	if env["AGENTAPI_GITHUB_BROKER_URL"] == "" || env["AGENTAPI_GITHUB_BROKER_TOKEN"] == "" || env["GITHUB_TOKEN"] == "" {
+		t.Fatal("native GitHub credential route was modified")
+	}
+}
+
 func TestCLIBrokerUnixSocketAcceptsUnauthenticatedCallerAndAuthenticatesUpstream(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer session-key" {
@@ -100,6 +136,54 @@ func TestCLIBrokerAuthenticatesAndScopesNotification(t *testing.T) {
 	}
 }
 
+func TestGitHubCredentialsReturnsProvisionedTokenWithoutUpstreamRequest(t *testing.T) {
+	server := NewWithSocket("", "")
+	server.githubToken = "direct-token"
+	req := httptest.NewRequest(http.MethodGet, "/github-credentials?repository=acme/widgets", nil)
+	rec := httptest.NewRecorder()
+
+	server.handleGitHubCredentials(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got, want := rec.Body.String(), "{\"token\":\"direct-token\",\"username\":\"x-access-token\"}\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestGitHubCredentialsProxiesBrokerThroughProvisioner(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer lease-token" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if got := r.URL.Query().Get("repository"); got != "acme/widgets" {
+			t.Errorf("repository = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"x-access-token","token":"upstream-token"}`))
+	}))
+	defer upstream.Close()
+
+	server := NewWithSocket("", "")
+	server.githubBrokerURL = upstream.URL
+	server.githubBrokerToken = "lease-token"
+	req := httptest.NewRequest(http.MethodGet, "/github-credentials?repository=acme%2Fwidgets", nil)
+	rec := httptest.NewRecorder()
+
+	server.handleGitHubCredentials(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "upstream-token") {
+		t.Fatalf("body = %q", got)
+	}
+}
+
 func TestCLIBrokerRejectsAnotherSession(t *testing.T) {
 	server := NewWithSocket("", "")
 	server.ConfigureCLIBroker("https://example.invalid", "session-1")
@@ -133,6 +217,25 @@ func TestConfigureCLIBrokerForClaimedStockSessionUsesPublicSessionID(t *testing.
 	}
 	if server.brokerKey != "personal-key" {
 		t.Fatal("broker key was not captured")
+	}
+}
+
+func TestConfigureCLIBrokerForSessionCapturesGitHubCredentials(t *testing.T) {
+	server := NewWithSocket("", "")
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{ID: "session-1"},
+		Env: map[string]string{
+			"GITHUB_TOKEN":                 "direct-token",
+			"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+			"AGENTAPI_GITHUB_BROKER_TOKEN": "lease-token",
+		},
+	}
+
+	if !server.configureCLIBrokerForSession(settings) {
+		t.Fatal("GitHub credentials were not detected")
+	}
+	if server.githubToken != "direct-token" || server.githubBrokerURL == "" || server.githubBrokerToken != "lease-token" {
+		t.Fatal("GitHub credentials were not captured")
 	}
 }
 

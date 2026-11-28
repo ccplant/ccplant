@@ -248,14 +248,16 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  8. Send the initial message if specified in settings
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(parent context.Context, settings *sessionsettings.SessionSettings) {
-	// Keep the parent credential inside the provisioner. Agent processes use the
-	// local Unix-socket broker and never receive AGENTAPI_KEY.
+	// Keep the parent credential inside the provisioner. Agent processes never
+	// receive AGENTAPI_KEY; Kubernetes sessions use the local Unix-socket broker
+	// for GitHub credentials while native sessions retain their existing route.
 	if settings.Env == nil {
 		settings.Env = make(map[string]string)
 	}
-	s.configureCLIBrokerForSession(settings)
+	githubCredentialsConfigured := s.configureCLIBrokerForSession(settings)
 	delete(settings.Env, "AGENTAPI_KEY")
 	settings.Env["AGENTAPI_PROXY_ENDPOINT"] = "http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock"
+	configureAgentGitHubBrokerEnv(settings.Env, githubCredentialsConfigured, os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT"))
 	markerPath := sessionRestoreMarkerPath(settings.Session.ID)
 	abortedMarkerPath := sessionProvisionAbortedMarkerPath(settings.Session.ID)
 	for _, path := range []string{markerPath, abortedMarkerPath} {
@@ -463,6 +465,13 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		} else {
 			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json (legacy)")
 		}
+	}
+	// A managed .gitconfig may have been restored after SetupSettings installed
+	// the session-scoped helper. Reapply the broker configuration so Git retains
+	// the user's other settings while credentials still flow through provisioner.
+	if err := sessionsettings.ConfigureGitHubTokenBroker(settings); err != nil {
+		s.setStatus(StatusError, fmt.Sprintf("failed to restore GitHub credential broker configuration: %v", err))
+		return
 	}
 	managedStorage = false
 	if err := s.restoreObjectStoragesMatching(ctx, settings, &managedStorage); err != nil {
@@ -718,11 +727,24 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	}()
 }
 
-func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionSettings) {
+func configureAgentGitHubBrokerEnv(env map[string]string, credentialsConfigured bool, nativeSessionRoot string) {
+	if !credentialsConfigured || strings.TrimSpace(nativeSessionRoot) != "" {
+		return
+	}
+	env["AGENTAPI_GITHUB_BROKER_SOCKET"] = "/tmp/ccplant/provisioner.sock"
+	delete(env, "AGENTAPI_GITHUB_BROKER_URL")
+	delete(env, "AGENTAPI_GITHUB_BROKER_TOKEN")
+	delete(env, "GITHUB_TOKEN")
+}
+
+func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionSettings) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.brokerKey = settings.Env["AGENTAPI_KEY"]
 	s.brokerSessionID = settings.Session.ID
+	s.githubToken = settings.Env["GITHUB_TOKEN"]
+	s.githubBrokerURL = settings.Env["AGENTAPI_GITHUB_BROKER_URL"]
+	s.githubBrokerToken = settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"]
 	policy, err := agentpolicy.Parse(settings.PolicyYAML)
 	if err != nil {
 		log.Printf("[PROVISIONER] Refusing invalid agent policy: %v", err)
@@ -732,6 +754,7 @@ func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionS
 	if endpoint := strings.TrimSpace(settings.Env["AGENTAPI_PROXY_ENDPOINT"]); endpoint != "" && !strings.HasPrefix(endpoint, "unix:") && !strings.HasPrefix(endpoint, "http+unix:") {
 		s.brokerURL = strings.TrimRight(endpoint, "/")
 	}
+	return s.githubToken != "" || (s.githubBrokerURL != "" && s.githubBrokerToken != "")
 }
 
 func waitForMountedSettingsSanitized(ctx context.Context, path string, timeout time.Duration) error {

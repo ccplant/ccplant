@@ -173,6 +173,35 @@ func TestConfigureGitHubTokenBrokerUsesSessionHome(t *testing.T) {
 	}
 }
 
+func TestConfigureGitHubTokenBrokerUsesProvisionerSocketWithoutLeaseInAgentEnv(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	settings := &SessionSettings{Env: map[string]string{
+		"AGENTAPI_GITHUB_BROKER_SOCKET": "/tmp/ccplant/provisioner.sock",
+	}}
+
+	if err := configureGitHubTokenBroker(settings); err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile(filepath.Join(homeDir, ".local", "bin", "agentapi-github-credential"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(helper)
+	if !strings.Contains(content, `--unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET"`) {
+		t.Fatalf("credential helper does not use provisioner socket:\n%s", content)
+	}
+	if !strings.Contains(content, `broker_url="${AGENTAPI_GITHUB_BROKER_URL:-http://localhost/github-credentials}"`) {
+		t.Fatalf("credential helper does not default the local broker URL:\n%s", content)
+	}
+	if _, ok := settings.Env["AGENTAPI_GITHUB_BROKER_URL"]; ok {
+		t.Fatal("agent environment unexpectedly requires a local broker URL")
+	}
+	if _, ok := settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"]; ok {
+		t.Fatal("agent environment unexpectedly contains an upstream broker lease")
+	}
+}
+
 func TestConfigureGitHubTokenBrokerRemovesDirectCredentials(t *testing.T) {
 	directCredentials := []string{
 		"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
@@ -215,11 +244,84 @@ func TestConfigureGitHubTokenBrokerRemovesDirectCredentials(t *testing.T) {
 }
 
 func TestSetupSettingsConfiguresGitHubBrokerWithoutPreloadedRepositories(t *testing.T) {
+	homeDir := t.TempDir()
+	compileOpts := DefaultCompileOptions()
+	compileOpts.OutputDir = homeDir
+	compileOpts.EnvFilePath = filepath.Join(homeDir, ".session", "env")
+	compileOpts.StartupPath = filepath.Join(homeDir, ".session", "startup.sh")
+	settings := &SessionSettings{Env: map[string]string{
+		"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN": "lease-token",
+	}}
+	if err := SetupSettings(settings, SetupOptions{CompileOptions: compileOpts}); err != nil {
+		t.Fatal(err)
+	}
+	if settings.Env["HOME"] != homeDir {
+		t.Fatalf("HOME = %q, want %q", settings.Env["HOME"], homeDir)
+	}
+	helperPath := filepath.Join(homeDir, ".local", "bin", "agentapi-github-credential")
+	if _, err := os.Stat(helperPath); err != nil {
+		t.Fatalf("credential helper was not written to compile output home: %v", err)
+	}
+	gitConfig, err := os.ReadFile(filepath.Join(homeDir, ".gitconfig"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gitConfig), helperPath) {
+		t.Fatalf("git config does not reference helper in compile output home: %s", gitConfig)
+	}
+}
+
+func TestSetupSettingsRejectsIncompleteGitHubBrokerConfiguration(t *testing.T) {
 	settings := &SessionSettings{Env: map[string]string{
 		"AGENTAPI_GITHUB_BROKER_URL": "https://broker.example.test/credentials",
 	}}
 	err := SetupSettings(settings, SetupOptions{CompileOptions: CompileOptions{OutputDir: t.TempDir()}})
 	if err == nil || !strings.Contains(err.Error(), "broker URL and token must both be configured") {
 		t.Fatalf("SetupSettings() error = %v, want incomplete broker configuration error", err)
+	}
+}
+
+func TestSetupSettingsOverridesInheritedHomeWithCompileOutput(t *testing.T) {
+	homeDir := t.TempDir()
+	compileOpts := DefaultCompileOptions()
+	compileOpts.OutputDir = homeDir
+	compileOpts.EnvFilePath = filepath.Join(homeDir, ".session", "env")
+	compileOpts.StartupPath = filepath.Join(homeDir, ".session", "startup.sh")
+	settings := &SessionSettings{Env: map[string]string{"HOME": "/root"}}
+
+	if err := SetupSettings(settings, SetupOptions{CompileOptions: compileOpts}); err != nil {
+		t.Fatal(err)
+	}
+	if settings.Env["HOME"] != homeDir {
+		t.Fatalf("HOME = %q, want compile output %q", settings.Env["HOME"], homeDir)
+	}
+}
+
+func TestConfigureGitHubTokenBrokerRestoresHelperAfterGitConfigOverwrite(t *testing.T) {
+	homeDir := t.TempDir()
+	settings := &SessionSettings{Env: map[string]string{
+		"HOME":                         homeDir,
+		"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN": "lease-token",
+	}}
+	if err := ConfigureGitHubTokenBroker(settings); err != nil {
+		t.Fatal(err)
+	}
+	gitConfigPath := filepath.Join(homeDir, ".gitconfig")
+	if err := os.WriteFile(gitConfigPath, []byte("[user]\n\tname = Example\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ConfigureGitHubTokenBroker(settings); err != nil {
+		t.Fatal(err)
+	}
+	gitConfig, err := os.ReadFile(gitConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperPath := filepath.Join(homeDir, ".local", "bin", "agentapi-github-credential")
+	if content := string(gitConfig); !strings.Contains(content, "name = Example") || !strings.Contains(content, helperPath) {
+		t.Fatalf("reapplied git config did not preserve user settings and restore helper:\n%s", content)
 	}
 }

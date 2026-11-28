@@ -79,6 +79,14 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 	if opts.PEMOutputPath == "" {
 		opts.PEMOutputPath = DefaultSetupOptions().PEMOutputPath
 	}
+	if settings.Env == nil {
+		settings.Env = make(map[string]string)
+	}
+	homeDir := strings.TrimSpace(opts.CompileOptions.OutputDir)
+	if homeDir == "" {
+		homeDir = DefaultCompileOptions().OutputDir
+	}
+	settings.Env["HOME"] = homeDir
 
 	// 1. Write GitHub App PEM to disk so git/gh can use it
 	if err := writePEM(settings, opts.PEMOutputPath); err != nil {
@@ -88,7 +96,7 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 
 	// 2. Configure broker-backed GitHub authentication even when no repository
 	// is preloaded. Profiles may allow repositories that the agent clones later.
-	if err := configureGitHubTokenBroker(settings); err != nil {
+	if err := ConfigureGitHubTokenBroker(settings); err != nil {
 		return fmt.Errorf("configure GitHub token broker: %w", err)
 	}
 
@@ -135,10 +143,11 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 func configureGitHubTokenBroker(settings *SessionSettings) error {
 	brokerURL := strings.TrimSpace(settings.Env["AGENTAPI_GITHUB_BROKER_URL"])
 	brokerToken := strings.TrimSpace(settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"])
-	if brokerURL == "" && brokerToken == "" {
+	brokerSocket := strings.TrimSpace(settings.Env["AGENTAPI_GITHUB_BROKER_SOCKET"])
+	if brokerURL == "" && brokerToken == "" && brokerSocket == "" {
 		return nil
 	}
-	if brokerURL == "" || brokerToken == "" {
+	if brokerSocket == "" && (brokerURL == "" || brokerToken == "") {
 		return fmt.Errorf("broker URL and token must both be configured")
 	}
 	// A broker lease is the authoritative credential for this session. Remove
@@ -172,16 +181,25 @@ func configureGitHubTokenBroker(settings *SessionSettings) error {
 	helper := `#!/bin/sh
 set -eu
 [ "${1:-get}" = "get" ] || exit 0
+broker_url="${AGENTAPI_GITHUB_BROKER_URL:-http://localhost/github-credentials}"
 repository=""
 while IFS='=' read -r key value; do
   [ "$key" = "path" ] && repository="${value%.git}"
 done
 if [ -n "$repository" ]; then
 	printf '%s\n' "[GITHUB_BROKER] Requesting git credential for repository=$repository" >&2
-  response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  if [ -n "${AGENTAPI_GITHUB_BROKER_SOCKET:-}" ]; then
+    response="$(curl -fsS --unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET" -G --data-urlencode "repository=$repository" "$broker_url")"
+  else
+    response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  fi
 else
 	printf '%s\n' "[GITHUB_BROKER] Requesting git credential for default repository" >&2
-  response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  if [ -n "${AGENTAPI_GITHUB_BROKER_SOCKET:-}" ]; then
+    response="$(curl -fsS --unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET" "$broker_url")"
+  else
+    response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  fi
 fi
 token="$(printf '%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 [ -n "$token" ] || exit 1
@@ -206,6 +224,7 @@ printf 'username=x-access-token\npassword=%s\n\n' "$token"
 		wrapperPath := filepath.Join(binDir, "gh")
 		wrapper := fmt.Sprintf(`#!/bin/sh
 set -eu
+broker_url="${AGENTAPI_GITHUB_BROKER_URL:-http://localhost/github-credentials}"
 repository=""
 if [ "${1:-}" = "repo" ] && [ "${2:-}" = "clone" ] && [ -n "${3:-}" ]; then
   repository="${3#https://*/}"
@@ -213,9 +232,17 @@ if [ "${1:-}" = "repo" ] && [ "${2:-}" = "clone" ] && [ -n "${3:-}" ]; then
   repository="${repository%%.git}"
 fi
 if [ -n "$repository" ]; then
-  response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  if [ -n "${AGENTAPI_GITHUB_BROKER_SOCKET:-}" ]; then
+    response="$(curl -fsS --unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET" -G --data-urlencode "repository=$repository" "$broker_url")"
+  else
+    response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  fi
 else
-  response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  if [ -n "${AGENTAPI_GITHUB_BROKER_SOCKET:-}" ]; then
+    response="$(curl -fsS --unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET" "$broker_url")"
+  else
+    response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  fi
 fi
 token="$(printf '%%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 [ -n "$token" ] || exit 1
@@ -233,6 +260,13 @@ GH_TOKEN="$token" GH_ENTERPRISE_TOKEN="$token" exec %q "$@"
 	}
 	log.Printf("[GITHUB_BROKER] Broker-backed GitHub authentication configured for host %s", githubHostForLog(settings.Env))
 	return nil
+}
+
+// ConfigureGitHubTokenBroker installs the session-scoped gh wrapper and Git
+// credential helper. Provisioners may call it again after restoring managed
+// files because a persisted .gitconfig can otherwise replace the helper entry.
+func ConfigureGitHubTokenBroker(settings *SessionSettings) error {
+	return configureGitHubTokenBroker(settings)
 }
 
 func githubHostForLog(env map[string]string) string {
