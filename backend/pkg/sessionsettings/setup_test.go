@@ -239,6 +239,35 @@ func TestConfigureGitHubTokenBrokerRemovesDirectCredentials(t *testing.T) {
 }
 
 func TestSetupSettingsConfiguresGitHubBrokerWithoutPreloadedRepositories(t *testing.T) {
+	homeDir := t.TempDir()
+	compileOpts := DefaultCompileOptions()
+	compileOpts.OutputDir = homeDir
+	compileOpts.EnvFilePath = filepath.Join(homeDir, ".session", "env")
+	compileOpts.StartupPath = filepath.Join(homeDir, ".session", "startup.sh")
+	settings := &SessionSettings{Env: map[string]string{
+		"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN": "lease-token",
+	}}
+	if err := SetupSettings(settings, SetupOptions{CompileOptions: compileOpts}); err != nil {
+		t.Fatal(err)
+	}
+	if settings.Env["HOME"] != homeDir {
+		t.Fatalf("HOME = %q, want %q", settings.Env["HOME"], homeDir)
+	}
+	helperPath := filepath.Join(homeDir, ".local", "bin", "agentapi-github-credential")
+	if _, err := os.Stat(helperPath); err != nil {
+		t.Fatalf("credential helper was not written to compile output home: %v", err)
+	}
+	gitConfig, err := os.ReadFile(filepath.Join(homeDir, ".gitconfig"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gitConfig), helperPath) {
+		t.Fatalf("git config does not reference helper in compile output home: %s", gitConfig)
+	}
+}
+
+func TestSetupSettingsRejectsIncompleteGitHubBrokerConfiguration(t *testing.T) {
 	settings := &SessionSettings{Env: map[string]string{
 		"AGENTAPI_GITHUB_BROKER_URL": "https://broker.example.test/credentials",
 	}}
