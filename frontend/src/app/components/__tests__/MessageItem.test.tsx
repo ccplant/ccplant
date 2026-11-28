@@ -3,6 +3,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import MessageItem from '../MessageItem';
 
+const mermaidRender = vi.fn();
+const mermaidInitialize = vi.fn();
+
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: mermaidInitialize,
+    render: mermaidRender,
+  },
+}));
+
 describe('MessageItem ACP images', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -145,5 +155,62 @@ describe('MessageItem links', () => {
     const link = screen.getByRole('link', { name: url });
     expect(link).toHaveClass('break-words');
     expect(link).not.toHaveClass('whitespace-nowrap');
+  });
+});
+
+describe('MessageItem Mermaid diagrams', () => {
+  afterEach(() => {
+    mermaidRender.mockReset();
+    mermaidInitialize.mockReset();
+    document.documentElement.classList.remove('dark');
+  });
+
+  it('renders a Mermaid code block as an SVG diagram', async () => {
+    mermaidRender.mockResolvedValue({ svg: '<svg><text>Rendered flowchart</text></svg>' });
+
+    render(
+      <MessageItem
+        message={{
+          id: 1,
+          role: 'agent',
+          content: '```mermaid\ngraph TD\n  A --> B\n```',
+          time: '2026-07-25T00:00:00Z',
+          type: 'normal',
+        }}
+        formatTimestamp={() => '00:00'}
+        fontSettings={{ fontSize: 14, fontFamily: 'sans-serif' }}
+        isClaudeAgent
+      />,
+    );
+
+    expect(await screen.findByText('Rendered flowchart')).toBeInTheDocument();
+    expect(mermaidInitialize).toHaveBeenCalledWith(expect.objectContaining({
+      securityLevel: 'strict',
+      startOnLoad: false,
+      theme: 'default',
+    }));
+    expect(mermaidRender).toHaveBeenCalledWith(expect.stringMatching(/^mermaid-/), 'graph TD\n  A --> B');
+  });
+
+  it('shows the Mermaid source when rendering fails', async () => {
+    mermaidRender.mockRejectedValue(new Error('Invalid diagram'));
+
+    render(
+      <MessageItem
+        message={{
+          id: 2,
+          role: 'agent',
+          content: '```mermaid\nnot a diagram\n```',
+          time: '2026-07-25T00:00:00Z',
+          type: 'normal',
+        }}
+        formatTimestamp={() => '00:00'}
+        fontSettings={{ fontSize: 14, fontFamily: 'sans-serif' }}
+        isClaudeAgent
+      />,
+    );
+
+    expect(await screen.findByText('Mermaid ダイアグラムを描画できませんでした')).toBeInTheDocument();
+    expect(screen.getByText('not a diagram')).toBeInTheDocument();
   });
 });

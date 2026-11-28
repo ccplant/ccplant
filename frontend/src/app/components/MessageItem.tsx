@@ -1,7 +1,7 @@
 'use client';
 
 import { SessionMessage } from '../../types/agentapi';
-import React, { useState, memo } from 'react';
+import React, { Children, isValidElement, memo, useEffect, useId, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -107,6 +107,73 @@ function hasMarkdownSyntax(text: string): boolean {
   return markdownPatterns.some(pattern => pattern.test(text));
 }
 
+function MermaidDiagram({ chart }: { chart: string }): React.ReactElement {
+  const id = useId().replace(/:/g, '');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState(false);
+  const [theme, setTheme] = useState<'default' | 'dark'>(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark') ? 'dark' : 'default',
+  );
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setTheme(document.documentElement.classList.contains('dark') ? 'dark' : 'default');
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function renderDiagram() {
+      try {
+        const { default: mermaid } = await import('mermaid');
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme,
+        });
+        const { svg, bindFunctions } = await mermaid.render(`mermaid-${id}`, chart);
+        if (cancelled || !containerRef.current) return;
+        containerRef.current.innerHTML = svg;
+        bindFunctions?.(containerRef.current);
+        setError(false);
+      } catch (renderError) {
+        console.error('Failed to render Mermaid diagram:', renderError);
+        if (!cancelled) setError(true);
+      }
+    }
+
+    void renderDiagram();
+    return () => {
+      cancelled = true;
+    };
+  }, [chart, id, theme]);
+
+  if (error) {
+    return (
+      <div className="my-4 overflow-hidden rounded-md border border-red-200 dark:border-red-900">
+        <div className="bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
+          Mermaid ダイアグラムを描画できませんでした
+        </div>
+        <pre className="overflow-x-auto bg-gray-100 p-3 text-sm dark:bg-gray-800">
+          <code className="language-mermaid">{chart}</code>
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      role="img"
+      aria-label="Mermaid diagram"
+      className="mermaid-diagram my-4 flex min-h-12 max-w-full justify-center overflow-x-auto rounded-md bg-white p-3 dark:bg-gray-900 [&_svg]:h-auto [&_svg]:max-w-full"
+    />
+  );
+}
+
 // Markdown をレンダリングするコンポーネント
 function MarkdownContent({ content }: { content: string }): React.ReactElement {
   return (
@@ -186,9 +253,20 @@ function MarkdownContent({ content }: { content: string }): React.ReactElement {
           },
           // プリフォーマット済みテキストのスタイリング
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          pre: ({ node, ...props }) => (
-            <pre className="bg-gray-100 dark:bg-gray-800 p-3 rounded-md overflow-x-auto" {...props} />
-          ),
+          pre: ({ node, children, ...props }) => {
+            const child = Children.toArray(children)[0];
+            if (isValidElement<{ className?: string; children?: React.ReactNode }>(child)) {
+              const language = child.props.className?.split(/\s+/).find(value => value.startsWith('language-'));
+              if (language?.toLowerCase() === 'language-mermaid') {
+                return <MermaidDiagram chart={String(child.props.children).replace(/\n$/, '')} />;
+              }
+            }
+            return (
+              <pre className="bg-gray-100 dark:bg-gray-800 p-3 rounded-md overflow-x-auto" {...props}>
+                {children}
+              </pre>
+            );
+          },
           // 水平線のスタイリング - より目立つように
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           hr: ({ node, ...props }) => (
