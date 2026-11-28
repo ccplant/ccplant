@@ -223,20 +223,16 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  8. Send the initial message if specified in settings
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(parent context.Context, settings *sessionsettings.SessionSettings) {
-	// Keep the parent credential inside the provisioner. Agent processes use the
-	// local Unix-socket broker and never receive AGENTAPI_KEY.
+	// Keep the parent credential inside the provisioner. Agent processes never
+	// receive AGENTAPI_KEY; Kubernetes sessions use the local Unix-socket broker
+	// for GitHub credentials while native sessions retain their existing route.
 	if settings.Env == nil {
 		settings.Env = make(map[string]string)
 	}
 	githubCredentialsConfigured := s.configureCLIBrokerForSession(settings)
 	delete(settings.Env, "AGENTAPI_KEY")
 	settings.Env["AGENTAPI_PROXY_ENDPOINT"] = "http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock"
-	if githubCredentialsConfigured {
-		settings.Env["AGENTAPI_GITHUB_BROKER_URL"] = "http://localhost/github-credentials"
-		settings.Env["AGENTAPI_GITHUB_BROKER_SOCKET"] = "/tmp/ccplant/provisioner.sock"
-		delete(settings.Env, "AGENTAPI_GITHUB_BROKER_TOKEN")
-		delete(settings.Env, "GITHUB_TOKEN")
-	}
+	configureAgentGitHubBrokerEnv(settings.Env, githubCredentialsConfigured, os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT"))
 	markerPath := sessionRestoreMarkerPath(settings.Session.ID)
 	abortedMarkerPath := sessionProvisionAbortedMarkerPath(settings.Session.ID)
 	for _, path := range []string{markerPath, abortedMarkerPath} {
@@ -702,6 +698,16 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func configureAgentGitHubBrokerEnv(env map[string]string, credentialsConfigured bool, nativeSessionRoot string) {
+	if !credentialsConfigured || strings.TrimSpace(nativeSessionRoot) != "" {
+		return
+	}
+	env["AGENTAPI_GITHUB_BROKER_SOCKET"] = "/tmp/ccplant/provisioner.sock"
+	delete(env, "AGENTAPI_GITHUB_BROKER_URL")
+	delete(env, "AGENTAPI_GITHUB_BROKER_TOKEN")
+	delete(env, "GITHUB_TOKEN")
 }
 
 func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionSettings) bool {

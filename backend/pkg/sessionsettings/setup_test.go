@@ -177,7 +177,6 @@ func TestConfigureGitHubTokenBrokerUsesProvisionerSocketWithoutLeaseInAgentEnv(t
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	settings := &SessionSettings{Env: map[string]string{
-		"AGENTAPI_GITHUB_BROKER_URL":    "http://localhost/github-credentials",
 		"AGENTAPI_GITHUB_BROKER_SOCKET": "/tmp/ccplant/provisioner.sock",
 	}}
 
@@ -191,6 +190,12 @@ func TestConfigureGitHubTokenBrokerUsesProvisionerSocketWithoutLeaseInAgentEnv(t
 	content := string(helper)
 	if !strings.Contains(content, `--unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET"`) {
 		t.Fatalf("credential helper does not use provisioner socket:\n%s", content)
+	}
+	if !strings.Contains(content, `broker_url="${AGENTAPI_GITHUB_BROKER_URL:-http://localhost/github-credentials}"`) {
+		t.Fatalf("credential helper does not default the local broker URL:\n%s", content)
+	}
+	if _, ok := settings.Env["AGENTAPI_GITHUB_BROKER_URL"]; ok {
+		t.Fatal("agent environment unexpectedly requires a local broker URL")
 	}
 	if _, ok := settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"]; ok {
 		t.Fatal("agent environment unexpectedly contains an upstream broker lease")
