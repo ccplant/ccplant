@@ -33,6 +33,7 @@ For a TLC failure, use `/statechart` to render the shortest counterexample in re
 - `backend/internal/infrastructure/repositories/kubernetes_session_route_repository.go`: capability serialization and copy isolation
 - `backend/internal/infrastructure/services/session_allocator.go`: built-in route capability construction
 - `backend/internal/infrastructure/services/native_session_manager.go`: native-session authorization facts
+- `backend/internal/infrastructure/services/kubernetes_session_manager.go`: session settings do not project profile secrets into environment variables or files
 - `backend/internal/app/server.go`: pooled route capability construction
 - `backend/internal/app/session_manager_runtime.go`: stock-runner alias capability preservation
 - `backend/internal/interfaces/controllers/provisioner_controller.go`: allocation completion capability preservation
@@ -43,6 +44,6 @@ TLC treats each profile edit, restart, or request as atomic and verifies a two-s
 
 ## Keeping the model synchronized
 
-Last synchronized against implementation commit `f1268e1`.
+Last synchronized against implementation commit `125dad3`.
 
 When covered code changes, compare every authentication and authorization gate with `Gate`, `AuthorizedDisclosure`, and `CapabilityIsLaunchSnapshot`. Update the model and focused tests when behavior intentionally changes. Run the verifier, confirm all five broken configurations are still caught, and move the synchronization marker only after the implementation commit is known.

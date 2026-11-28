@@ -34,4 +34,4 @@ done
 
 cd "$repo_root/backend"
 mise exec -- go test ./internal/interfaces/controllers ./internal/infrastructure/repositories ./internal/infrastructure/services ./pkg/provisioner ./cmd \
-  -run 'SessionSettingsSecret|SecretCapability|HandleSettingsSecret|GetSecret|NativeSession' -count=1
+  -run 'SessionSettingsSecret|SecretCapability|HandleSettingsSecret|GetSecret|NativeSession|DoesNotProjectProfileSecrets' -count=1
