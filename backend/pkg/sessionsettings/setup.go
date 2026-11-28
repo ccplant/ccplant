@@ -135,10 +135,11 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 func configureGitHubTokenBroker(settings *SessionSettings) error {
 	brokerURL := strings.TrimSpace(settings.Env["AGENTAPI_GITHUB_BROKER_URL"])
 	brokerToken := strings.TrimSpace(settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"])
-	if brokerURL == "" && brokerToken == "" {
+	brokerSocket := strings.TrimSpace(settings.Env["AGENTAPI_GITHUB_BROKER_SOCKET"])
+	if brokerURL == "" && brokerToken == "" && brokerSocket == "" {
 		return nil
 	}
-	if brokerURL == "" || brokerToken == "" {
+	if brokerURL == "" || (brokerToken == "" && brokerSocket == "") {
 		return fmt.Errorf("broker URL and token must both be configured")
 	}
 	// A broker lease is the authoritative credential for this session. Remove
@@ -178,10 +179,18 @@ while IFS='=' read -r key value; do
 done
 if [ -n "$repository" ]; then
 	printf '%s\n' "[GITHUB_BROKER] Requesting git credential for repository=$repository" >&2
-  response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  if [ -n "${AGENTAPI_GITHUB_BROKER_SOCKET:-}" ]; then
+    response="$(curl -fsS --unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET" -G --data-urlencode "repository=$repository" "$AGENTAPI_GITHUB_BROKER_URL")"
+  else
+    response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  fi
 else
 	printf '%s\n' "[GITHUB_BROKER] Requesting git credential for default repository" >&2
-  response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  if [ -n "${AGENTAPI_GITHUB_BROKER_SOCKET:-}" ]; then
+    response="$(curl -fsS --unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET" "$AGENTAPI_GITHUB_BROKER_URL")"
+  else
+    response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  fi
 fi
 token="$(printf '%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 [ -n "$token" ] || exit 1
@@ -213,9 +222,17 @@ if [ "${1:-}" = "repo" ] && [ "${2:-}" = "clone" ] && [ -n "${3:-}" ]; then
   repository="${repository%%.git}"
 fi
 if [ -n "$repository" ]; then
-  response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  if [ -n "${AGENTAPI_GITHUB_BROKER_SOCKET:-}" ]; then
+    response="$(curl -fsS --unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET" -G --data-urlencode "repository=$repository" "$AGENTAPI_GITHUB_BROKER_URL")"
+  else
+    response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  fi
 else
-  response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  if [ -n "${AGENTAPI_GITHUB_BROKER_SOCKET:-}" ]; then
+    response="$(curl -fsS --unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET" "$AGENTAPI_GITHUB_BROKER_URL")"
+  else
+    response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+  fi
 fi
 token="$(printf '%%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 [ -n "$token" ] || exit 1

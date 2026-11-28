@@ -173,6 +173,30 @@ func TestConfigureGitHubTokenBrokerUsesSessionHome(t *testing.T) {
 	}
 }
 
+func TestConfigureGitHubTokenBrokerUsesProvisionerSocketWithoutLeaseInAgentEnv(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	settings := &SessionSettings{Env: map[string]string{
+		"AGENTAPI_GITHUB_BROKER_URL":    "http://localhost/github-credentials",
+		"AGENTAPI_GITHUB_BROKER_SOCKET": "/tmp/ccplant/provisioner.sock",
+	}}
+
+	if err := configureGitHubTokenBroker(settings); err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile(filepath.Join(homeDir, ".local", "bin", "agentapi-github-credential"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(helper)
+	if !strings.Contains(content, `--unix-socket "$AGENTAPI_GITHUB_BROKER_SOCKET"`) {
+		t.Fatalf("credential helper does not use provisioner socket:\n%s", content)
+	}
+	if _, ok := settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"]; ok {
+		t.Fatal("agent environment unexpectedly contains an upstream broker lease")
+	}
+}
+
 func TestConfigureGitHubTokenBrokerRemovesDirectCredentials(t *testing.T) {
 	directCredentials := []string{
 		"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",

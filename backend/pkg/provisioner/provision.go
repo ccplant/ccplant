@@ -228,9 +228,15 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	if settings.Env == nil {
 		settings.Env = make(map[string]string)
 	}
-	s.configureCLIBrokerForSession(settings)
+	githubCredentialsConfigured := s.configureCLIBrokerForSession(settings)
 	delete(settings.Env, "AGENTAPI_KEY")
 	settings.Env["AGENTAPI_PROXY_ENDPOINT"] = "http+unix://%2Ftmp%2Fccplant%2Fprovisioner.sock"
+	if githubCredentialsConfigured {
+		settings.Env["AGENTAPI_GITHUB_BROKER_URL"] = "http://localhost/github-credentials"
+		settings.Env["AGENTAPI_GITHUB_BROKER_SOCKET"] = "/tmp/ccplant/provisioner.sock"
+		delete(settings.Env, "AGENTAPI_GITHUB_BROKER_TOKEN")
+		delete(settings.Env, "GITHUB_TOKEN")
+	}
 	markerPath := sessionRestoreMarkerPath(settings.Session.ID)
 	abortedMarkerPath := sessionProvisionAbortedMarkerPath(settings.Session.ID)
 	for _, path := range []string{markerPath, abortedMarkerPath} {
@@ -691,11 +697,14 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	}()
 }
 
-func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionSettings) {
+func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionSettings) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.brokerKey = settings.Env["AGENTAPI_KEY"]
 	s.brokerSessionID = settings.Session.ID
+	s.githubToken = settings.Env["GITHUB_TOKEN"]
+	s.githubBrokerURL = settings.Env["AGENTAPI_GITHUB_BROKER_URL"]
+	s.githubBrokerToken = settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"]
 	policy, err := agentpolicy.Parse(settings.PolicyYAML)
 	if err != nil {
 		log.Printf("[PROVISIONER] Refusing invalid agent policy: %v", err)
@@ -705,6 +714,7 @@ func (s *Server) configureCLIBrokerForSession(settings *sessionsettings.SessionS
 	if endpoint := strings.TrimSpace(settings.Env["AGENTAPI_PROXY_ENDPOINT"]); endpoint != "" && !strings.HasPrefix(endpoint, "unix:") && !strings.HasPrefix(endpoint, "http+unix:") {
 		s.brokerURL = strings.TrimRight(endpoint, "/")
 	}
+	return s.githubToken != "" || (s.githubBrokerURL != "" && s.githubBrokerToken != "")
 }
 
 func waitForMountedSettingsSanitized(ctx context.Context, path string, timeout time.Duration) error {
