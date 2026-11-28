@@ -292,3 +292,31 @@ func TestSetupSettingsOverridesInheritedHomeWithCompileOutput(t *testing.T) {
 		t.Fatalf("HOME = %q, want compile output %q", settings.Env["HOME"], homeDir)
 	}
 }
+
+func TestConfigureGitHubTokenBrokerRestoresHelperAfterGitConfigOverwrite(t *testing.T) {
+	homeDir := t.TempDir()
+	settings := &SessionSettings{Env: map[string]string{
+		"HOME":                         homeDir,
+		"AGENTAPI_GITHUB_BROKER_URL":   "https://broker.example.test/credentials",
+		"AGENTAPI_GITHUB_BROKER_TOKEN": "lease-token",
+	}}
+	if err := ConfigureGitHubTokenBroker(settings); err != nil {
+		t.Fatal(err)
+	}
+	gitConfigPath := filepath.Join(homeDir, ".gitconfig")
+	if err := os.WriteFile(gitConfigPath, []byte("[user]\n\tname = Example\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ConfigureGitHubTokenBroker(settings); err != nil {
+		t.Fatal(err)
+	}
+	gitConfig, err := os.ReadFile(gitConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperPath := filepath.Join(homeDir, ".local", "bin", "agentapi-github-credential")
+	if content := string(gitConfig); !strings.Contains(content, "name = Example") || !strings.Contains(content, helperPath) {
+		t.Fatalf("reapplied git config did not preserve user settings and restore helper:\n%s", content)
+	}
+}

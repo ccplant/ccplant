@@ -96,7 +96,7 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 
 	// 2. Configure broker-backed GitHub authentication even when no repository
 	// is preloaded. Profiles may allow repositories that the agent clones later.
-	if err := configureGitHubTokenBroker(settings); err != nil {
+	if err := ConfigureGitHubTokenBroker(settings); err != nil {
 		return fmt.Errorf("configure GitHub token broker: %w", err)
 	}
 
@@ -258,6 +258,13 @@ GH_TOKEN="$token" GH_ENTERPRISE_TOKEN="$token" exec %q "$@"
 	}
 	log.Printf("[GITHUB_BROKER] Broker-backed GitHub authentication configured for host %s", githubHostForLog(settings.Env))
 	return nil
+}
+
+// ConfigureGitHubTokenBroker installs the session-scoped gh wrapper and Git
+// credential helper. Provisioners may call it again after restoring managed
+// files because a persisted .gitconfig can otherwise replace the helper entry.
+func ConfigureGitHubTokenBroker(settings *SessionSettings) error {
+	return configureGitHubTokenBroker(settings)
 }
 
 func githubHostForLog(env map[string]string) string {

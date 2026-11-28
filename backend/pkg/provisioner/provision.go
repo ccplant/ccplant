@@ -445,6 +445,13 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json (legacy)")
 		}
 	}
+	// A managed .gitconfig may have been restored after SetupSettings installed
+	// the session-scoped helper. Reapply the broker configuration so Git retains
+	// the user's other settings while credentials still flow through provisioner.
+	if err := sessionsettings.ConfigureGitHubTokenBroker(settings); err != nil {
+		s.setStatus(StatusError, fmt.Sprintf("failed to restore GitHub credential broker configuration: %v", err))
+		return
+	}
 	managedStorage = false
 	if err := s.restoreObjectStoragesMatching(ctx, settings, &managedStorage); err != nil {
 		s.setStatus(StatusError, "failed to restore persistent storage: "+err.Error())
