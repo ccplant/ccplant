@@ -1554,6 +1554,30 @@
         }
       }
     },
+    "/internal/session-control/{sessionId}/settings-secrets/{secretId}": {
+      "get": {
+        "summary": "Get a settings secret value explicitly authorized for the session profile",
+        "operationId": "getAuthorizedSessionSettingsSecret",
+        "tags": ["Sessions"],
+        "security": [{"bearerAuth": []}],
+        "parameters": [
+          {"name": "sessionId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "secretId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "key", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "generation", "in": "query", "description": "Required for direct-runtime sessions to fence replaced runtimes", "schema": {"type": "integer", "format": "int64"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "The selected value. Only profile-selected secret IDs can reach this response.",
+            "headers": {"Cache-Control": {"schema": {"type": "string", "example": "no-store"}}},
+            "content": {"application/json": {"schema": {"type": "object", "required": ["value"], "properties": {"value": {"type": "string"}}}}}
+          },
+          "400": {"description": "Missing key"},
+          "401": {"description": "Invalid session credential or stale generation"},
+          "404": {"description": "Secret resource or key is not authorized or does not exist"}
+        }
+      }
+    },
     "/internal/sessions/{sessionId}/github-credentials": {
       "get": {
         "summary": "Get a current repository-scoped token using a session broker credential",

@@ -31,25 +31,27 @@ const (
 )
 
 type routeJSON struct {
-	SessionID         string                      `json:"session_id"`
-	RemoteSessionID   string                      `json:"remote_session_id"`
-	ManagerID         string                      `json:"manager_id,omitempty"`
-	HMACSecret        string                      `json:"hmac_secret"`
-	Transport         string                      `json:"transport,omitempty"`
-	RuntimeTokenHash  string                      `json:"runtime_token_hash,omitempty"`
-	Generation        int64                       `json:"generation,omitempty"`
-	UserID            string                      `json:"user_id,omitempty"`
-	Scope             string                      `json:"scope,omitempty"`
-	TeamID            string                      `json:"team_id,omitempty"`
-	Pool              string                      `json:"pool,omitempty"`
-	Tags              map[string]string           `json:"tags,omitempty"`
-	StartedAt         time.Time                   `json:"started_at,omitempty"`
-	InitialMessage    string                      `json:"initial_message,omitempty"`
-	Annotations       entities.SessionAnnotations `json:"annotations,omitempty"`
-	Status            string                      `json:"status,omitempty"`
-	StatusUpdatedAt   time.Time                   `json:"status_updated_at,omitempty"`
-	DeletionRequestID string                      `json:"deletion_request_id,omitempty"`
-	ContextTemplateID string                      `json:"context_template_id,omitempty"`
+	SessionID           string                      `json:"session_id"`
+	RemoteSessionID     string                      `json:"remote_session_id"`
+	ManagerID           string                      `json:"manager_id,omitempty"`
+	HMACSecret          string                      `json:"hmac_secret"`
+	Transport           string                      `json:"transport,omitempty"`
+	RuntimeTokenHash    string                      `json:"runtime_token_hash,omitempty"`
+	Generation          int64                       `json:"generation,omitempty"`
+	UserID              string                      `json:"user_id,omitempty"`
+	Scope               string                      `json:"scope,omitempty"`
+	TeamID              string                      `json:"team_id,omitempty"`
+	Pool                string                      `json:"pool,omitempty"`
+	Tags                map[string]string           `json:"tags,omitempty"`
+	StartedAt           time.Time                   `json:"started_at,omitempty"`
+	InitialMessage      string                      `json:"initial_message,omitempty"`
+	Annotations         entities.SessionAnnotations `json:"annotations,omitempty"`
+	Status              string                      `json:"status,omitempty"`
+	StatusUpdatedAt     time.Time                   `json:"status_updated_at,omitempty"`
+	DeletionRequestID   string                      `json:"deletion_request_id,omitempty"`
+	ContextTemplateID   string                      `json:"context_template_id,omitempty"`
+	SettingsName        string                      `json:"settings_name,omitempty"`
+	AuthorizedSecretIDs []string                    `json:"authorized_secret_ids,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -85,25 +87,27 @@ func (r *KubernetesSessionRouteRepository) secretName(sessionID string) string {
 // Save creates or updates a session route secret
 func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *portrepos.SessionRoute) error {
 	data, err := json.Marshal(&routeJSON{
-		SessionID:         route.SessionID,
-		RemoteSessionID:   route.RemoteSessionID,
-		ManagerID:         route.ManagerID,
-		HMACSecret:        route.HMACSecret,
-		Transport:         route.Transport,
-		RuntimeTokenHash:  route.RuntimeTokenHash,
-		Generation:        route.Generation,
-		UserID:            route.UserID,
-		Scope:             route.Scope,
-		TeamID:            route.TeamID,
-		Pool:              route.Pool,
-		Tags:              route.Tags,
-		StartedAt:         route.StartedAt,
-		InitialMessage:    route.InitialMessage,
-		Annotations:       route.Annotations,
-		Status:            route.Status,
-		StatusUpdatedAt:   route.StatusUpdatedAt,
-		DeletionRequestID: route.DeletionRequestID,
-		ContextTemplateID: route.ContextTemplateID,
+		SessionID:           route.SessionID,
+		RemoteSessionID:     route.RemoteSessionID,
+		ManagerID:           route.ManagerID,
+		HMACSecret:          route.HMACSecret,
+		Transport:           route.Transport,
+		RuntimeTokenHash:    route.RuntimeTokenHash,
+		Generation:          route.Generation,
+		UserID:              route.UserID,
+		Scope:               route.Scope,
+		TeamID:              route.TeamID,
+		Pool:                route.Pool,
+		Tags:                route.Tags,
+		StartedAt:           route.StartedAt,
+		InitialMessage:      route.InitialMessage,
+		Annotations:         route.Annotations,
+		Status:              route.Status,
+		StatusUpdatedAt:     route.StatusUpdatedAt,
+		DeletionRequestID:   route.DeletionRequestID,
+		ContextTemplateID:   route.ContextTemplateID,
+		SettingsName:        route.SettingsName,
+		AuthorizedSecretIDs: route.AuthorizedSecretIDs,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal route: %w", err)
@@ -205,25 +209,27 @@ func (r *KubernetesSessionRouteRepository) load(ctx context.Context, sessionID s
 	}
 
 	route := &portrepos.SessionRoute{
-		SessionID:         rj.SessionID,
-		RemoteSessionID:   rj.RemoteSessionID,
-		ManagerID:         rj.ManagerID,
-		HMACSecret:        rj.HMACSecret,
-		Transport:         rj.Transport,
-		RuntimeTokenHash:  rj.RuntimeTokenHash,
-		Generation:        rj.Generation,
-		UserID:            rj.UserID,
-		Scope:             rj.Scope,
-		TeamID:            rj.TeamID,
-		Pool:              rj.Pool,
-		Tags:              rj.Tags,
-		StartedAt:         rj.StartedAt,
-		InitialMessage:    rj.InitialMessage,
-		Annotations:       rj.Annotations,
-		Status:            rj.Status,
-		StatusUpdatedAt:   rj.StatusUpdatedAt,
-		DeletionRequestID: rj.DeletionRequestID,
-		ContextTemplateID: rj.ContextTemplateID,
+		SessionID:           rj.SessionID,
+		RemoteSessionID:     rj.RemoteSessionID,
+		ManagerID:           rj.ManagerID,
+		HMACSecret:          rj.HMACSecret,
+		Transport:           rj.Transport,
+		RuntimeTokenHash:    rj.RuntimeTokenHash,
+		Generation:          rj.Generation,
+		UserID:              rj.UserID,
+		Scope:               rj.Scope,
+		TeamID:              rj.TeamID,
+		Pool:                rj.Pool,
+		Tags:                rj.Tags,
+		StartedAt:           rj.StartedAt,
+		InitialMessage:      rj.InitialMessage,
+		Annotations:         rj.Annotations,
+		Status:              rj.Status,
+		StatusUpdatedAt:     rj.StatusUpdatedAt,
+		DeletionRequestID:   rj.DeletionRequestID,
+		ContextTemplateID:   rj.ContextTemplateID,
+		SettingsName:        rj.SettingsName,
+		AuthorizedSecretIDs: rj.AuthorizedSecretIDs,
 	}
 	r.cacheRoute(route)
 	return route, nil
@@ -256,6 +262,7 @@ func cloneSessionRoute(route *portrepos.SessionRoute) *portrepos.SessionRoute {
 	}
 	clone := *route
 	clone.Tags = maps.Clone(route.Tags)
+	clone.AuthorizedSecretIDs = append([]string(nil), route.AuthorizedSecretIDs...)
 	return &clone
 }
 
@@ -368,25 +375,27 @@ func decodeSessionRoutes(secrets []corev1.Secret) []*portrepos.SessionRoute {
 			continue
 		}
 		routes = append(routes, &portrepos.SessionRoute{
-			SessionID:         rj.SessionID,
-			RemoteSessionID:   rj.RemoteSessionID,
-			ManagerID:         rj.ManagerID,
-			HMACSecret:        rj.HMACSecret,
-			Transport:         rj.Transport,
-			RuntimeTokenHash:  rj.RuntimeTokenHash,
-			Generation:        rj.Generation,
-			UserID:            rj.UserID,
-			Scope:             rj.Scope,
-			TeamID:            rj.TeamID,
-			Pool:              rj.Pool,
-			Tags:              rj.Tags,
-			StartedAt:         rj.StartedAt,
-			InitialMessage:    rj.InitialMessage,
-			Annotations:       rj.Annotations,
-			Status:            rj.Status,
-			StatusUpdatedAt:   rj.StatusUpdatedAt,
-			DeletionRequestID: rj.DeletionRequestID,
-			ContextTemplateID: rj.ContextTemplateID,
+			SessionID:           rj.SessionID,
+			RemoteSessionID:     rj.RemoteSessionID,
+			ManagerID:           rj.ManagerID,
+			HMACSecret:          rj.HMACSecret,
+			Transport:           rj.Transport,
+			RuntimeTokenHash:    rj.RuntimeTokenHash,
+			Generation:          rj.Generation,
+			UserID:              rj.UserID,
+			Scope:               rj.Scope,
+			TeamID:              rj.TeamID,
+			Pool:                rj.Pool,
+			Tags:                rj.Tags,
+			StartedAt:           rj.StartedAt,
+			InitialMessage:      rj.InitialMessage,
+			Annotations:         rj.Annotations,
+			Status:              rj.Status,
+			StatusUpdatedAt:     rj.StatusUpdatedAt,
+			DeletionRequestID:   rj.DeletionRequestID,
+			ContextTemplateID:   rj.ContextTemplateID,
+			SettingsName:        rj.SettingsName,
+			AuthorizedSecretIDs: rj.AuthorizedSecretIDs,
 		})
 	}
 	return cloneSessionRoutes(routes)

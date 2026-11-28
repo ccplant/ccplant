@@ -865,6 +865,8 @@ func (c *localAllocationClient) Complete(ctx context.Context, sessionID string, 
 			route.TeamID = allocation.Request.TeamID
 			route.Tags = allocation.Request.Tags
 			route.InitialMessage = allocation.Request.InitialMessage
+			route.SettingsName = sessionSettingsName(allocation.Request)
+			route.AuthorizedSecretIDs = append([]string(nil), allocation.Request.ProfileSecretIDs...)
 		}
 		if err := c.routes.Save(ctx, route); err != nil {
 			return err

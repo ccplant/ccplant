@@ -1654,6 +1654,7 @@ func (s *Server) createPoolSession(ctx context.Context, route sessionrunnercore.
 		RuntimeTokenHash: tokenHash, Generation: 1, UserID: userID, Scope: string(startReq.Scope),
 		TeamID: startReq.TeamID, Pool: pool, Tags: routeTags, StartedAt: startedAt, InitialMessage: initialMessage,
 		Status: "creating", StatusUpdatedAt: startedAt,
+		SettingsName: sessionSettingsName(runReq), AuthorizedSecretIDs: append([]string(nil), runReq.ProfileSecretIDs...),
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}
@@ -1663,6 +1664,19 @@ func (s *Server) createPoolSession(ctx context.Context, route sessionrunnercore.
 		}
 	}
 	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, startReq.Tags, startedAt, "creating"), nil
+}
+
+func sessionSettingsName(req *entities.RunServerRequest) string {
+	if req == nil {
+		return ""
+	}
+	if req.SettingsTeamID != "" {
+		return req.SettingsTeamID
+	}
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		return req.TeamID
+	}
+	return req.UserID
 }
 
 func (s *Server) applyPoolAutoSuspendPolicy(ctx context.Context, settings *sessionsettings.SessionSettings, scope entities.ResourceScope, userID, teamID string) {

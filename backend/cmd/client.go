@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -118,6 +119,13 @@ var consumeSecretCmd = &cobra.Command{
 	Short: "Consume the next one-time secret registered for this session",
 	Args:  cobra.NoArgs,
 	RunE:  runConsumeSecret,
+}
+
+var getSecretCmd = &cobra.Command{
+	Use:   "get-secret SECRET_ID KEY",
+	Short: "Get a profile-authorized settings secret value for this session",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runGetSecret,
 }
 
 var sendCmd = &cobra.Command{
@@ -239,6 +247,7 @@ func init() {
 	ClientCmd.AddCommand(cycleCmd)
 	ClientCmd.AddCommand(reportUsageCmd)
 	ClientCmd.AddCommand(consumeSecretCmd)
+	ClientCmd.AddCommand(getSecretCmd)
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
@@ -280,6 +289,44 @@ func consumeSecret(ctx context.Context, client *http.Client, endpoint string, ou
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxOneTimeSecretResponseBytes)).Decode(&result); err != nil {
 		return fmt.Errorf("decode one-time secret: %w", err)
+	}
+	_, err = fmt.Fprintln(output, result.Value)
+	return err
+}
+
+func runGetSecret(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+	defer cancel()
+	query := url.Values{}
+	query.Set("key", args[1])
+	path := "/settings-secrets/" + url.PathEscape(args[0]) + "?" + query.Encode()
+	if socketPath := strings.TrimSpace(os.Getenv("PROVISIONER_LOCAL_SOCKET")); socketPath != "" {
+		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		}}
+		return getSecret(ctx, &http.Client{Transport: transport}, "http://unix"+path, cmd.OutOrStdout())
+	}
+	return getSecret(ctx, http.DefaultClient, "http://127.0.0.1:9001"+path, cmd.OutOrStdout())
+}
+
+func getSecret(ctx context.Context, client *http.Client, endpoint string, output io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("get settings secret: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("get settings secret: local endpoint returned %s", resp.Status)
+	}
+	var result struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxOneTimeSecretResponseBytes)).Decode(&result); err != nil {
+		return fmt.Errorf("decode settings secret: %w", err)
 	}
 	_, err = fmt.Fprintln(output, result.Value)
 	return err

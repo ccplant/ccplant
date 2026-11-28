@@ -70,6 +70,18 @@ func TestConsumeSecretPrintsOnlyValue(t *testing.T) {
 	assert.Equal(t, "injected-secret\n", output.String())
 }
 
+func TestGetSecretPrintsOnlyValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		_, _ = w.Write([]byte(`{"value":"profile-secret"}`))
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	err := getSecret(context.Background(), server.Client(), server.URL, &output)
+	assert.NoError(t, err)
+	assert.Equal(t, "profile-secret\n", output.String())
+}
+
 func TestClientCmdInit(t *testing.T) {
 	// Test that subcommands are properly registered
 	// Note: init() is called automatically when package is loaded

@@ -824,6 +824,11 @@ func nativeAgentHealthy(port int) bool {
 }
 
 func (s *NativeSession) ID() string { return s.id }
+func (s *NativeSession) Request() *entities.RunServerRequest {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.request
+}
 func (s *NativeSession) Addr() string {
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(s.agentPort))
 }

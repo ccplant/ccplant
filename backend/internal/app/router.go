@@ -311,7 +311,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var sessionRuntimeController *controllers.SessionRuntimeController
 	var sessionSecretController *controllers.SessionSecretController
 	if server.persistenceClient != nil {
-		sessionSecretController = controllers.NewSessionSecretController(server.persistenceClient, server.namespace, server.sessionManager, server.sessionRouteRepo)
+		sessionSecretController = controllers.NewSessionSecretController(server.persistenceClient, server.namespace, server.sessionManager, server.sessionRouteRepo, server.settingsRepo)
 	}
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo, server.sessionStateStore)
@@ -523,6 +523,7 @@ func (r *Router) registerCoreRoutes() error {
 			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.GET("/internal/session-control/:sessionId/secrets/next", r.handlers.sessionSecretController.ConsumeNext)
 		r.echo.GET("/internal/session-control/:sessionId/secrets/:secretId", r.handlers.sessionSecretController.Consume)
+		r.echo.GET("/internal/session-control/:sessionId/settings-secrets/:secretId", r.handlers.sessionSecretController.GetAuthorized)
 	}
 	if r.handlers.sessionPoolController != nil {
 		r.echo.GET("/available-session-pools", r.handlers.sessionPoolController.ListAvailablePools,
